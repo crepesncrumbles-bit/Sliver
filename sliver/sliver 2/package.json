@@ -1,0 +1,17 @@
+{
+  "name": "sliver",
+  "version": "1.0.0",
+  "description": "Guess-the-song party game (Songless-style). No dependencies: just Node 18+.",
+  "main": "server/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev:mock": "node server/index.js --demo-only",
+    "test": "node test/spotify.test.js && node test/features.test.js && node test/smoke.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

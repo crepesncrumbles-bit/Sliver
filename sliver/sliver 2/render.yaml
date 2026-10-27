@@ -1,0 +1,9 @@
+# Render settings for Sliver (free plan). Render reads this automatically.
+services:
+  - type: web
+    name: sliver
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
