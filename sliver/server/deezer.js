@@ -94,4 +94,28 @@ async function searchDeezer(title, artist, { strict = false } = {}) {
   throw new Error(`No Deezer match for "${title}"`);
 }
 
-module.exports = { loadDeezerSource, fetchPreview, parseDeezerInput, searchDeezer };
+// Find a public Deezer playlist by name (backup for built-in packs) and load it.
+async function loadDeezerPlaylistSearch(query, name) {
+  const data = await getJson(`${API}/search/playlist?q=${encodeURIComponent(query)}&limit=10`);
+  const pick = (data.data || []).find((p) => (p.nb_tracks || 0) >= 25) || (data.data || [])[0];
+  if (!pick) throw new Error(`Couldn't find songs for "${name || query}"`);
+  const src = await loadDeezerSource(String(pick.id));
+  return { name: name || src.name, tracks: src.tracks };
+}
+
+// An artist's most popular songs (also used when someone types an artist's name).
+async function loadDeezerArtist(artistName) {
+  const q = String(artistName || '').trim();
+  if (!q) throw new Error('Type an artist name');
+  const found = await getJson(`${API}/search/artist?q=${encodeURIComponent(q)}&limit=5`);
+  const nq = q.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const list = found.data || [];
+  const artist = list.find((a) => a.name.toLowerCase().replace(/[^a-z0-9]/g, '') === nq) || list[0];
+  if (!artist) throw new Error(`No artist called "${q}" found. For a playlist, paste its link.`);
+  const top = await getJson(`${API}/artist/${artist.id}/top?limit=60`);
+  const tracks = (top.data || []).filter((t) => t.preview && t.readable !== false).map((t) => toTrack(t));
+  if (tracks.length < 2) throw new Error(`Not enough playable songs by ${artist.name}`);
+  return { name: `${artist.name} — top songs`, tracks, image: artist.picture_medium || null };
+}
+
+module.exports = { loadDeezerSource, fetchPreview, parseDeezerInput, searchDeezer, loadDeezerPlaylistSearch, loadDeezerArtist };

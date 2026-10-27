@@ -78,7 +78,9 @@
     const el = document.createElement('div');
     el.className = `toast ${kind}`;
     el.textContent = text;
-    $('#toasts').appendChild(el);
+    const box = $('#toasts');
+    box.appendChild(el);
+    while (box.children.length > 2) box.firstChild.remove(); // never let notices pile up
     setTimeout(() => el.remove(), ms);
   }
 
@@ -149,6 +151,7 @@
   socket.on('toast', (t) => toast(t.text, t.kind === 'error' ? 'error' : 'info'));
   socket.on('pool', (p) => { pool = p; });
   socket.on('state', (s) => {
+    if (!session) return; // left the room; ignore any late updates
     const prev = state;
     state = s;
     clockSkew = s.serverNow - Date.now();
@@ -156,12 +159,48 @@
     render(prev);
   });
 
+  // ---------- leave room ----------
+  // One tap arms it ("Tap again to leave"), a second tap within 3 s leaves.
+  // Mid-song that protects against leaving by accident.
+  let leaveArmed = null;
+  $('#btn-leave').onclick = async () => {
+    const btn = $('#btn-leave');
+    if (!leaveArmed) {
+      btn.classList.add('confirm');
+      btn.textContent = 'Tap again to leave';
+      leaveArmed = setTimeout(disarmLeave, 3000);
+      return;
+    }
+    disarmLeave();
+    await emit('leave');
+    goHome();
+  };
+  function disarmLeave() {
+    clearTimeout(leaveArmed); leaveArmed = null;
+    const btn = $('#btn-leave');
+    btn.classList.remove('confirm');
+    btn.textContent = 'Leave room';
+  }
+  function goHome() {
+    stopAudio();
+    clearInterval(timerInt); clearInterval(autoInt);
+    saveSession(null);
+    state = null; roundKey = null; revealKey = null;
+    pool = { version: -1, songs: [] };
+    history.replaceState(null, '', '/');
+    $('#join-code').value = '';
+    $('#btn-leave').hidden = true;
+    document.body.classList.remove('in-game');
+    show('home');
+  }
+
   // ---------- render ----------
   function render(prev) {
     const isHost = state.hostId === state.meId;
     document.querySelectorAll('.host-only').forEach((el) => (el.hidden = !isHost));
     document.querySelectorAll('.guest-only').forEach((el) => (el.hidden = isHost));
     const phase = state.phase;
+    $('#btn-leave').hidden = false;
     document.body.classList.toggle('in-game', ['loading', 'round', 'reveal'].includes(phase));
     if (phase === 'lobby') renderLobby();
     else if (phase === 'loading') show('loading');
@@ -176,19 +215,48 @@
     $('#lobby-code').textContent = state.code;
     const invite = inviteUrl();
     $('#invite-text').innerHTML = invite.lan
-      ? `Friends on the same Wi-Fi open <code>${esc(invite.url)}</code> on their phone or laptop.`
-      : `Share <code>${esc(invite.url)}</code>, or have friends enter code <b>${esc(state.code)}</b>.`;
+      ? `Friends on the same Wi-Fi can open <code>${esc(invite.url)}</code>`
+      : `Send friends the invite link, or have them enter the code.`;
 
-    $('#lobby-players').innerHTML = state.players.map((p) => `
+    const AV = ['#FFD43B', '#FF9EC7', '#8FF0CF', '#AFC0FF', '#FFC48A', '#D7B8FF'];
+    $('#lobby-players').innerHTML = state.players.map((p, i) => `
       <li class="${p.connected ? '' : 'offline'}">
-        <span>${esc(p.name)} ${p.id === state.meId ? '<span class="tagline">(you)</span>' : ''}</span>
-        <span class="tagline">${p.id === state.hostId ? 'host' : p.connected ? '' : 'away'}</span>
+        <span class="av" style="background:${AV[i % AV.length]}">${esc((p.name || '?')[0].toUpperCase())}</span>
+        ${esc(p.name)}${p.id === state.meId ? ' (you)' : ''}
+        ${p.id === state.hostId ? '<span class="host-tag">host</span>' : ''}
       </li>`).join('');
 
-    $('#pool-count').textContent = `${state.poolSize} song${state.poolSize === 1 ? '' : 's'}`;
-    $('#sources').innerHTML = state.sources.map((s) =>
-      `<li><span>${esc(s.name)}</span><small>+${s.count} · ${esc(s.by)}</small></li>`).join('');
-    $('#btn-clear').hidden = $('#btn-clear').hidden || !state.sources.length;
+    const isHost = state.hostId === state.meId;
+    $('#pool-count').textContent = `${fmt(state.poolSize)} song${state.poolSize === 1 ? '' : 's'}`;
+    $('#sources').innerHTML = state.sources.map((src) => {
+      const canRemove = isHost || src.byId === state.meId;
+      return `<li>
+        <div class="s-main"><div class="s-name">${esc(src.name)}</div>
+        <div class="s-meta">${src.count} song${src.count === 1 ? '' : 's'}, added by ${esc(src.by)}</div></div>
+        ${canRemove ? `<button class="x" data-remove="${esc(src.key)}" aria-label="Remove ${esc(src.name)}" title="Remove">×</button>` : ''}
+      </li>`;
+    }).join('');
+    $('#btn-clear').hidden = !isHost || state.sources.length < 2;
+
+    // Built-in packs, grouped by category. Tap to add; tap again to remove.
+    const added = new Map(state.sources.filter((x) => x.packId).map((x) => [x.packId, x]));
+    const cats = [];
+    for (const pk of state.packs || []) {
+      let c = cats.find((x) => x.name === pk.cat);
+      if (!c) cats.push(c = { name: pk.cat, packs: [] });
+      c.packs.push(pk);
+    }
+    $('#packs').innerHTML = cats.map((c) => `<h3>${esc(c.name)}</h3><div class="pack-row">${c.packs.map((pk) =>
+      `<button class="pack${added.has(pk.id) ? ' on' : ''}${busyPacks.has(pk.id) ? ' busy' : ''}" data-pack="${esc(pk.id)}" aria-pressed="${added.has(pk.id)}">${esc(pk.name)}</button>`
+    ).join('')}</div>`).join('');
+
+    document.querySelectorAll('#modes .mode').forEach((el) => {
+      const on = el.dataset.mode === state.settings.mode;
+      el.classList.toggle('on', on);
+      el.setAttribute('aria-checked', on);
+    });
+    const modeName = { classic: 'Classic', hard: 'Hard', chaos: 'Chaos' }[state.settings.mode] || 'Classic';
+    $('#guest-mode').textContent = `Mode: ${modeName}. ${state.settings.rounds} songs.`;
 
     const rSel = $('#set-rounds'), tSel = $('#set-time'), gSel = $('#set-guesses');
     if (!rSel.options.length) {
@@ -202,7 +270,7 @@
     tSel.value = state.settings.roundTime;
     gSel.value = state.settings.maxGuesses;
     $('#btn-start').disabled = state.poolSize < 2;
-    $('#btn-start').textContent = state.poolSize < 2 ? 'Add songs to start' : `Start game · ${state.settings.rounds} songs`;
+    $('#btn-start').textContent = state.poolSize < 2 ? 'Add songs to start' : `Start ${state.settings.rounds} songs`;
   }
 
   function inviteUrl() {
@@ -230,9 +298,36 @@
     btn.disabled = false; btn.textContent = 'Add';
     if (!res.ok) return toast(res.error, 'error', 6000);
     $('#playlist-input').value = '';
-    if (res.added === 0) toast('Those songs were already in the pool', 'info');
+    if (res.added === 0) toast('Those songs were already in the game', 'info');
   };
   $('#btn-clear').onclick = () => emit('clearPool');
+  const busyPacks = new Set();
+  document.addEventListener('click', async (e) => {
+    const rm = e.target.closest('[data-remove]');
+    if (rm) {
+      const res = await emit('removeSource', { key: rm.dataset.remove });
+      if (!res.ok) toast(res.error, 'error');
+      return;
+    }
+    const pk = e.target.closest('[data-pack]');
+    if (pk && !busyPacks.has(pk.dataset.pack)) {
+      const id = pk.dataset.pack;
+      const existing = state.sources.find((x) => x.packId === id);
+      if (existing) {
+        const res = await emit('removeSource', { key: existing.key });
+        if (!res.ok) toast(res.error, 'error');
+        return;
+      }
+      busyPacks.add(id); pk.classList.add('busy');
+      const res = await emit('addPlaylist', { packId: id });
+      busyPacks.delete(id);
+      if (!res.ok) toast(res.error, 'error', 6000);
+      if (state.phase === 'lobby') renderLobby();
+      return;
+    }
+    const md = e.target.closest('#modes [data-mode]');
+    if (md) emit('settings', { mode: md.dataset.mode });
+  });
   $('#set-rounds').onchange = (e) => emit('settings', { rounds: e.target.value });
   $('#set-time').onchange = (e) => emit('settings', { roundTime: e.target.value });
   $('#set-guesses').onchange = (e) => emit('settings', { maxGuesses: e.target.value });
@@ -331,7 +426,28 @@
     setPlayingUI(false, 0);
   }
 
-  // mode: 'round' (counts toward your score) or 'listen' (the 15 s after you've guessed)
+  // Chaos-mode twists. Each changes how the clip sounds, never how long you heard it.
+  const TWISTS = {
+    reverse: { name: 'Reversed', blurb: 'The clip plays backwards' },
+    chipmunk: { name: 'Chipmunk', blurb: 'Sped up and pitched high', rate: 1.45 },
+    slowmo: { name: 'Slow-mo', blurb: 'Slowed down and pitched low', rate: 0.72 },
+    underwater: { name: 'Underwater', blurb: 'Muffled, like it\'s through a wall' },
+    'random-start': { name: 'Deep cut', blurb: 'Starts somewhere in the middle' },
+  };
+
+  function reversedBuffer(c) {
+    if (c.reversed) return c.reversed;
+    const b = c.buffer;
+    const r = ctx.createBuffer(b.numberOfChannels, b.length, b.sampleRate);
+    for (let ch = 0; ch < b.numberOfChannels; ch++) {
+      const src = b.getChannelData(ch), dst = r.getChannelData(ch), n = src.length;
+      for (let i = 0; i < n; i++) dst[i] = src[n - 1 - i];
+    }
+    return (c.reversed = r);
+  }
+
+  // mode: 'round' (counts toward your score) or 'listen' (the 15 s after you've guessed:
+  // always the real song, from the top, no twist)
   async function startClip(url, wantLen, mode) {
     stopAudio();
     const gen = playGen;
@@ -340,20 +456,42 @@
     let c;
     try { c = await ensureDecoded(url); } catch { return; }
     if (gen !== playGen) return; // something else started or the user stopped it meanwhile
-    const buf = c.buffer;
-    const len = Math.max(0.05, Math.min(wantLen, buf.duration - c.start));
+    const r = mode === 'round' && state && state.round;
+    const twist = r ? TWISTS[r.twist] || null : null;
+    const twistKey = r ? r.twist : null;
+    const rate = (twist && twist.rate) || 1;
+    const dur = c.buffer.duration;
+    const startPos = Math.min(c.start + (r ? r.offset || 0 : 0), Math.max(c.start, dur - 0.3));
+    const len = Math.max(0.05, Math.min(wantLen, (dur - startPos) / rate));
+
     const src = ctx.createBufferSource();
-    src.buffer = buf;
+    let from = startPos;
+    if (twistKey === 'reverse') {
+      src.buffer = reversedBuffer(c);
+      from = Math.max(0, dur - (startPos + len)); // same slice of the song, played backwards
+    } else {
+      src.buffer = c.buffer;
+    }
+    src.playbackRate.value = rate;
     const gain = ctx.createGain();
+    let level = c.gain;
+    let node = src;
+    if (twistKey === 'underwater') {
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = 480; lp.Q.value = 0.8;
+      node = src.connect(lp);
+      level = Math.min(level * 1.7, 4);
+    }
     const t0 = ctx.currentTime + 0.03;
     const fadeIn = Math.min(0.004, len / 10);
     const fadeOut = Math.min(mode === 'listen' ? 0.6 : 0.012, len / 5);
     gain.gain.setValueAtTime(0, t0);
-    gain.gain.linearRampToValueAtTime(c.gain, t0 + fadeIn);
-    gain.gain.setValueAtTime(c.gain, t0 + len - fadeOut);
+    gain.gain.linearRampToValueAtTime(level, t0 + fadeIn);
+    gain.gain.setValueAtTime(level, t0 + len - fadeOut);
     gain.gain.linearRampToValueAtTime(0, t0 + len);
-    src.connect(gain).connect(ctx.destination);
-    src.start(t0, c.start, len + 0.005);
+    node.connect(gain).connect(ctx.destination);
+    src.start(t0, from);
+    src.stop(t0 + len + 0.005);
     const entry = { source: src, gain };
     activeSources.add(entry);
     if (mode === 'round') {
@@ -397,7 +535,7 @@
     $('.ring circle').style.strokeDashoffset = String(289 * (1 - (roundOn ? progress : 0)));
     const listenOn = mode === 'listen';
     document.querySelectorAll('[data-listen]').forEach((btn) => {
-      btn.textContent = listenOn ? '■ Stop' : `▶ Play ${LISTEN_LEN} seconds`;
+      btn.textContent = listenOn ? 'Stop' : `Play ${LISTEN_LEN} seconds`;
     });
     document.querySelectorAll('.listen-bar span').forEach((bar) => {
       bar.style.width = `${listenOn ? progress * 100 : 0}%`;
@@ -429,20 +567,44 @@
   }
   buildTicks();
 
+  // Waveform strip under the slider: purely visual, seeded per song.
+  const BARS = 56;
+  function buildWave(seed) {
+    let x = 0;
+    for (const ch of String(seed)) x = (x * 31 + ch.charCodeAt(0)) >>> 0;
+    const rnd = () => ((x = (x * 1664525 + 1013904223) >>> 0) / 4294967296);
+    $('#wave').innerHTML = Array.from({ length: BARS }, (_, i) => {
+      const h = 22 + Math.round(78 * (0.35 + 0.65 * rnd()) * (0.55 + 0.45 * Math.sin(i / 3.1 + rnd())));
+      return `<i style="height:${Math.max(14, Math.min(100, h))}%"></i>`;
+    }).join('');
+  }
+  buildWave('sliver');
+  function paintWave() {
+    const lit = Number(scrubber.value) / 1000;
+    const heard = myHeard ? sliderFromLen(myHeard) / 1000 : -1;
+    document.querySelectorAll('#wave i').forEach((el, i) => {
+      const pos = (i + 0.5) / BARS;
+      el.className = pos <= heard ? 'heard' : pos <= lit ? 'lit' : '';
+    });
+  }
+
   function updateReadout() {
     const len = currentLen();
-    scrubber.style.setProperty('--fill', `${scrubber.value / 10}%`);
+    paintWave();
     $('#len-value').textContent = fmtLen(len);
     const effective = Math.max(len, myHeard);
     $('#pts-value').textContent = fmt(pointsFor(effective));
+    const mult = (state && state.round && state.round.mult) || 1;
+    $('#pts-value').textContent = fmt(Math.round(pointsFor(effective) * mult));
     $('#heard-note').textContent = myHeard > 0
-      ? `You've heard ${fmtLen(myHeard)} — max ${fmt(pointsFor(myHeard))} pts. Drag right to hear more.`
-      : 'Drag to hear more. Points drop the longer you listen.';
+      ? `You've heard ${fmtLen(myHeard)}, so you can score up to ${fmt(Math.round(pointsFor(myHeard) * mult))}.`
+      : 'Drag to hear more. The longer you listen, the fewer points.';
   }
   scrubber.addEventListener('input', () => { if (playing) stopAudio(); selectedLen = lenFromSlider(Number(scrubber.value)); updateReadout(); });
   $('#btn-play').onclick = () => playClip();
   // +1s: one more second than the longest you've heard (or the slider, if that's further).
   $('#btn-plus').onclick = () => {
+    if (myHeard >= MAX_LEN) return;
     setLen(Math.max(currentLen(), myHeard) + 1);
     updateReadout();
     playClip(selectedLen);
@@ -461,9 +623,18 @@
       $('#done-card').dataset.status = '';
       $('#guess-input').value = '';
       hideSuggestions();
+      buildWave(key);
+      celebrated = false;
       loadClip(r.clipUrl).catch(() => {});
     }
-    $('#round-label').textContent = `Round ${r.num} / ${r.total}`;
+    $('#round-label').textContent = `Song ${r.num} of ${r.total}`;
+    const tw = r.twist ? TWISTS[r.twist] : r.mode === 'hard' ? { name: 'Hard mode', blurb: 'Starts mid-song. Type the title yourself.' } : null;
+    $('#twist').hidden = !tw;
+    if (tw) { $('#twist b').textContent = tw.name; $('#twist span').textContent = tw.blurb; }
+    typedMode = !!r.typed;
+    $('#guess-title').textContent = typedMode ? 'Type the title' : 'Your guess';
+    gi.placeholder = typedMode ? 'Type the song title' : 'Start typing a song or artist…';
+    $('#btn-submit-typed').hidden = !typedMode;
     updateReadout();
     updatePlayButton();
 
@@ -471,32 +642,33 @@
     const wrong = my.guesses.filter((g) => !g.correct).length;
     $('#guesses-left').textContent = state.maxGuesses
       ? `${state.maxGuesses - my.guesses.length} left`
-      : wrong ? `${wrong} wrong (−${fmt(wrong * 500)})` : 'unlimited guesses';
+      : wrong ? `${wrong} wrong, −${fmt(wrong * 500)}` : 'Unlimited guesses';
     $('#my-guesses').innerHTML = my.guesses.map((g) =>
-      `<li class="${g.correct ? 'ok' : ''}">${g.correct ? '✓' : '✗'} ${esc(g.title)} — ${esc(g.artist)}</li>`).join('');
+      `<li class="${g.correct ? 'ok' : ''}">${esc(g.title)}${g.artist ? `, ${esc(g.artist)}` : ''}</li>`).join('');
 
     const done = my.status !== 'playing';
     $('#guess-card').hidden = done;
     $('#done-card').hidden = !done;
     if (done) {
       const msg = {
-        correct: `<div class="eyebrow">Got it!</div><div class="big-pts">+${fmt(my.points)}</div>`,
-        out: `<div class="eyebrow">Out of guesses</div><p>Wait for the reveal…</p>`,
-        'gave-up': `<div class="eyebrow">You gave up</div><p>Wait for the reveal…</p>`,
-        timeout: `<div class="eyebrow">${r.endsAt ? 'Time\'s up' : 'Round over'}</div>`,
+        correct: `<div class="verdict">Got it</div><div class="big-pts">+${fmt(my.points)}</div>`,
+        out: `<div class="verdict">Out of guesses</div>`,
+        'gave-up': `<div class="verdict">Skipped</div>`,
+        timeout: `<div class="verdict">${r.endsAt ? 'Time\'s up' : 'Song over'}</div>`,
       }[my.status] || '';
+      if (my.status === 'correct' && !celebrated) { celebrated = true; confetti(); }
       if ($('#done-card').dataset.status !== my.status) {
         $('#done-card').dataset.status = my.status;
         $('#done-card').innerHTML = msg +
-          `<button class="btn listen" data-listen>▶ Play ${LISTEN_LEN} seconds</button><div class="listen-bar"><span></span></div>` +
-          '<p class="hint small">Waiting for everyone else…</p>';
+          `<button class="btn listen" data-listen>Play ${LISTEN_LEN} seconds</button><div class="listen-bar"><span></span></div>` +
+          '<p>Here\'s the song while everyone else finishes.</p>';
         // Hear the song right after your guess. Your own device only.
         toggleListen();
       }
     }
 
     $('#round-players').innerHTML = state.players.filter((p) => p.connected).map((p) => {
-      const icon = { correct: '✓ ', out: '', 'gave-up': '', timeout: '' }[p.roundStatus] ?? '♪ ';
+      const icon = { correct: '✓ ', out: '', 'gave-up': '', timeout: '' }[p.roundStatus] ?? '';
       return `<li class="${p.roundStatus || ''}">${icon}${esc(p.name)}</li>`;
     }).join('');
 
@@ -570,8 +742,10 @@
     return sections.flatMap((sec) => sec.songs);
   }
 
+  let typedMode = false;
+  let celebrated = false;
   function renderSuggestions() {
-    if (!gi.value.trim()) return hideSuggestions();
+    if (typedMode || !gi.value.trim()) return hideSuggestions();
     matches = search(gi.value);
     active = Math.min(active, Math.max(0, matches.length - 1));
     sug.hidden = false;
@@ -590,6 +764,7 @@
 
   gi.addEventListener('input', () => { active = 0; renderSuggestions(); });
   gi.addEventListener('keydown', (e) => {
+    if (typedMode) { if (e.key === 'Enter') { e.preventDefault(); submitTyped(); } return; }
     if (sug.hidden || !matches.length) return;
     if (e.key === 'ArrowDown') { e.preventDefault(); active = (active + 1) % matches.length; renderSuggestions(); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); active = (active - 1 + matches.length) % matches.length; renderSuggestions(); }
@@ -602,19 +777,44 @@
   });
   gi.addEventListener('blur', () => setTimeout(hideSuggestions, 150));
 
+  $('#btn-submit-typed').onclick = () => submitTyped();
+  async function submitTyped() {
+    const text = gi.value.trim();
+    if (!text) return;
+    gi.value = '';
+    const res = await emit('guessText', { text });
+    afterGuess(res);
+    gi.focus();
+  }
+
   async function submitGuess(songId) {
     hideSuggestions();
     gi.value = '';
     const res = await emit('guess', { songId });
+    afterGuess(res);
+  }
+
+  function afterGuess(res) {
     if (!res.ok) return toast(res.error, 'error');
-    if (res.correct) toast(`Correct! +${fmt(res.points)}`, 'good');
-    else {
+    if (!res.correct) {
       $('#guess-card').classList.add('shake');
       setTimeout(() => $('#guess-card').classList.remove('shake'), 400);
-      const msg = res.guessesLeft === null ? 'Nope — try again (−500)'
-        : res.guessesLeft ? `Nope — ${res.guessesLeft} guess${res.guessesLeft === 1 ? '' : 'es'} left (−500)` : 'Out of guesses';
-      toast(msg, 'error', 2500);
+      const msg = res.guessesLeft === null ? 'Not that one. −500, try again.'
+        : res.guessesLeft ? `Not that one. −500, ${res.guessesLeft} guess${res.guessesLeft === 1 ? '' : 'es'} left.` : 'Out of guesses.';
+      toast(msg, 'error', 1800);
     }
+  }
+
+  function confetti() {
+    if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const box = $('#confetti');
+    const colors = ['#FFD43B', '#FF4F9A', '#2FD6A0', '#FFFFFF', '#8FA0FF'];
+    box.innerHTML = Array.from({ length: 70 }, () => {
+      const left = Math.random() * 100, dx = (Math.random() - 0.5) * 220, rot = Math.round(Math.random() * 720 - 360);
+      const delay = Math.random() * 0.25, dur = 1 + Math.random() * 0.8;
+      return `<i style="left:${left}%;background:${colors[Math.floor(Math.random() * colors.length)]};--dx:${dx}px;--rot:${rot}deg;animation-delay:${delay}s;animation-duration:${dur}s"></i>`;
+    }).join('');
+    setTimeout(() => { box.innerHTML = ''; }, 2400);
   }
 
   // ---------- reveal ----------
@@ -625,19 +825,25 @@
     const v = state.reveal;
     $('#reveal-title').textContent = v.title;
     $('#reveal-artist').textContent = v.artist;
-    $('#reveal-cover').style.backgroundImage = v.cover ? `url("${v.cover}")` : '';
+    $('#reveal-cover').style.backgroundImage = v.cover
+      ? `url("${encodeURI(v.cover)}"), linear-gradient(135deg, #2336E6, #FF4F9A)` : '';
     const link = $('#reveal-link');
     link.hidden = !v.link;
     if (v.link) link.href = v.link;
-    const label = { correct: '', out: 'missed', 'gave-up': 'gave up', timeout: 'ran out of time' };
+    const twistName = v.twist && TWISTS[v.twist] ? TWISTS[v.twist].name : null;
+    $('#reveal-mode').textContent = v.mode === 'hard' ? `Hard mode, ${v.mult}× points`
+      : twistName ? `Chaos twist: ${twistName}, ${v.mult}× points` : '';
+    const label = { correct: '', out: 'Missed it', 'gave-up': 'Skipped', timeout: 'Ran out of time' };
     const totals = Object.fromEntries(state.players.map((p) => [p.id, p.score]));
-    $('#reveal-results').innerHTML = v.results.map((r) => `
-      <li>
-        <span>${esc(r.name)}<div class="r-sub">${r.status === 'correct'
-          ? `heard ${fmtLen(Math.max(0.1, r.heard))}${r.guesses > 1 ? ` · ${r.guesses - 1} wrong` : ''}`
-          : label[r.status] || ''} · total ${fmt(totals[r.id])}</div></span>
+    $('#reveal-results').innerHTML = v.results.map((r) => {
+      const how = r.status === 'correct'
+        ? `Heard ${fmtLen(Math.max(0.1, r.heard))}${r.guesses > 1 ? `, ${r.guesses - 1} wrong` : ''}`
+        : label[r.status] || '';
+      return `<li>
+        <div><div class="r-name">${esc(r.name)}</div><div class="r-sub">${how}. Total ${fmt(totals[r.id])}</div></div>
         <span class="r-pts ${r.points ? '' : 'zero'}">+${fmt(r.points)}</span>
-      </li>`).join('');
+      </li>`;
+    }).join('');
     $('#btn-next').textContent = v.last ? 'See final scores' : 'Next song';
     // Play 15 s of the song for everyone (unless it's already playing from your own guess).
     const key = `${state.code}:${v.title}:${v.autoNextAt}`;
@@ -648,7 +854,7 @@
     clearInterval(autoInt);
     const tick = () => {
       const s = Math.max(0, Math.ceil((v.autoNextAt - (Date.now() + clockSkew)) / 1000));
-      $('#auto-next').textContent = s ? `${v.last ? 'Final scores' : 'Next song'} in ${s}s…` : '';
+      $('#auto-next').textContent = s ? `${v.last ? 'Final scores' : 'Next song'} in ${s} seconds` : '';
     };
     tick();
     autoInt = setInterval(tick, 500);
@@ -661,9 +867,9 @@
     const ps = [...state.players].sort((a, b) => b.score - a.score);
     const top = ps[0];
     const tied = ps.filter((p) => p.score === top.score);
-    $('#winner').textContent = tied.length > 1 ? `Tie: ${tied.map((p) => p.name).join(' & ')}` : `🏆 ${top.name}`;
-    $('#final-board').innerHTML = ps.map((p, i) =>
-      `<li><span>${i + 1}. ${esc(p.name)}</span><span class="b-score">${fmt(p.score)}</span></li>`).join('');
+    $('#winner').textContent = tied.length > 1 ? `${tied.map((p) => p.name).join(' & ')} tie` : top.name;
+    $('#final-board').innerHTML = ps.map((p) =>
+      `<li><span class="b-name">${esc(p.name)}</span><span class="b-score">${fmt(p.score)}</span></li>`).join('');
   }
   $('#btn-again').onclick = () => { unlockAudio(); emit('start').then((r) => !r.ok && toast(r.error, 'error')); };
   $('#btn-lobby').onclick = () => emit('lobby');

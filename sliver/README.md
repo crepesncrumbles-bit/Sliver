@@ -41,6 +41,18 @@ A black window opens and your browser goes to <http://localhost:3000>.
    - **Testing alone:** open the link in a second browser window (or a private window) and play against yourself.
 4. Pick rounds and seconds per round, then **Start game**.
 
+### Adding songs
+- Tap any pack (genres, decades, artists) to add it. Tap it again to remove it.
+- Or paste a public Spotify/Deezer playlist link, or type an artist's name, and click **Add**.
+- Remove any single playlist with its **×**. The host can remove anything; others can remove what they added.
+
+### Game modes (host picks in the lobby)
+- **Classic:** every clip starts at the top of the song, like Songless.
+- **Hard (1.5× points):** each clip starts somewhere random in the song, and there's no list to pick from.
+  You type the title yourself (small typos are fine).
+- **Chaos (1.25× points):** every song gets a random twist: reversed, chipmunk, slow-mo, underwater, or a deep cut
+  that starts mid-song. The 15-second listen afterwards is always the real song.
+
 ### Scoring (same as Songless)
 - Drag the slider (0.1 s up to the whole 30 s clip) or tap **+1s**, then play.
   Your points depend on the **longest** clip you've played that song:

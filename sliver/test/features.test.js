@@ -144,6 +144,25 @@ const mgr = () => new RoomManager({ to: () => ({ emit() {} }) });
       room.clearTimers();
     }
 
+    console.log('leaving a room');
+    {
+      const m = mgr();
+      const room = m.create();
+      const a = room.addPlayer('Host', { id: 'a' });
+      const b = room.addPlayer('Friend', { id: 'b' });
+      await room.addSource('demo', 'Host');
+      room.settings.rounds = 2; room.settings.roundTime = 0; await room.start();
+      room.leave(a.id);
+      check(!room.players.has(a.id) && room.hostId === b.id, 'host leaves mid-game → friend becomes host');
+      check(room.phase === 'round', 'game keeps going for the people still there');
+      room.giveUp(b.id);
+      check(room.phase === 'reveal', 'round ends normally after the leaver is gone');
+      room.leave(b.id);
+      m.sweep();
+      check(!m.rooms.has(room.code), 'empty room is deleted right away');
+      room.clearTimers();
+    }
+
     console.log('classic unchanged');
     {
       const room = mgr().create();

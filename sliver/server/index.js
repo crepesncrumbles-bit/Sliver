@@ -91,6 +91,7 @@ io.on('connection', (socket) => {
   const sendPool = () => socket.emit('pool', { version: room.poolVersion, songs: room.poolList() });
 
   socket.on('create', ({ name } = {}, ack) => {
+    if (room) socket.leaveRoom(room.code);
     room = rooms.create();
     player = room.addPlayer(name, socket);
     socket.join(room.code);
@@ -116,11 +117,11 @@ io.on('connection', (socket) => {
 
   socket.on('getPool', () => room && sendPool());
 
-  socket.on('addPlaylist', async ({ input } = {}, ack) => {
+  socket.on('addPlaylist', async ({ input, packId } = {}, ack) => {
     if (!need(ack)) return;
     if (room.phase !== 'lobby' && room.phase !== 'results') return fail(ack, new Error('Add songs between games'));
     try {
-      const result = await room.addSource(input, player.name);
+      const result = await room.addSource({ input, packId }, { name: player.name, id: player.id });
       ack && ack({ ok: true, ...result });
       io.to(room.code).emit('toast', { kind: 'info', text: `${player.name} added ${result.added} songs from "${result.name}"` });
       io.to(room.code).emit('pool', { version: room.poolVersion, songs: room.poolList() });
@@ -133,6 +134,17 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('removeSource', ({ key } = {}, ack) => {
+    if (!need(ack)) return;
+    try {
+      const { name } = room.removeSource(key, player);
+      ack && ack({ ok: true });
+      io.to(room.code).emit('toast', { kind: 'info', text: `${player.name} removed "${name}"` });
+      io.to(room.code).emit('pool', { version: room.poolVersion, songs: room.poolList() });
+      room.broadcast();
+    } catch (err) { fail(ack, err); }
+  });
+
   socket.on('clearPool', (_, ack) => {
     if (!hostOnly(ack)) return;
     room.clearPool();
@@ -142,7 +154,7 @@ io.on('connection', (socket) => {
   });
 
   // Send only the fields being changed. roundTime 0 = no limit, maxGuesses 0 = unlimited.
-  socket.on('settings', ({ rounds, roundTime, maxGuesses } = {}, ack) => {
+  socket.on('settings', ({ rounds, roundTime, maxGuesses, mode } = {}, ack) => {
     if (!hostOnly(ack)) return;
     const r = Math.round(Number(rounds));
     const t = Math.round(Number(roundTime));
@@ -150,6 +162,7 @@ io.on('connection', (socket) => {
     if (r >= 1 && r <= 20) room.settings.rounds = r;
     if (roundTime !== undefined && (t === 0 || (t >= 15 && t <= 300))) room.settings.roundTime = t;
     if (maxGuesses !== undefined && g >= 0 && g <= 20) room.settings.maxGuesses = g;
+    if (['classic', 'hard', 'chaos'].includes(mode)) room.settings.mode = mode;
     room.broadcast();
     ack && ack({ ok: true });
   });
@@ -174,6 +187,11 @@ io.on('connection', (socket) => {
     try { ack && ack({ ok: true, ...room.guess(player.id, songId) }); } catch (err) { fail(ack, err); }
   });
 
+  socket.on('guessText', ({ text } = {}, ack) => {
+    if (!need(ack)) return;
+    try { ack && ack({ ok: true, ...room.guessText(player.id, text) }); } catch (err) { fail(ack, err); }
+  });
+
   socket.on('giveUp', () => room && player && room.giveUp(player.id));
 
   socket.on('next', async (_, ack) => {
@@ -192,6 +210,17 @@ io.on('connection', (socket) => {
   socket.on('lobby', (_, ack) => {
     if (!hostOnly(ack)) return;
     room.backToLobby();
+    ack && ack({ ok: true });
+  });
+
+  socket.on('leave', (_, ack) => {
+    if (room && player) {
+      const r = room;
+      socket.leaveRoom(r.code);
+      r.leave(player.id);
+      if (!r.players.size) rooms.sweep();
+    }
+    room = null; player = null;
     ack && ack({ ok: true });
   });
 

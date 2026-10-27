@@ -160,6 +160,10 @@ class Realtime extends EventEmitter {
         if (!this.rooms.has(room)) this.rooms.set(room, new Set());
         this.rooms.get(room).add(conn.id);
       },
+      leaveRoom: (room) => {
+        const set = this.rooms.get(room);
+        if (set) { set.delete(conn.id); if (!set.size) this.rooms.delete(room); }
+      },
       _fire: (evt, data, ack) => { const fn = handlers.get(evt); if (fn) fn(data, ack); },
     };
     conn.on('event', (evt, data, ack) => {

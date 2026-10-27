@@ -107,7 +107,7 @@ function client() {
     check(a.last.phase === 'lobby', 'cannot start with empty song pool');
 
     console.log('songs');
-    const sp = await b.call('addPlaylist', { input: 'not a link' });
+    const sp = await b.call('addPlaylist', { input: 'https://example.com/not-music' });
     check(!sp.ok && /Spotify or Deezer/.test(sp.error), 'junk input gives clear message');
     const add = await b.call('addPlaylist', { input: 'demo' });
     check(add.ok && add.added === 12, 'friend adds 12 demo songs');
