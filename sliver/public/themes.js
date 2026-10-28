@@ -74,14 +74,80 @@
       '--stroke': '#111111', '--inverse': '#111111', '--inverse-2': '#BBBBBB',
       '--brand': '#111111', '--accent': '#111111', '--accent-hover': '#333333', '--accent-strong': '#111111',
       '--pop': '#FFFFFF', '--pop-soft': '#EDEDED', '--pop-ink': '#111111', '--mint': '#2FD6A0' } },
+
+    // ---- Holiday themes: only offered around their time of year (from/to are MM-DD, inclusive) ----
+    { id: 'newyear', name: 'New Year', deco: '🥂', season: { from: '12-27', to: '01-03' }, dark: true, vars: { ...dark,
+      '--page': '#0B0B14', '--page-deep': '#000000', '--on-page-2': '#C9BE96',
+      '--paper': '#16151F', '--paper-2': '#21202C', '--surface': '#1B1A25', '--line': '#2E2C3B',
+      '--glow-a': 'rgba(212,175,55,.28)', '--glow-b': 'rgba(150,120,255,.20)',
+      '--brand': '#E8C766', '--accent': '#D4AF37', '--accent-hover': '#E2BF4C', '--accent-strong': '#F0D27A', '--accent-ink': '#1A1400',
+      '--pop': '#F5D76E', '--pop-soft': '#FAE7A5', '--pop-ink': '#1A1400', '--mint': '#5CE0B8', '--red': '#FF5C70' } },
+
+    { id: 'valentine', name: 'Valentine’s', deco: '💘', season: { from: '02-01', to: '02-15' }, vars: { ...light,
+      '--page': '#E8336F', '--page-deep': '#B01E50', '--on-page-2': '#FFDCE8',
+      '--glow-a': 'rgba(255,255,255,.28)', '--glow-b': 'rgba(155,27,79,.35)',
+      '--paper': '#FFF8FA', '--paper-2': '#FCEAF0', '--line': '#F6D3DF',
+      '--brand': '#C21F59', '--accent': '#9B1B4F', '--accent-hover': '#B02160', '--accent-strong': '#9B1B4F',
+      '--pop': '#FFC2D6', '--pop-soft': '#FFDCE8', '--pop-ink': '#5A0F2A' } },
+
+    { id: 'stpatricks', name: 'St. Patrick’s', deco: '☘️', season: { from: '03-10', to: '03-18' }, vars: { ...light,
+      '--page': '#11904B', '--page-deep': '#0A6635', '--on-page-2': '#CFF5DD',
+      '--glow-a': 'rgba(242,169,0,.32)', '--glow-b': 'rgba(184,243,90,.25)',
+      '--brand': '#0E7A40', '--accent': '#E8A300', '--accent-hover': '#F5B10D', '--accent-strong': '#A86F00', '--accent-ink': '#1A1300',
+      '--pop': '#B8F35A', '--pop-soft': '#D6F99E', '--pop-ink': '#0F2A12' } },
+
+    { id: 'july4', name: 'Fourth of July', deco: '🎆', season: { from: '06-28', to: '07-05' }, vars: { ...light,
+      '--page': '#1C3D8F', '--page-deep': '#10275E', '--on-page-2': '#CBD7FF',
+      '--glow-a': 'rgba(215,38,61,.38)', '--glow-b': 'rgba(255,255,255,.18)',
+      '--brand': '#1C3D8F', '--accent': '#D7263D', '--accent-hover': '#E3394F', '--accent-strong': '#B81D31',
+      '--pop': '#FFFFFF', '--pop-soft': '#E6ECFF', '--pop-ink': '#10275E' } },
+
+    { id: 'halloween', name: 'Halloween', deco: '🎃', season: { from: '10-01', to: '11-01' }, dark: true, vars: { ...dark,
+      '--page': '#170B22', '--page-deep': '#000000', '--on-page-2': '#B9A6CF',
+      '--paper': '#22152F', '--paper-2': '#2E1E3E', '--surface': '#271A35', '--line': '#3A2A4C',
+      '--glow-a': 'rgba(255,122,26,.32)', '--glow-b': 'rgba(140,80,255,.25)',
+      '--brand': '#B98CFF', '--accent': '#FF7A1A', '--accent-hover': '#FF8E3A', '--accent-strong': '#FF9A4D', '--accent-ink': '#1A0E00',
+      '--pop': '#FF7A1A', '--pop-soft': '#FFB27A', '--pop-ink': '#1A0E00', '--mint': '#7CFF6B', '--red': '#FF4F6A' } },
+
+    { id: 'thanksgiving', name: 'Thanksgiving', deco: '🦃', season: { from: '11-10', to: '11-30' }, vars: { ...light,
+      '--page': '#A8521E', '--page-deep': '#7A3912', '--on-page-2': '#FFE2CC',
+      '--glow-a': 'rgba(242,177,52,.35)', '--glow-b': 'rgba(122,46,14,.40)',
+      '--paper': '#FFFAF4', '--paper-2': '#F8EDE1', '--line': '#EED9C4',
+      '--brand': '#A8521E', '--accent': '#7A2E0E', '--accent-hover': '#8E3712', '--accent-strong': '#7A2E0E',
+      '--pop': '#F2B134', '--pop-soft': '#F8CF7A', '--pop-ink': '#2A1606' } },
+
+    { id: 'christmas', name: 'Christmas', deco: '🎄', season: { from: '12-01', to: '12-26' }, vars: { ...light,
+      '--page': '#B3132B', '--page-deep': '#7A0B1C', '--on-page-2': '#FFD6DC',
+      '--glow-a': 'rgba(255,255,255,.20)', '--glow-b': 'rgba(15,122,67,.38)',
+      '--brand': '#B3132B', '--accent': '#0F7A43', '--accent-hover': '#13904F', '--accent-strong': '#0B6637',
+      '--pop': '#F4C542', '--pop-soft': '#F9DC85', '--pop-ink': '#2A1A00' } },
   ];
+
+  // Is a holiday theme in season? Uses this device's date.
+  const mmdd = (d) => `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  function inSeason(t, date = new Date()) {
+    if (!t.season) return true;
+    const today = mmdd(date), { from, to } = t.season;
+    return from <= to ? today >= from && today <= to : today >= from || today <= to; // wraps past New Year
+  }
+  // What the settings page shows: holidays happening now first, then the regular themes.
+  function available(date = new Date()) {
+    return THEMES.filter((t) => t.season && inSeason(t, date)).concat(THEMES.filter((t) => !t.season));
+  }
+  function seasonEnds(t) {
+    if (!t.season) return null;
+    const [m, d] = t.season.to.split('-').map(Number);
+    return new Date(2000, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
 
   const KEY = 'sliver.theme';
   function apply(id) {
-    const t = THEMES.find((x) => x.id === id) || THEMES[0];
+    let t = THEMES.find((x) => x.id === id) || THEMES[0];
+    if (!inSeason(t)) t = THEMES[0]; // holiday's over: back to the default look
     const root = document.documentElement;
     for (const [k, v] of Object.entries(t.vars)) root.style.setProperty(k, v);
     root.dataset.theme = t.id;
+    root.style.setProperty('--deco', t.deco ? `"${t.deco} "` : '""');
     root.style.colorScheme = t.dark ? 'dark' : 'light';
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', t.vars['--page']);
@@ -90,6 +156,7 @@
   function saved() { try { return localStorage.getItem(KEY) || 'cobalt'; } catch { return 'cobalt'; } }
   function save(id) { try { localStorage.setItem(KEY, id); } catch {} }
 
-  window.SliverThemes = { THEMES, apply, current: saved, set(id) { save(id); return apply(id); } };
+  const current = () => { const id = saved(); const t = THEMES.find((x) => x.id === id); return t && inSeason(t) ? id : 'cobalt'; };
+  window.SliverThemes = { THEMES, available, inSeason, seasonEnds, apply, current, set(id) { save(id); return apply(id); } };
   apply(saved());
 })();

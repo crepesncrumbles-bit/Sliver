@@ -6,7 +6,8 @@
 // Only public playlists work (private ones aren't visible to the embed player).
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36';
-const MAX_TRACKS = 500;
+const MAX_TRACKS = 2000;
+const { extractToken, rememberToken, morePlaylistTracks } = require('./spotifyweb');
 
 function isSpotify(text) {
   return /(open\.spotify\.com|spotify\.link|spotify\.app\.link|^spotify:)/i.test(String(text || '').trim());
@@ -80,7 +81,7 @@ function parseEmbed(html, kind, id) {
     });
   }
   if (!tracks.length) throw new Error(`"${name}" has no songs I can use.`);
-  return { name, tracks };
+  return { name, tracks, listed: entity.trackList.length };
 }
 
 async function loadSpotifySource(input) {
@@ -90,7 +91,23 @@ async function loadSpotifySource(input) {
   });
   if (res.status === 404) throw new Error('Spotify says that playlist doesn\'t exist (or it\'s private).');
   if (!res.ok) throw new Error(`Spotify returned HTTP ${res.status}`);
-  return parseEmbed(await res.text(), kind, id);
+  const html = await res.text();
+  const result = parseEmbed(html, kind, id);
+  const { listed } = result;
+  delete result.listed;
+  // The embed page stops at 100 songs. Ask Spotify's web player for the rest.
+  if (kind === 'playlist' && listed >= 100) {
+    const tok = extractToken(html);
+    rememberToken(tok);
+    const more = await morePlaylistTracks(id, { token: tok && tok.token, offset: listed, max: MAX_TRACKS }).catch(() => []);
+    const have = new Set(result.tracks.map((t) => t.sourceId));
+    for (const t of more) {
+      if (result.tracks.length >= MAX_TRACKS) break;
+      if (!have.has(t.sourceId)) { have.add(t.sourceId); result.tracks.push(t); }
+    }
+    result.truncated = more.length === 0; // Spotify wouldn't share past the first 100
+  }
+  return result;
 }
 
 async function fetchUrlPreview(url) {

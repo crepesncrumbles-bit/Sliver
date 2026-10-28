@@ -43,7 +43,8 @@ A black window opens and your browser goes to <http://localhost:3000>.
 
 ### Adding songs
 - Tap any pack (genres, decades, artists) to add it. Tap it again to remove it.
-- Or paste a public Spotify/Deezer playlist link, or type an artist's name, and click **Add**.
+- Or paste a public Spotify/Deezer playlist link, or start typing an artist's name and pick them from the
+  suggestions. Playlists can be longer than 100 songs (up to 2,000).
 - Remove any single playlist with its **×**. The host can remove anything; others can remove what they added.
 
 ### Room controls
@@ -52,18 +53,43 @@ A black window opens and your browser goes to <http://localhost:3000>.
   Songs and players stay; scores reset. Tap it twice to confirm.
 - The host can remove a player with the **×** next to their name (tap twice to confirm). Removed players
   can't get back in by refreshing; they'd have to rejoin with the code.
+- **Players** button (top right, also tap a name during a song): the host can **Make host** or **Remove**
+  anyone, any time, even mid-game. Tap twice to confirm.
 - When someone else gets the song right, a pop-up at the top shows their name and points.
+- With 2 or more players, the **first** person to get each song gets **+500** (not in ranked).
+- After each song you see how many plays it has on Spotify (when Spotify shares it).
 
 ### Settings
-The gear (top right) opens Settings, where each person can pick a color theme: Cobalt, Sunset, Bubblegum,
-Jungle, Grape, GX Red, Midnight, Neon or Mono. It's saved on that device only.
+The gear (top right) opens Settings (saved on that device only):
+- **Sound:** volume slider, mute, and a test sound.
+- **Theme:** Cobalt, Sunset, Bubblegum, Jungle, Grape, GX Red, Midnight, Neon or Mono, plus holiday themes
+  that only show up around their time of year: New Year, Valentine's, St. Patrick's, Fourth of July,
+  Halloween, Thanksgiving and Christmas. When a holiday ends, its theme switches back to Cobalt.
+- **Account:** log in, sign up, see your stats.
+
+The host's lobby also has **Longest clip** (15, 20 or 30 s you can play while guessing) and
+**Song after you guess** (15, 20 or 30 s). 30 s is the most there is: Spotify and Deezer previews are 30 s long.
 
 ### Game modes (host picks in the lobby)
+Hard and Chaos can both be on at once for **1.875×** points. Tap Classic to turn them off.
 - **Classic:** every clip starts at the top of the song, like Songless.
 - **Hard (1.5× points):** each clip starts somewhere random in the song, and there's no list to pick from.
   You type the title yourself (small typos are fine).
 - **Chaos (1.25× points):** every song gets a random twist: reversed, chipmunk, slow-mo, underwater, or a deep cut
   that starts mid-song. The 15-second listen afterwards is always the real song.
+
+### Ranked play, leaderboards and stats
+- Tap **Log in / Sign up** on the home screen. You need a username (doesn't have to be unique), an email
+  (unique, never shown to anyone) and a password. Only ranked games need an account.
+- In the lobby the host switches to **Ranked** and picks a genre or decade. Ranked games are always 5 songs
+  from that genre, unlimited guesses, the full 30 s clip, no first-guess bonus. Hard and Chaos work as
+  multipliers. Everyone in the room must be logged in.
+- Each genre has its own **top 25** (your best ranked game there). Your **rating** works like osu! pp:
+  each genre best is worth score ÷ 100, and they add up with each one after your best counting a bit less
+  (×0.95, ×0.95², …). The trophy button opens the leaderboards; tap any name to see their stats
+  (rating, rank, accuracy, first-try %, average time heard, best per genre, recent games).
+- Ending a ranked game early saves nothing. Players who leave before the end aren't saved.
+- There's no password reset (Sliver can't send email), so pick a password you'll remember.
 
 ### Scoring (same as Songless)
 - Drag the slider (0.1 s up to the whole 30 s clip) or tap **+1s**, then play.
@@ -79,7 +105,7 @@ Jungle, Grape, GX Red, Midnight, Neon or Mono. It's saved on that device only.
   *End round now*) or 30 s to 3 min.
 - The guess box only suggests songs in this game's pool, and hides ones you've already tried.
   Type an artist's name to see **all** of their songs in the game.
-- After you guess (or give up), you hear 15 seconds of the song. It plays for everyone on the reveal screen too.
+- After you guess (or give up), you hear 15 seconds of the song (the host can make it 20 or 30). It plays for everyone on the reveal screen too.
 - Press **space** to play the clip on a laptop.
 
 ---
@@ -98,6 +124,19 @@ Free hosting on Render, deployed from GitHub. One-time setup, about 10 minutes.
 Notes: if nobody has the page open for 15 minutes, the free server sleeps; the next visit takes about
 a minute to wake it. Rooms reset when it sleeps or restarts. To update the game later, upload the
 changed files to GitHub the same way; Render redeploys automatically.
+
+### Keep accounts and leaderboards (free database, 5 minutes)
+Render's free server forgets its files whenever it sleeps, so accounts need a database. Upstash is free:
+1. Sign up at **upstash.com** → **Redis** → **Create database** → any name, pick the region closest to
+   your Render server (Ohio = us-east-2, Oregon = us-west-2), **Free** plan → **Create**.
+2. On the database page, scroll to **REST API** and copy **UPSTASH_REDIS_REST_URL** and
+   **UPSTASH_REDIS_REST_TOKEN**.
+3. In Render: your service → **Environment** → **Add environment variable** → add both, with those exact
+   names and values → **Save, rebuild and deploy**.
+
+The Render log then says "Accounts: saved in your Upstash database". Upstash archives a free database
+after 30 days with no use (it emails first, and you can restore it). On your laptop no setup is needed:
+accounts save to `data/sliver-db.json`.
 
 ## Troubleshooting
 
@@ -118,7 +157,10 @@ Rooms live in memory: if you close the window, rooms reset. Refreshing the page 
 ```
 server/index.js     web server + game events
 server/realtime.js  tiny WebSocket server (Node standard library only)
-server/game.js      rooms, rounds, scoring
+server/game.js      rooms, rounds, scoring, ranked games
+server/accounts.js  accounts, ranked scores, leaderboards, stats
+server/store.js     saves accounts (Upstash Redis online, a JSON file on a laptop)
+server/spotifyweb.js  Spotify playlists past 100 songs + play counts (best effort)
 server/spotify.js   reads public Spotify playlists (via Spotify's embed player page, no login)
 server/deezer.js    reads Deezer playlists, finds songs, fetches 30 s previews
 server/demo.js      synthesizes the offline demo songs

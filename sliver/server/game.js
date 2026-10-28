@@ -7,18 +7,22 @@ const packs = require('./packs');
 const { isSpotify, loadSpotifySource, fetchUrlPreview, fetchSpotifyCover } = require('./spotify');
 
 const MIN_LEN = 0.1;
-const MAX_LEN = 30; // the whole preview clip, like Songless
+const MAX_LEN = 30; // the whole preview clip, like Songless (previews are 30 s long)
 const WRONG_PENALTY = 500;
+const FIRST_BONUS = 500; // multiplayer: first person to get each song
+const RANKED_ROUNDS = 5;
 
-// Game modes. Hard and Chaos pay out more to make up for being harder.
+// Modifiers. They stack: Hard + Chaos = 1.5 × 1.25 = 1.875× points.
 const MODES = {
   classic: { mult: 1 },
   hard: { mult: 1.5 },   // starts somewhere random in the song + you type the title yourself
   chaos: { mult: 1.25 }, // every song gets a random twist
 };
 const TWISTS = ['reverse', 'chipmunk', 'slowmo', 'underwater', 'random-start'];
-const REVEAL_AUTO_ADVANCE_MS = 18000; // room for the 15 s listen
+const LISTEN_OPTIONS = [15, 20, 30]; // seconds of the song after you've guessed
+const CLIP_OPTIONS = [15, 20, 30];   // longest clip you can play while guessing
 const ROOM_IDLE_MS = 30 * 60 * 1000;
+const packCache = new Map(); // packId -> { at, promise } (only when opts.packCacheMs is set)
 
 // Songless's curve. Matches their published values exactly:
 // 0.1s 10,000 · 0.5s 7,388 · 1s 6,417 · 3s 5,093 · 10s 4,006 · 30s 3,500
@@ -51,7 +55,13 @@ class Room {
     this.hostId = null;
     this.phase = 'lobby'; // lobby | loading | round | reveal | results
     // roundTime 0 = no time limit; maxGuesses 0 = unlimited (Songless default)
-    this.settings = { rounds: 5, roundTime: 0, maxGuesses: 0, mode: 'classic' }; // 0 = no time limit
+    this.settings = {
+      rounds: 5, roundTime: 0, maxGuesses: 0, hard: false, chaos: false,
+      listenLen: 15, maxLen: MAX_LEN, ranked: false, rankedPack: null,
+    };
+    this.game = null; // frozen copy of the settings while a game runs
+    this.rankedPool = null; // { packId, tracks } songs for ranked play
+    this.rankedLoading = null;
     this.sources = []; // { key, name, by, byId, packId, tracks, count }
     this.lastTwist = null;
     this.gameId = 0; // bumps when a game starts or ends, so a slow song download can't revive an ended game
@@ -76,6 +86,7 @@ class Room {
       socketId: socket.id,
       connected: true,
       joinedAt: Date.now(),
+      userId: null, // set when logged in (needed for ranked)
     };
     this.players.set(p.id, p);
     if (!this.hostId) this.hostId = p.id;
@@ -94,8 +105,25 @@ class Room {
     return null;
   }
 
-  // Player chose "Leave room": remove them for good (unlike a dropped connection,
-  // which keeps their spot so a refresh can rejoin).
+  setAccount(playerId, user) {
+    const p = this.players.get(playerId);
+    if (!p) return;
+    p.userId = user ? user.id : null;
+  }
+
+  // Host hands the host role to someone else (works mid-game too).
+  transferHost(byId, targetId) {
+    if (byId !== this.hostId) throw new Error('Only the host can do that');
+    const target = this.players.get(targetId);
+    if (!target) throw new Error('That player already left');
+    if (targetId === byId) throw new Error('You\'re already the host');
+    if (!target.connected) throw new Error(`${target.name} is offline right now`);
+    this.hostId = targetId;
+    this.io.to(this.code).emit('toast', { kind: 'info', text: `${target.name} is now the host` });
+    this.broadcast();
+    return target;
+  }
+
   // Host removes someone. Returns the removed player (so the server can notify them).
   kick(byId, targetId) {
     if (byId !== this.hostId) throw new Error('Only the host can remove players');
@@ -107,6 +135,8 @@ class Room {
     return target;
   }
 
+  // Player chose "Leave room": remove them for good (unlike a dropped connection,
+  // which keeps their spot so a refresh can rejoin).
   leave(playerId, notice) {
     const p = this.players.get(playerId);
     if (!p) return;
@@ -148,14 +178,14 @@ class Room {
   // ---------- song pool ----------
   // input: a Spotify/Deezer link, "demo", or an artist's name. packId: a built-in pack.
   async addSource(what = {}, by = { name: 'Player', id: null }) {
-    const { input, packId } = typeof what === 'string' ? { input: what } : what;
+    const { input, packId, artistId } = typeof what === 'string' ? { input: what } : what;
     if (typeof by === 'string') by = { name: by, id: null };
-    let name, tracks;
+    let name, tracks, truncated = false;
     if (packId) {
       const pack = packs.byId.get(packId);
       if (!pack) throw new Error('Unknown pack');
       if (this.sources.some((s) => s.packId === packId)) throw new Error(`${pack.name} is already in`);
-      ({ tracks } = await this.loadPack(pack));
+      ({ tracks } = await this.loadPackCached(pack));
       name = pack.artist ? `${pack.name} — top songs` : pack.name;
     } else {
       const text = String(input || '').trim();
@@ -164,7 +194,8 @@ class Room {
         tracks = demoTracks();
       } else {
         if (this.opts.demoOnly) throw new Error('Demo-only mode: type "demo" to load the built-in songs.');
-        if (isSpotify(text)) ({ name, tracks } = await loadSpotifySource(text));
+        if (artistId) ({ name, tracks } = await loadDeezerArtist(text, artistId));
+        else if (isSpotify(text)) ({ name, tracks, truncated } = await loadSpotifySource(text));
         else if (/deezer|^https?:\/\/|^\d+$/i.test(text)) ({ name, tracks } = await loadDeezerSource(text));
         else ({ name, tracks } = await loadDeezerArtist(text)); // plain words = an artist's name
       }
@@ -173,7 +204,18 @@ class Room {
     this.sources.push(src);
     this.rebuildPool();
     this.touch();
-    return { key: src.key, name, added: src.count, total: this.pool.length };
+    return { key: src.key, name, added: src.count, total: this.pool.length, truncated: !!truncated };
+  }
+
+  loadPackCached(pack) {
+    const ms = this.opts.packCacheMs;
+    if (!ms) return this.loadPack(pack);
+    const hit = packCache.get(pack.id);
+    if (hit && Date.now() - hit.at < ms) return hit.promise;
+    const promise = this.loadPack(pack);
+    packCache.set(pack.id, { at: Date.now(), promise });
+    promise.catch(() => packCache.delete(pack.id));
+    return promise;
   }
 
   async loadPack(pack) {
@@ -225,31 +267,128 @@ class Room {
     this.rebuildPool();
   }
 
+  // The songs the next/current game uses: the ranked genre's songs, or everything added.
+  get gamePool() {
+    if (this.game) return this.game.pool;
+    return this.settings.ranked ? (this.rankedPool ? this.rankedPool.tracks : []) : this.pool;
+  }
+
   poolList() {
-    return this.pool.map((t) => ({ id: t.poolId, title: t.title, artist: t.artist }));
+    return this.gamePool.map((t) => ({ id: t.poolId, title: t.title, artist: t.artist }));
+  }
+
+  // ---------- settings ----------
+  // Only the fields being changed. Settings are locked while a game runs.
+  updateSettings(s = {}) {
+    if (!['lobby', 'results'].includes(this.phase)) throw new Error('Change settings between games');
+    const st = this.settings;
+    const num = (v) => Math.round(Number(v));
+    const before = st.ranked;
+    if (s.rounds !== undefined && num(s.rounds) >= 1 && num(s.rounds) <= 20) st.rounds = num(s.rounds);
+    if (s.roundTime !== undefined && (num(s.roundTime) === 0 || (num(s.roundTime) >= 15 && num(s.roundTime) <= 300))) st.roundTime = num(s.roundTime);
+    if (s.maxGuesses !== undefined && num(s.maxGuesses) >= 0 && num(s.maxGuesses) <= 20) st.maxGuesses = num(s.maxGuesses);
+    if (LISTEN_OPTIONS.includes(num(s.listenLen))) st.listenLen = num(s.listenLen);
+    if (CLIP_OPTIONS.includes(num(s.maxLen))) st.maxLen = num(s.maxLen);
+    if (typeof s.hard === 'boolean') st.hard = s.hard;
+    if (typeof s.chaos === 'boolean') st.chaos = s.chaos;
+    if (s.mode !== undefined) { // older clients: one mode at a time
+      st.hard = s.mode === 'hard'; st.chaos = s.mode === 'chaos';
+    }
+    if (typeof s.ranked === 'boolean') st.ranked = s.ranked;
+    if (st.ranked !== before) { this.usedTrackKeys.clear(); this.poolVersion++; }
+    this.broadcast();
+    return st;
+  }
+
+  // Ranked: pick the genre. Loads its songs (they're the only songs in a ranked game).
+  async setRankedPack(packId) {
+    const pack = packs.byId.get(packId);
+    if (!pack || !pack.ranked) throw new Error('Pick one of the ranked genres');
+    if (!['lobby', 'results'].includes(this.phase)) throw new Error('Change settings between games');
+    this.settings.rankedPack = pack.id;
+    if (this.rankedPool && this.rankedPool.packId === pack.id) { this.broadcast(); return this.rankedPool; }
+    this.rankedLoading = pack.id;
+    this.broadcast();
+    try {
+      const { tracks } = await this.loadPackCached(pack);
+      if (this.settings.rankedPack !== pack.id) return null; // picked something else meanwhile
+      const seen = new Set();
+      const list = [];
+      for (const t of tracks) {
+        const key = norm(t.title) + '|' + norm(t.artist);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        list.push({ ...t, poolId: list.length });
+      }
+      this.rankedPool = { packId: pack.id, tracks: list };
+      this.usedTrackKeys.clear();
+      this.poolVersion++;
+      return this.rankedPool;
+    } finally {
+      if (this.rankedLoading === pack.id) this.rankedLoading = null;
+      this.broadcast();
+    }
   }
 
   // ---------- game flow ----------
   async start() {
     if (this.phase !== 'lobby' && this.phase !== 'results') throw new Error('Game already running');
-    if (this.pool.length < 2) throw new Error('Add a playlist with at least 2 songs first');
+    const st = this.settings;
+    const ranked = !!st.ranked;
+    const entrants = new Map(); // userId -> playerId
+    if (ranked) {
+      const pack = packs.byId.get(st.rankedPack);
+      if (!pack) throw new Error('Pick a genre for ranked');
+      if (!this.rankedPool || this.rankedPool.packId !== pack.id) await this.setRankedPack(pack.id);
+      const present = [...this.players.values()].filter((p) => p.connected);
+      const guests = present.filter((p) => !p.userId);
+      if (guests.length) {
+        const names = guests.map((p) => p.name).join(', ');
+        throw new Error(`Ranked needs everyone logged in. Not logged in: ${names}`);
+      }
+      for (const p of present) {
+        if (entrants.has(p.userId)) throw new Error(`${p.name} is in this room twice. One device per account for ranked.`);
+        entrants.set(p.userId, p.id);
+      }
+    }
+    const pool = ranked ? this.rankedPool.tracks : this.pool;
+    if (pool.length < 2) throw new Error(ranked ? 'That genre didn\'t load enough songs. Try another.' : 'Add a playlist with at least 2 songs first');
+    if (this.phase !== 'lobby' && this.phase !== 'results') throw new Error('Game already running');
     for (const p of this.players.values()) p.score = 0;
     this.roundNum = 0;
     this.usedTrackKeys.clear();
     this.gameId++;
+    this.game = {
+      id: this.gameId,
+      ranked,
+      packId: ranked ? st.rankedPack : null,
+      pool,
+      hard: st.hard,
+      chaos: st.chaos,
+      rounds: ranked ? RANKED_ROUNDS : st.rounds,
+      maxGuesses: ranked ? 0 : st.maxGuesses,
+      maxLen: ranked ? MAX_LEN : st.maxLen,
+      listenLen: st.listenLen,
+      roundTime: st.roundTime,
+      entrants,
+      history: [],
+    };
+    this.poolVersion++;
     await this.nextRound();
   }
 
   async nextRound() {
     const gid = this.gameId;
+    const game = this.game;
+    if (!game) return;
     this.clearTimers();
-    if (this.roundNum >= this.settings.rounds) return this.finish();
+    if (this.roundNum >= game.rounds) return this.finish();
     this.phase = 'loading';
     this.reveal = null;
     this.broadcast();
 
-    let unused = this.pool.filter((t) => !this.usedTrackKeys.has(t.poolId));
-    if (!unused.length) { this.usedTrackKeys.clear(); unused = [...this.pool]; }
+    let unused = game.pool.filter((t) => !this.usedTrackKeys.has(t.poolId));
+    if (!unused.length) { this.usedTrackKeys.clear(); unused = [...game.pool]; }
 
     let clip = null, track = null;
     for (let attempt = 0; attempt < 8 && unused.length; attempt++) {
@@ -266,40 +405,62 @@ class Room {
     if (gid !== this.gameId || this.phase !== 'loading') return; // host ended the game meanwhile
     if (!track) {
       this.phase = 'lobby';
+      this.game = null;
+      this.poolVersion++;
       this.broadcast();
       this.io.to(this.code).emit('toast', { kind: 'error', text: 'Couldn\'t load any song audio. Is the laptop online? Try the demo songs.' });
       return;
     }
 
     this.roundNum++;
-    const roundTimeMs = this.settings.roundTime * 1000;
+    const roundTimeMs = game.roundTime * 1000;
     this.round = {
       num: this.roundNum,
       nonce: id(10),
       track,
       clip,
-      ...this.roundTwist(), // { mode, twist, offset, typed, mult }
+      ...this.roundTwist(), // { mode, hard, chaos, twist, offset, typed, mult }
+      maxLen: game.maxLen,
+      firstId: null,
       startedAt: Date.now(),
       endsAt: roundTimeMs ? Date.now() + roundTimeMs : null,
       results: new Map(), // playerId -> { status, guesses:[], maxHeard, points }
     };
+    this.lookUpPlays(track, this.roundNum, gid);
     this.phase = 'round';
     if (roundTimeMs) this.timers.round = setTimeout(() => this.endRound(), roundTimeMs + 300);
     this.broadcast();
   }
 
+  // Hard: starts somewhere random + type the title. Chaos: a random twist. Both can be on.
   roundTwist() {
-    const mode = MODES[this.settings.mode] ? this.settings.mode : 'classic';
+    const { hard, chaos } = this.game || this.settings;
     const randomStart = () => Math.round((2 + Math.random() * 12) * 10) / 10; // 2–14 s in
-    if (mode === 'hard') return { mode, twist: null, offset: randomStart(), typed: true, mult: MODES.hard.mult };
-    if (mode === 'chaos') {
-      const options = TWISTS.filter((t) => t !== this.lastTwist);
-      const twist = options[crypto.randomInt(options.length)];
+    let twist = null;
+    if (chaos) {
+      const options = TWISTS.filter((t) => t !== this.lastTwist && !(hard && t === 'random-start'));
+      twist = options[crypto.randomInt(options.length)];
       this.lastTwist = twist;
-      return { mode, twist, offset: twist === 'random-start' ? randomStart() : 0, typed: false, mult: MODES.chaos.mult };
     }
+    const mult = Math.round((hard ? MODES.hard.mult : 1) * (chaos ? MODES.chaos.mult : 1) * 1000) / 1000;
+    const mode = hard && chaos ? 'hard+chaos' : hard ? 'hard' : chaos ? 'chaos' : 'classic';
     // Classic: every clip plays from the start of the 30 s preview, like Songless.
-    return { mode, twist: null, offset: 0, typed: false, mult: 1 };
+    const offset = hard || twist === 'random-start' ? randomStart() : 0;
+    return { mode, hard: !!hard, chaos: !!chaos, twist, offset, typed: !!hard, mult };
+  }
+
+  // Spotify play count, shown with the answer. Looked up in the background.
+  lookUpPlays(track, num, gid) {
+    if (!this.opts.plays || track.source === 'demo') return;
+    if (track.plays !== undefined) return;
+    track.plays = null;
+    Promise.resolve(this.opts.plays(track)).then((n) => {
+      track.plays = n || null;
+      if (n && gid === this.gameId && this.phase === 'reveal' && this.reveal && this.reveal.num === num && !this.reveal.plays) {
+        this.reveal.plays = n;
+        this.broadcast();
+      }
+    }).catch(() => {});
   }
 
   async loadClip(track) {
@@ -349,7 +510,7 @@ class Room {
     const r = this.resultFor(playerId);
     if (r.status !== 'playing') return;
     const s = Number(seconds);
-    if (Number.isFinite(s)) r.maxHeard = Math.max(r.maxHeard, Math.min(MAX_LEN, Math.max(0, s)));
+    if (Number.isFinite(s)) r.maxHeard = Math.max(r.maxHeard, Math.min(this.round.maxLen || MAX_LEN, Math.max(0, s)));
   }
 
   guess(playerId, poolId) {
@@ -357,7 +518,7 @@ class Room {
     if (this.round.typed) throw new Error('Hard mode: type the song title');
     const r = this.resultFor(playerId);
     if (r.status !== 'playing') throw new Error('You\'re done for this round');
-    const picked = this.pool[Number(poolId)];
+    const picked = this.gamePool[Number(poolId)];
     if (!picked) throw new Error('Pick a song from the list');
     if (r.guesses.some((g) => g.poolId === picked.poolId)) throw new Error('You already guessed that one');
     const answer = this.round.track;
@@ -380,23 +541,30 @@ class Room {
 
   recordGuess(playerId, r, entry) {
     r.guesses.push(entry);
-    const max = this.settings.maxGuesses;
+    const max = this.game ? this.game.maxGuesses : this.settings.maxGuesses;
     if (entry.correct) {
       r.status = 'correct';
       const wrong = r.guesses.length - 1;
       const base = pointsForLength(r.maxHeard) - wrong * WRONG_PENALTY;
       r.points = Math.max(0, Math.round(base * (this.round.mult || 1)));
+      // Multiplayer bonus: first to get the song. Not in ranked (scores there are compared
+      // across all games, so they can't depend on who else was in the room).
+      if (!this.round.firstId && this.players.size >= 2 && !(this.game && this.game.ranked)) {
+        this.round.firstId = playerId;
+        r.bonus = FIRST_BONUS;
+        r.points += FIRST_BONUS;
+      }
       const p = this.players.get(playerId);
       if (p) {
         p.score += r.points;
-        this.io.to(this.code).emit('gotIt', { playerId, name: p.name, points: r.points, heard: r.maxHeard });
+        this.io.to(this.code).emit('gotIt', { playerId, name: p.name, points: r.points, heard: r.maxHeard, first: !!r.bonus });
       }
     } else if (max && r.guesses.length >= max) {
       r.status = 'out';
     }
     this.maybeEndRound();
     this.broadcast();
-    return { correct: entry.correct, points: r.points, guessesLeft: max ? max - r.guesses.length : null };
+    return { correct: entry.correct, points: r.points, bonus: r.bonus || 0, guessesLeft: max ? max - r.guesses.length : null };
   }
 
   giveUp(playerId) {
@@ -421,24 +589,39 @@ class Room {
       if (r.status === 'playing') r.status = 'timeout';
     }
     const t = this.round.track;
+    const game = this.game;
+    const waitMs = (game.listenLen + 4) * 1000; // room to hear the song after the answer
     this.reveal = {
+      num: this.round.num,
       title: t.title,
       artist: t.artist,
       cover: t.cover,
       link: t.link,
+      plays: t.plays || null,
       offset: this.round.offset,
       mode: this.round.mode,
+      hard: this.round.hard,
+      chaos: this.round.chaos,
       twist: this.round.twist,
       mult: this.round.mult,
+      listenLen: game.listenLen,
       results: [...this.players.values()].map((p) => {
         const r = this.resultFor(p.id);
-        return { id: p.id, name: p.name, status: r.status, points: r.points, guesses: r.guesses.length, heard: r.maxHeard };
+        return { id: p.id, name: p.name, status: r.status, points: r.points, bonus: r.bonus || 0, guesses: r.guesses.length, heard: r.maxHeard };
       }).sort((a, b) => b.points - a.points),
-      autoNextAt: Date.now() + REVEAL_AUTO_ADVANCE_MS,
-      last: this.roundNum >= this.settings.rounds,
+      autoNextAt: Date.now() + waitMs,
+      last: this.roundNum >= game.rounds,
     };
+    game.history.push({
+      title: t.title,
+      artist: t.artist,
+      results: new Map([...this.players.values()].map((p) => {
+        const r = this.resultFor(p.id);
+        return [p.id, { status: r.status, points: r.points, heard: r.maxHeard, guesses: r.guesses.length }];
+      })),
+    });
     this.phase = 'reveal';
-    this.timers.reveal = setTimeout(() => this.nextRound().catch(console.error), REVEAL_AUTO_ADVANCE_MS);
+    this.timers.reveal = setTimeout(() => this.nextRound().catch(console.error), waitMs);
     this.broadcast();
   }
 
@@ -446,7 +629,40 @@ class Room {
     this.clearTimers();
     this.phase = 'results';
     this.round = null;
+    const game = this.game;
+    this.lastGame = game ? { ranked: game.ranked, packId: game.packId, hard: game.hard, chaos: game.chaos } : null;
+    this.game = null;
+    this.poolVersion++;
     this.broadcast();
+    if (game && game.ranked && this.opts.onRanked) {
+      const entries = this.rankedEntries(game);
+      if (entries.length) Promise.resolve(this.opts.onRanked(this, entries)).catch((e) => console.error('ranked submit failed:', e));
+    }
+  }
+
+  // One entry per logged-in player who started the ranked game and is still here.
+  rankedEntries(game) {
+    const out = [];
+    for (const [userId, playerId] of game.entrants) {
+      const p = this.players.get(playerId);
+      if (!p || p.userId !== userId) continue; // left, or logged out mid-game
+      let correct = 0, firstTry = 0, heard = 0, score = 0;
+      for (const h of game.history) {
+        const r = h.results.get(playerId);
+        if (!r) continue;
+        score += r.points;
+        if (r.status === 'correct') {
+          correct++;
+          heard += r.heard;
+          if (r.guesses === 1) firstTry++;
+        }
+      }
+      out.push({
+        playerId, userId, name: p.name, packId: game.packId, score, songs: game.history.length,
+        correct, firstTry, heard: Math.round(heard * 10) / 10, hard: game.hard, chaos: game.chaos,
+      });
+    }
+    return out;
   }
 
   // Host ends the game early: everyone goes back to the lobby (songs and players stay).
@@ -463,6 +679,7 @@ class Room {
     this.phase = 'lobby';
     this.round = null;
     this.reveal = null;
+    if (this.game) { this.game = null; this.poolVersion++; }
     for (const p of this.players.values()) p.score = 0;
     this.broadcast();
   }
@@ -477,6 +694,7 @@ class Room {
   // ---------- state to clients ----------
   publicState(forPlayerId) {
     const me = this.players.get(forPlayerId);
+    const g = this.game;
     const state = {
       code: this.code,
       phase: this.phase,
@@ -484,11 +702,15 @@ class Room {
       hostId: this.hostId,
       meId: forPlayerId,
       settings: this.settings,
+      game: g ? { ranked: g.ranked, packId: g.packId, hard: g.hard, chaos: g.chaos, rounds: g.rounds, listenLen: g.listenLen, maxLen: g.maxLen } : null,
+      lastGame: this.phase === 'results' ? this.lastGame || null : null,
       sources: this.sources.map(({ key, name, by, byId, packId, count }) => ({ key, name, by, byId, packId, count })),
       packs: packs.publicPacks(),
-      poolSize: this.pool.length,
+      poolSize: this.gamePool.length,
+      casualPoolSize: this.pool.length,
+      ranked: { packId: this.settings.rankedPack, loading: this.rankedLoading, ready: !!(this.rankedPool && this.rankedPool.packId === this.settings.rankedPack), songs: this.rankedPool && this.rankedPool.packId === this.settings.rankedPack ? this.rankedPool.tracks.length : 0 },
       poolVersion: this.poolVersion,
-      maxGuesses: this.settings.maxGuesses,
+      maxGuesses: g ? g.maxGuesses : this.settings.maxGuesses,
       players: [...this.players.values()]
         .sort((a, b) => b.score - a.score || a.joinedAt - b.joinedAt)
         .map((p) => ({
@@ -496,6 +718,7 @@ class Room {
           name: p.name,
           score: p.score,
           connected: p.connected,
+          loggedIn: !!p.userId,
           roundStatus: this.round && this.phase === 'round' ? this.resultFor(p.id).status : null,
         })),
       round: null,
@@ -505,15 +728,20 @@ class Room {
       const r = this.resultFor(me.id);
       state.round = {
         num: this.round.num,
-        total: this.settings.rounds,
+        total: g ? g.rounds : this.settings.rounds,
         offset: this.round.offset,
         mode: this.round.mode,
+        hard: this.round.hard,
+        chaos: this.round.chaos,
+        ranked: !!(g && g.ranked),
+        maxLen: this.round.maxLen,
+        listenLen: g ? g.listenLen : 15,
         twist: this.round.twist,
         typed: this.round.typed,
         mult: this.round.mult,
         clipUrl: `/api/clip/${this.code}/${this.round.nonce}`,
         endsAt: this.round.endsAt,
-        my: { status: r.status, guesses: r.guesses, maxHeard: r.maxHeard, points: r.points },
+        my: { status: r.status, guesses: r.guesses, maxHeard: r.maxHeard, points: r.points, bonus: r.bonus || 0 },
       };
     }
     return state;
@@ -597,4 +825,4 @@ function titleMatches(guess, track) {
   return false;
 }
 
-module.exports = { RoomManager, pointsForLength, titleMatches, MODES, MIN_LEN, MAX_LEN };
+module.exports = { RoomManager, pointsForLength, titleMatches, MODES, MIN_LEN, MAX_LEN, FIRST_BONUS, RANKED_ROUNDS, LISTEN_OPTIONS, CLIP_OPTIONS };

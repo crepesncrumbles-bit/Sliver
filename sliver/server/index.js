@@ -7,6 +7,10 @@ const http = require('http');
 const os = require('os');
 const { Realtime } = require('./realtime');
 const { RoomManager } = require('./game');
+const { createStore } = require('./store');
+const { Accounts, AccountError } = require('./accounts');
+const { searchArtists } = require('./deezer');
+const { spotifyPlays } = require('./spotifyweb');
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -32,18 +36,95 @@ function lanAddresses() {
 }
 
 let rooms; // set below
+const store = createStore({ dir: process.env.DATA_DIR });
+const accounts = new Accounts(store);
+
+// ---------- small JSON API helpers ----------
+const sendJson = (res, code, obj) => {
+  res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify(obj));
+};
+function readBody(req, limit = 10000) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > limit) { reject(new AccountError('Request too large')); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}); }
+      catch { reject(new AccountError('Bad request')); }
+    });
+    req.on('error', reject);
+  });
+}
+const bearer = (req) => (String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/) || [])[1] || null;
+const clientIp = (req) => String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+
+// Login/sign-up attempts per IP: 20 per 10 minutes.
+const attempts = new Map();
+function rateLimited(ip) {
+  const now = Date.now();
+  const list = (attempts.get(ip) || []).filter((t) => now - t < 10 * 60 * 1000);
+  list.push(now);
+  attempts.set(ip, list);
+  if (attempts.size > 5000) attempts.delete(attempts.keys().next().value);
+  return list.length > 20;
+}
+
+async function handleApi(req, res, p, url) {
+  try {
+    if (p === '/api/signup' || p === '/api/login') {
+      if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'Use POST' });
+      if (rateLimited(clientIp(req))) return sendJson(res, 429, { ok: false, error: 'Too many tries. Wait a few minutes.' });
+      const body = await readBody(req);
+      const out = p === '/api/signup' ? await accounts.signup(body) : await accounts.login(body);
+      return sendJson(res, 200, { ok: true, ...out });
+    }
+    if (p === '/api/logout') {
+      await accounts.logout(bearer(req));
+      return sendJson(res, 200, { ok: true });
+    }
+    if (p === '/api/me') {
+      const user = await accounts.session(bearer(req));
+      return sendJson(res, 200, { ok: true, user });
+    }
+    if (p === '/api/leaderboard') {
+      const me = await accounts.session(bearer(req));
+      const out = await accounts.leaderboard(url.searchParams.get('board') || 'overall', me && me.id);
+      return sendJson(res, 200, { ok: true, ...out });
+    }
+    const prof = p.match(/^\/api\/profile\/([\w-]{6,40})$/);
+    if (prof) return sendJson(res, 200, { ok: true, profile: await accounts.profile(prof[1]) });
+    if (p === '/api/artists') {
+      if (demoOnly) return sendJson(res, 200, { ok: true, artists: [] });
+      const artists = await searchArtists(url.searchParams.get('q')).catch(() => []);
+      return sendJson(res, 200, { ok: true, artists });
+    }
+    return sendJson(res, 404, { ok: false, error: 'Not found' });
+  } catch (err) {
+    if (err instanceof AccountError) return sendJson(res, 400, { ok: false, error: err.message });
+    console.error('API error:', err);
+    return sendJson(res, 500, { ok: false, error: 'Something went wrong on the server. Try again.' });
+  }
+}
+
+const API_PATHS = /^\/api\/(signup|login|logout|me|leaderboard|profile\/[\w-]+|artists)$/;
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = decodeURIComponent(url.pathname);
 
   if (p === '/healthz') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
+  if (API_PATHS.test(p)) return handleApi(req, res, p, url);
 
   if (p === '/api/info') {
     // When hosted (Render sets RENDER=true), there's no Wi-Fi address to share: use the public URL.
     const lan = process.env.RENDER ? [] : lanAddresses().map((ip) => `http://${ip}:${PORT}`);
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    return res.end(JSON.stringify({ port: PORT, lan, demoOnly }));
+    return res.end(JSON.stringify({ port: PORT, lan, demoOnly, accounts: store.kind }));
   }
 
   // The clip URL hides which song it is: only the room code and a per-round random nonce.
@@ -72,16 +153,41 @@ const server = http.createServer((req, res) => {
 });
 
 const io = new Realtime(server, '/ws');
-rooms = new RoomManager(io, { demoOnly });
+// After a ranked game: save each player's score, then tell them how it went.
+async function onRanked(room, entries) {
+  for (const e of entries) {
+    try {
+      const result = await accounts.submitRanked(e.userId, e);
+      const p = room.players.get(e.playerId);
+      if (p && p.connected) io.to(p.socketId).emit('rankedResult', result);
+    } catch (err) {
+      console.error('ranked save failed:', err.message);
+      const p = room.players.get(e.playerId);
+      if (p && p.connected) io.to(p.socketId).emit('toast', { kind: 'error', text: 'Couldn\'t save your ranked score. Sorry!' });
+    }
+  }
+}
+
+rooms = new RoomManager(io, {
+  demoOnly,
+  packCacheMs: 20 * 60 * 1000,
+  plays: demoOnly || process.env.NO_PLAYS ? null : spotifyPlays,
+  onRanked,
+});
 
 const contexts = new Map(); // socket id -> { drop() } so a kick can detach that player's socket
 
 io.on('connection', (socket) => {
   let room = null;
   let player = null;
+  let user = null; // logged-in account on this connection
   contexts.set(socket.id, {
     drop: () => { if (room) socket.leaveRoom(room.code); room = null; player = null; },
   });
+  const useAuth = async (token) => {
+    user = token ? await accounts.session(token).catch(() => null) : null;
+    return user;
+  };
 
   const fail = (ack, err) => ack && ack({ ok: false, error: err.message || String(err) });
   const need = (ack) => {
@@ -95,26 +201,32 @@ io.on('connection', (socket) => {
   };
   const sendPool = () => socket.emit('pool', { version: room.poolVersion, songs: room.poolList() });
 
-  socket.on('create', ({ name } = {}, ack) => {
+  socket.on('create', async ({ name, auth } = {}, ack) => {
+    if (auth !== undefined) await useAuth(auth);
     if (room) socket.leaveRoom(room.code);
     room = rooms.create();
     player = room.addPlayer(name, socket);
+    room.setAccount(player.id, user);
     socket.join(room.code);
     ack && ack({ ok: true, code: room.code, token: player.token, playerId: player.id });
     sendPool();
     room.broadcast();
   });
 
-  socket.on('join', ({ code, name, token } = {}, ack) => {
+  socket.on('join', async ({ code, name, token, auth } = {}, ack) => {
+    if (auth !== undefined) await useAuth(auth);
     const r = rooms.get(code);
     if (!r) return fail(ack, new Error(`No room called ${String(code || '').toUpperCase()} — it may have closed`));
     if (token && r.kickedTokens.has(token)) return fail(ack, new Error('The host removed you from this room'));
     let p = token ? r.reconnect(token, socket) : null;
     if (!p) {
       if (r.players.size >= 12) return fail(ack, new Error('Room is full (12 players)'));
+      if (r.game && r.game.ranked) return fail(ack, new Error('A ranked game is running in that room. Join when it ends.'));
       p = r.addPlayer(name, socket);
     }
     room = r; player = p;
+    // Keep the account a ranked player started with, even if this device lost its login.
+    if (user || !(r.game && r.game.ranked)) r.setAccount(p.id, user);
     socket.join(room.code);
     ack && ack({ ok: true, code: room.code, token: p.token, playerId: p.id });
     sendPool();
@@ -123,11 +235,21 @@ io.on('connection', (socket) => {
 
   socket.on('getPool', () => room && sendPool());
 
-  socket.on('addPlaylist', async ({ input, packId } = {}, ack) => {
+  // Logged in or out while connected.
+  socket.on('auth', async ({ token } = {}, ack) => {
+    await useAuth(token);
+    if (room && player && !(room.game && room.game.ranked)) {
+      room.setAccount(player.id, user);
+      room.broadcast();
+    }
+    ack && ack({ ok: true, user });
+  });
+
+  socket.on('addPlaylist', async ({ input, packId, artistId } = {}, ack) => {
     if (!need(ack)) return;
     if (room.phase !== 'lobby' && room.phase !== 'results') return fail(ack, new Error('Add songs between games'));
     try {
-      const result = await room.addSource({ input, packId }, { name: player.name, id: player.id });
+      const result = await room.addSource({ input, packId, artistId }, { name: player.name, id: player.id });
       ack && ack({ ok: true, ...result });
       io.to(room.code).emit('toast', { kind: 'info', text: `${player.name} added ${result.added} songs from "${result.name}"` });
       io.to(room.code).emit('pool', { version: room.poolVersion, songs: room.poolList() });
@@ -160,25 +282,50 @@ io.on('connection', (socket) => {
   });
 
   // Send only the fields being changed. roundTime 0 = no limit, maxGuesses 0 = unlimited.
-  socket.on('settings', ({ rounds, roundTime, maxGuesses, mode } = {}, ack) => {
+  socket.on('settings', (s = {}, ack) => {
     if (!hostOnly(ack)) return;
-    const r = Math.round(Number(rounds));
-    const t = Math.round(Number(roundTime));
-    const g = Math.round(Number(maxGuesses));
-    if (r >= 1 && r <= 20) room.settings.rounds = r;
-    if (roundTime !== undefined && (t === 0 || (t >= 15 && t <= 300))) room.settings.roundTime = t;
-    if (maxGuesses !== undefined && g >= 0 && g <= 20) room.settings.maxGuesses = g;
-    if (['classic', 'hard', 'chaos'].includes(mode)) room.settings.mode = mode;
-    room.broadcast();
-    ack && ack({ ok: true });
+    try {
+      const before = room.poolVersion;
+      room.updateSettings(s);
+      if (room.poolVersion !== before) io.to(room.code).emit('pool', { version: room.poolVersion, songs: room.poolList() });
+      ack && ack({ ok: true });
+    } catch (err) { fail(ack, err); }
+  });
+
+  socket.on('rankedPack', async ({ packId } = {}, ack) => {
+    if (!hostOnly(ack)) return;
+    const r = room;
+    try {
+      await r.setRankedPack(packId);
+      io.to(r.code).emit('pool', { version: r.poolVersion, songs: r.poolList() });
+      ack && ack({ ok: true });
+    } catch (err) {
+      const msg = /fetch failed|ENOTFOUND|EAI_AGAIN/i.test(err.message + (err.cause ? err.cause.message : ''))
+        ? 'Couldn\'t reach Spotify/Deezer to load that genre.' : err.message;
+      fail(ack, new Error(msg));
+    }
+  });
+
+  socket.on('transferHost', ({ playerId } = {}, ack) => {
+    if (!hostOnly(ack)) return;
+    try { room.transferHost(player.id, playerId); ack && ack({ ok: true }); } catch (err) { fail(ack, err); }
   });
 
   socket.on('start', async (_, ack) => {
     if (!hostOnly(ack)) return;
     try {
-      if (room.pool.length < 2) throw new Error('Add a playlist with at least 2 songs first');
+      const r = room;
+      if (!r.settings.ranked && r.pool.length < 2) throw new Error('Add a playlist with at least 2 songs first');
+      if (r.settings.ranked) {
+        // Re-check everyone's login right before a ranked game.
+        for (const p of r.players.values()) {
+          if (!p.connected) continue;
+          if (p.userId && !(await accounts.getUser(p.userId))) r.setAccount(p.id, null);
+        }
+      }
+      await r.start();
+      io.to(r.code).emit('pool', { version: r.poolVersion, songs: r.poolList() });
       ack && ack({ ok: true });
-      await room.start();
     } catch (err) {
       ack ? fail(ack, err) : socket.emit('toast', { kind: 'error', text: err.message });
     }
@@ -259,6 +406,9 @@ io.on('connection', (socket) => {
 server.listen(PORT, HOST, () => {
   const lan = lanAddresses();
   console.log('\n  🎵 Sliver is running!\n');
+  if (store.kind === 'upstash') console.log('  Accounts: saved in your Upstash database');
+  else if (process.env.RENDER) console.log('  ⚠ Accounts are saved on Render\'s temporary disk and will reset. Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (see README).');
+  else console.log(`  Accounts: saved in ${store.file}`);
   console.log(`  On this laptop:     http://localhost:${PORT}`);
   for (const ip of lan) console.log(`  Friends on Wi-Fi:   http://${ip}:${PORT}`);
   if (demoOnly) console.log('\n  (Demo-only mode: built-in songs, no internet needed)');

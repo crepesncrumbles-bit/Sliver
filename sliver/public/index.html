@@ -18,8 +18,14 @@
       <button id="btn-leave" class="leave" hidden>Leave room</button>
       <div class="top-right">
       <button id="btn-end" class="leave end-game" hidden>End game</button>
+      <button id="btn-players" class="gear" aria-label="Players" title="Players" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11.5a3.75 3.75 0 1 0 0-7.5 3.75 3.75 0 0 0 0 7.5Zm7.5.5a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM2 19.2C2 16 5.1 13.5 9 13.5s7 2.5 7 5.7c0 .5-.4.8-.9.8H2.9c-.5 0-.9-.3-.9-.8Zm15.6.8c.2-.3.4-.6.4-1 0-1.8-.8-3.4-2.1-4.6.5-.1 1.1-.2 1.6-.2 3 0 5.5 1.9 5.5 4.4 0 .8-.6 1.4-1.4 1.4h-4Z"/></svg>
+      </button>
+      <button id="btn-boards" class="gear" aria-label="Leaderboards" title="Leaderboards">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v2h3.5c.3 0 .5.2.5.5V8a4.5 4.5 0 0 1-4.3 4.5 5.5 5.5 0 0 1-3.7 3V18h3a1 1 0 0 1 1 1v2H7v-2a1 1 0 0 1 1-1h3v-2.5a5.5 5.5 0 0 1-3.7-3A4.5 4.5 0 0 1 3 8V5.5c0-.3.2-.5.5-.5H7V3Zm0 4H5v1c0 1.2.8 2.2 2 2.4V7Zm10 0v3.4c1.2-.2 2-1.2 2-2.4V7h-2Z"/></svg>
+      </button>
       <button id="btn-settings" class="gear" aria-label="Settings" title="Settings">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm7.4-2.5.1-1-.1-1 2.1-1.6-2-3.5-2.5 1a7.6 7.6 0 0 0-1.7-1l-.4-2.7h-4l-.4 2.7a7.6 7.6 0 0 0-1.7 1l-2.5-1-2 3.5L4.6 11l-.1 1 .1 1-2.1 1.6 2 3.5 2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.7h4l.4-2.7a7.6 7.6 0 0 0 1.7-1l2.5 1 2-3.5-2.1-1.6Z"/></svg>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M20.17 10.04 L22.90 10.54 L22.90 13.46 L20.17 13.96 L19.16 16.39 L20.74 18.67 L18.67 20.74 L16.39 19.16 L13.96 20.17 L13.46 22.90 L10.54 22.90 L10.04 20.17 L7.61 19.16 L5.33 20.74 L3.26 18.67 L4.84 16.39 L3.83 13.96 L1.10 13.46 L1.10 10.54 L3.83 10.04 L4.84 7.61 L3.26 5.33 L5.33 3.26 L7.61 4.84 L10.04 3.83 L10.54 1.10 L13.46 1.10 L13.96 3.83 L16.39 4.84 L18.67 3.26 L20.74 5.33 L19.16 7.61 Z M15.4 12 A3.4 3.4 0 1 0 8.6 12 A3.4 3.4 0 1 0 15.4 12 Z"/></svg>
       </button>
       </div>
     </div>
@@ -43,6 +49,7 @@
           <button id="btn-join" class="btn">Join</button>
         </div>
       </div>
+      <div class="card account-card" id="account-box"></div>
     </section>
 
     <!-- LOBBY -->
@@ -54,14 +61,17 @@
         <ul id="lobby-players" class="avatars"></ul>
       </div>
 
-      <div class="card">
+      <div class="card" id="songs-card">
         <div class="card-head">
           <h2>Songs</h2>
           <span class="count" id="pool-count">0 songs</span>
         </div>
         <ul id="sources" class="sources"></ul>
-        <form id="form-playlist" class="row">
-          <input id="playlist-input" placeholder="Playlist link or artist name" aria-label="Playlist link or artist" />
+        <form id="form-playlist" class="row add-row">
+          <div class="artist-box">
+            <input id="playlist-input" placeholder="Playlist link or artist name" aria-label="Playlist link or artist" autocomplete="off" autocorrect="off" spellcheck="false" />
+            <ul id="artist-sug" class="suggestions artist-sug" hidden></ul>
+          </div>
           <button class="btn" id="btn-add">Add</button>
         </form>
         <p class="hint">Public Spotify and Deezer playlists work, or tap a pack below. No internet? Type <b>demo</b>.</p>
@@ -70,28 +80,43 @@
       </div>
 
       <div class="card host-only">
-        <h2>Game mode</h2>
-        <div class="modes" id="modes" role="radiogroup" aria-label="Game mode">
-          <button class="mode" data-mode="classic" role="radio">
+        <div class="seg" role="tablist" aria-label="Game type">
+          <button class="seg-btn" id="seg-casual" role="tab">Casual</button>
+          <button class="seg-btn" id="seg-ranked" role="tab">Ranked</button>
+        </div>
+        <div id="ranked-panel" hidden>
+          <p class="hint ranked-intro">5 songs from one genre. Scores go on that genre's top 25 and raise your rating. Everyone needs to be logged in.</p>
+          <h3 class="sub">Genre</h3>
+          <div id="ranked-genres" class="pack-row"></div>
+        </div>
+        <h3 class="sub" id="mods-title">Mode</h3>
+        <div class="modes" id="modes" aria-label="Game mode">
+          <button class="mode" data-mod="classic" aria-pressed="false">
             <b>Classic</b><span>Every clip starts at the top of the song.</span>
           </button>
-          <button class="mode" data-mode="hard" role="radio">
+          <button class="mode" data-mod="hard" aria-pressed="false">
             <b>Hard</b><span>Starts somewhere random, and you type the title yourself.</span><em>1.5× points</em>
           </button>
-          <button class="mode" data-mode="chaos" role="radio">
+          <button class="mode" data-mod="chaos" aria-pressed="false">
             <b>Chaos</b><span>Every song gets a twist: backwards, sped up, muffled…</span><em>1.25× points</em>
           </button>
         </div>
+        <p class="mode-mult" id="mode-mult"></p>
         <div class="settings">
-          <label class="field"><span>Songs</span><select id="set-rounds"></select></label>
+          <label class="field casual-only"><span>Songs</span><select id="set-rounds"></select></label>
           <label class="field"><span>Time per song</span><select id="set-time"></select></label>
-          <label class="field"><span>Guesses per song</span><select id="set-guesses"></select></label>
+          <label class="field casual-only"><span>Guesses per song</span><select id="set-guesses"></select></label>
+          <label class="field casual-only"><span>Longest clip</span><select id="set-maxlen"></select></label>
+          <label class="field"><span>Song after you guess</span><select id="set-listen"></select></label>
         </div>
+        <p class="hint ranked-only" id="ranked-fixed" hidden>Ranked is always 5 songs, unlimited guesses, and the full 30 second clip.</p>
+        <p class="warn" id="ranked-warn" hidden></p>
         <button id="btn-start" class="btn primary big">Start game</button>
       </div>
       <div class="card guest-only waiting-card">
         <p id="guest-mode"></p>
         <p class="hint">Waiting for the host to start.</p>
+        <button id="guest-login" class="btn small" hidden>Log in for ranked</button>
       </div>
     </section>
 
@@ -150,6 +175,7 @@
 
       <div class="card players-card">
         <ul id="round-players" class="chips"></ul>
+        <p class="hint small host-only">Tap a player to make them host or remove them.</p>
         <button id="btn-skip" class="btn ghost small host-only">End this song now</button>
       </div>
     </section>
@@ -162,6 +188,7 @@
           <div class="label">It was</div>
           <div class="song-title" id="reveal-title"></div>
           <div class="song-artist" id="reveal-artist"></div>
+          <div class="plays" id="reveal-plays" hidden></div>
           <div class="reveal-mode" id="reveal-mode"></div>
           <a id="reveal-link" class="link" target="_blank" rel="noopener" hidden>Open the song</a>
         </div>
@@ -183,6 +210,7 @@
         <div class="label">Winner</div>
         <div class="winner" id="winner"></div>
       </div>
+      <div class="card ranked-result" id="ranked-result" hidden></div>
       <div class="card">
         <ol id="final-board" class="board"></ol>
       </div>
@@ -201,10 +229,82 @@
         <h2 id="settings-title">Settings</h2>
         <button id="btn-settings-close" class="x" aria-label="Close settings">×</button>
       </div>
+      <h3>Sound</h3>
+      <div class="volume">
+        <button id="btn-mute" class="vol-icon" aria-label="Mute" title="Mute"></button>
+        <input id="volume" type="range" min="0" max="100" step="1" aria-label="Volume" />
+        <span id="volume-value" class="vol-value">80%</span>
+      </div>
+      <button id="btn-test-sound" class="btn small">Test sound</button>
+      <p class="hint">Only changes the volume on this device. Every song is already matched to the same loudness.</p>
       <h3>Theme</h3>
       <p class="hint">Only changes how Sliver looks on this device.</p>
       <div id="theme-grid" class="theme-grid" role="radiogroup" aria-label="Theme"></div>
+      <h3>Account</h3>
+      <div id="settings-account" class="settings-account"></div>
       <button id="btn-settings-done" class="btn primary">Done</button>
+    </section>
+  </div>
+
+  <!-- LOG IN / SIGN UP -->
+  <div id="auth" class="sheet-backdrop" hidden>
+    <section class="sheet narrow" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+      <div class="sheet-head">
+        <h2 id="auth-title">Log in</h2>
+        <button class="x" data-close aria-label="Close">×</button>
+      </div>
+      <div class="seg small" role="tablist">
+        <button class="seg-btn" id="auth-tab-login" role="tab">Log in</button>
+        <button class="seg-btn" id="auth-tab-signup" role="tab">Sign up</button>
+      </div>
+      <form id="auth-form" novalidate>
+        <label class="field" id="auth-name-field"><span>Username</span>
+          <input id="auth-name" maxlength="20" autocomplete="nickname" placeholder="Shown on leaderboards" /></label>
+        <label class="field"><span>Email</span>
+          <input id="auth-email" type="email" maxlength="120" autocomplete="email" placeholder="you@example.com" /></label>
+        <label class="field"><span>Password</span>
+          <input id="auth-password" type="password" maxlength="200" autocomplete="current-password" placeholder="At least 6 characters" /></label>
+        <p class="form-error" id="auth-error" role="alert" hidden></p>
+        <button class="btn primary" id="auth-submit">Log in</button>
+        <p class="hint" id="auth-note">You only need an account for ranked games. Usernames don't have to be unique; your email is never shown.</p>
+      </form>
+    </section>
+  </div>
+
+  <!-- LEADERBOARDS -->
+  <div id="boards" class="sheet-backdrop" hidden>
+    <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="boards-title">
+      <div class="sheet-head">
+        <h2 id="boards-title">Leaderboards</h2>
+        <button class="x" data-close aria-label="Close">×</button>
+      </div>
+      <label class="field"><span>Board</span><select id="board-select"></select></label>
+      <p class="hint" id="board-note"></p>
+      <ol id="board-list" class="lb"></ol>
+      <div id="board-me" class="lb-me" hidden></div>
+    </section>
+  </div>
+
+  <!-- PLAYER STATS -->
+  <div id="profile" class="sheet-backdrop" hidden>
+    <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="profile-name">
+      <div class="sheet-head">
+        <h2 id="profile-name">Stats</h2>
+        <button class="x" data-close aria-label="Close">×</button>
+      </div>
+      <div id="profile-body"></div>
+    </section>
+  </div>
+
+  <!-- PLAYERS IN THIS ROOM -->
+  <div id="players" class="sheet-backdrop" hidden>
+    <section class="sheet narrow" role="dialog" aria-modal="true" aria-labelledby="players-title">
+      <div class="sheet-head">
+        <h2 id="players-title">Players</h2>
+        <button class="x" data-close aria-label="Close">×</button>
+      </div>
+      <ul id="players-list" class="pl-list"></ul>
+      <p class="hint" id="players-hint"></p>
     </section>
   </div>
 

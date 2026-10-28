@@ -2,7 +2,7 @@
 // Deezer's public API needs no login or API key.
 
 const API = 'https://api.deezer.com';
-const MAX_TRACKS = 500;
+const MAX_TRACKS = 2000;
 
 async function getJson(url) {
   const res = await fetch(url, { headers: { 'User-Agent': 'Sliver/1.0' } });
@@ -104,13 +104,19 @@ async function loadDeezerPlaylistSearch(query, name) {
 }
 
 // An artist's most popular songs (also used when someone types an artist's name).
-async function loadDeezerArtist(artistName) {
+// artistId (from the suggestions list) picks the exact artist; otherwise search by name.
+async function loadDeezerArtist(artistName, artistId) {
   const q = String(artistName || '').trim();
-  if (!q) throw new Error('Type an artist name');
-  const found = await getJson(`${API}/search/artist?q=${encodeURIComponent(q)}&limit=5`);
-  const nq = q.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const list = found.data || [];
-  const artist = list.find((a) => a.name.toLowerCase().replace(/[^a-z0-9]/g, '') === nq) || list[0];
+  let artist = null;
+  if (artistId && /^\d+$/.test(String(artistId))) {
+    artist = await getJson(`${API}/artist/${artistId}`);
+  } else {
+    if (!q) throw new Error('Type an artist name');
+    const found = await getJson(`${API}/search/artist?q=${encodeURIComponent(q)}&limit=5`);
+    const nq = q.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const list = found.data || [];
+    artist = list.find((a) => a.name.toLowerCase().replace(/[^a-z0-9]/g, '') === nq) || list[0];
+  }
   if (!artist) throw new Error(`No artist called "${q}" found. For a playlist, paste its link.`);
   const top = await getJson(`${API}/artist/${artist.id}/top?limit=60`);
   const tracks = (top.data || []).filter((t) => t.preview && t.readable !== false).map((t) => toTrack(t));
@@ -118,4 +124,20 @@ async function loadDeezerArtist(artistName) {
   return { name: `${artist.name} — top songs`, tracks, image: artist.picture_medium || null };
 }
 
-module.exports = { loadDeezerSource, fetchPreview, parseDeezerInput, searchDeezer, loadDeezerPlaylistSearch, loadDeezerArtist };
+// Artist suggestions while typing (name, picture, fans), most popular first.
+const artistCache = new Map();
+async function searchArtists(query) {
+  const q = String(query || '').trim().toLowerCase().slice(0, 60);
+  if (q.length < 2) return [];
+  const hit = artistCache.get(q);
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.list;
+  const data = await getJson(`${API}/search/artist?q=${encodeURIComponent(q)}&limit=8`);
+  const list = (data.data || []).map((a) => ({
+    id: String(a.id), name: a.name, picture: a.picture_small || a.picture_medium || null, fans: a.nb_fan || 0,
+  }));
+  artistCache.set(q, { at: Date.now(), list });
+  if (artistCache.size > 500) artistCache.delete(artistCache.keys().next().value);
+  return list;
+}
+
+module.exports = { searchArtists, loadDeezerSource, fetchPreview, parseDeezerInput, searchDeezer, loadDeezerPlaylistSearch, loadDeezerArtist };

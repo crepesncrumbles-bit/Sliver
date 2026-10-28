@@ -39,8 +39,12 @@ const PACKS = [
 
 const byId = new Map(PACKS.map((p) => [p.id, p]));
 
+// Ranked play uses the genre and decade packs; each one has its own leaderboard.
+for (const p of PACKS) p.ranked = p.cat !== 'Artists';
+const RANKED = PACKS.filter((p) => p.ranked);
+
 function publicPacks() {
-  return PACKS.map(({ id, cat, name }) => ({ id, cat, name }));
+  return PACKS.map(({ id, cat, name, ranked }) => ({ id, cat, name, ranked }));
 }
 
-module.exports = { PACKS, byId, publicPacks };
+module.exports = { PACKS, RANKED, byId, publicPacks };

@@ -101,7 +101,7 @@ const mgr = () => new RoomManager({ to: () => ({ emit() {} }) });
       const room = mgr().create();
       const p = room.addPlayer('Hard', { id: 'h' });
       await room.addSource('demo', 'Hard');
-      Object.assign(room.settings, { rounds: 1, roundTime: 0, mode: 'hard' });
+      Object.assign(room.settings, { rounds: 1, roundTime: 0, hard: true, chaos: false });
       await room.start();
       const st = room.publicState(p.id).round;
       check(st.typed && st.offset >= 2 && st.offset <= 14 && st.mult === 1.5, 'random start (2–14 s), type-it-yourself, ×1.5');
@@ -126,7 +126,7 @@ const mgr = () => new RoomManager({ to: () => ({ emit() {} }) });
       const room = mgr().create();
       const p = room.addPlayer('Chaos', { id: 'c' });
       await room.addSource('demo', 'Chaos');
-      Object.assign(room.settings, { rounds: 8, roundTime: 0, mode: 'chaos' });
+      Object.assign(room.settings, { rounds: 8, roundTime: 0, hard: false, chaos: true });
       await room.start();
       const seen = [];
       for (let i = 0; i < 8; i++) {

@@ -2,7 +2,8 @@
 (() => {
   const $ = (sel) => document.querySelector(sel);
   const MIN_LEN = 0.1, MAX_LEN = 30; // Songless: 0.1 s up to the whole 30 s clip
-  const RATIO = MAX_LEN / MIN_LEN;
+  const RATIO = MAX_LEN / MIN_LEN;   // the points curve always uses the full 30 s
+  let maxLen = MAX_LEN;              // longest clip this game allows (host setting: 15, 20 or 30 s)
 
   // Small WebSocket wrapper with acks + auto-reconnect (matches server/realtime.js).
   function createSocket() {
@@ -65,13 +66,14 @@
   const norm = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
 
   // Lengths snap to tenths of a second (0.1, 0.2 … 3.0 … 30.0) so the points match Songless exactly.
-  const lenFromSlider = (v) => Math.max(MIN_LEN, Math.min(MAX_LEN, Math.round(MIN_LEN * Math.pow(RATIO, v / 1000) * 10) / 10));
-  const sliderFromLen = (l) => Math.round(1000 * Math.log(Math.max(MIN_LEN, l) / MIN_LEN) / Math.log(RATIO));
+  const lenFromSlider = (v) => Math.max(MIN_LEN, Math.min(maxLen, Math.round(MIN_LEN * Math.pow(maxLen / MIN_LEN, v / 1000) * 10) / 10));
+  const sliderFromLen = (l) => Math.min(1000, Math.round(1000 * Math.log(Math.max(MIN_LEN, l) / MIN_LEN) / Math.log(maxLen / MIN_LEN)));
   // Same curve as server/game.js (matches Songless's published points).
   const pointsFor = (len) => {
     const l = Math.min(MAX_LEN, Math.max(MIN_LEN, len || MIN_LEN));
     return Math.round(3500 + 6500 * Math.pow(1 - Math.log(l / MIN_LEN) / Math.log(RATIO), 1.55));
   };
+  const fmtPlays = (n) => n >= 1e9 ? `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n);
   const fmtLen = (l) => (l < 1 ? l.toFixed(1) : l < 10 ? l.toFixed(1) : Math.round(l)) + 's';
 
   function toast(text, kind = 'info', ms = 3800) {
@@ -106,7 +108,7 @@
 
   $('#btn-create').onclick = async () => {
     const name = getName(); if (!name) return;
-    const res = await emit('create', { name });
+    const res = await emit('create', { name, auth: authToken() });
     if (!res.ok) return toast(res.error, 'error');
     joined(res);
   };
@@ -115,7 +117,7 @@
     const name = getName(); if (!name) return;
     const code = $('#join-code').value.trim().toUpperCase();
     if (code.length !== 4) return toast('Room codes are 4 letters', 'error');
-    const res = await emit('join', { code, name });
+    const res = await emit('join', { code, name, auth: authToken() });
     if (!res.ok) return toast(res.error, 'error');
     joined(res);
   }
@@ -130,7 +132,7 @@
   async function tryRejoin() {
     const want = (params.get('room') || '').toUpperCase();
     if (session && (!want || session.code === want)) {
-      const res = await emit('join', { code: session.code, token: session.token, name: savedName() });
+      const res = await emit('join', { code: session.code, token: session.token, name: savedName(), auth: authToken() });
       if (res.ok) return joined(res);
       saveSession(null);
       if (want) toast(res.error, 'error');
@@ -140,7 +142,7 @@
 
   socket.on('connect', () => {
     if (!state) tryRejoin();
-    else if (session) emit('join', { code: session.code, token: session.token, name: savedName() });
+    else if (session) emit('join', { code: session.code, token: session.token, name: savedName(), auth: authToken() });
   });
   socket.on('disconnect', () => toast('Connection lost — reconnecting…', 'error', 2500));
   // Keep-alive: free hosts (Render) put the server to sleep after 15 minutes without messages,
@@ -190,7 +192,7 @@
     const el = document.createElement('div');
     el.className = 'pop-msg';
     el.style.background = POP_COLORS[popN++ % POP_COLORS.length];
-    el.innerHTML = `<span class="dot">♪</span><span><b>${esc(g.name)}</b> got the song</span>${g.points ? `<span class="pts">+${fmt(g.points)}</span>` : ''}`;
+    el.innerHTML = `<span class="dot">${g.first ? '★' : '♪'}</span><span><b>${esc(g.name)}</b> got the song${g.first ? ' first' : ''}</span>${g.points ? `<span class="pts">+${fmt(g.points)}</span>` : ''}`;
     const box = $('#gotit');
     box.appendChild(el);
     while (box.children.length > 3) box.firstChild.remove();
@@ -201,7 +203,7 @@
   function renderThemes() {
     const T = window.SliverThemes;
     const cur = T.current();
-    $('#theme-grid').innerHTML = T.THEMES.map((t) => {
+    $('#theme-grid').innerHTML = T.available().map((t) => {
       const v = t.vars;
       return `<button class="theme${t.id === cur ? ' on' : ''}" data-theme-id="${t.id}" role="radio" aria-checked="${t.id === cur}">
         <span class="sw" style="background:${v['--page']}">
@@ -210,21 +212,21 @@
           <span class="sw-bar" style="top:28px;background:${v['--accent']}"></span>
           <span class="sw-bar" style="top:40px;right:34px;background:${v['--line']}"></span>
         </span>
+        ${t.deco ? `<span class="sw-deco" aria-hidden="true">${t.deco}</span>` : ''}
         <span class="name">${t.name}</span>
+        ${t.season ? `<span class="season">Until ${T.seasonEnds(t)}</span>` : ''}
       </button>`;
     }).join('');
   }
-  function openSettings() { renderThemes(); $('#settings').hidden = false; $('#btn-settings-close').focus(); }
-  function closeSettings() { $('#settings').hidden = true; }
+  function openSettings() { renderThemes(); applyVolume(); openSheet('settings'); $('#btn-settings-close').focus(); }
+  function closeSettings() { closeSheet('settings'); }
   $('#btn-settings').onclick = openSettings;
   $('#btn-settings-close').onclick = closeSettings;
   $('#btn-settings-done').onclick = closeSettings;
   $('#settings').addEventListener('click', (e) => {
-    if (e.target.id === 'settings') return closeSettings();
     const t = e.target.closest('[data-theme-id]');
     if (t) { window.SliverThemes.set(t.dataset.themeId); renderThemes(); }
   });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#settings').hidden) closeSettings(); });
 
   // ---------- end game (host) ----------
   // Same two-tap confirm as Leave room. Sends everyone back to the lobby.
@@ -280,6 +282,10 @@
     $('#join-code').value = '';
     $('#btn-leave').hidden = true;
     $('#btn-end').hidden = true;
+    $('#btn-players').hidden = true;
+    $('#btn-boards').hidden = false;
+    lastRanked = null;
+    closeSheet('players');
     document.body.classList.remove('in-game');
     show('home');
   }
@@ -293,6 +299,9 @@
     $('#btn-leave').hidden = false;
     const inGame = ['loading', 'round', 'reveal'].includes(state.phase);
     $('#btn-end').hidden = !(isHost && inGame);
+    $('#btn-players').hidden = false;
+    $('#btn-boards').hidden = inGame;
+    if (!$('#players').hidden) renderPlayersSheet();
     if ($('#btn-end').hidden) disarmEnd();
     document.body.classList.toggle('in-game', ['loading', 'round', 'reveal'].includes(phase));
     if (phase === 'lobby') renderLobby();
@@ -315,6 +324,7 @@
         <span class="av" style="background:${AV[i % AV.length]}">${esc((p.name || '?')[0].toUpperCase())}</span>
         ${armed ? `Remove ${esc(p.name)}?` : `${esc(p.name)}${p.id === state.meId ? ' (you)' : ''}`}
         ${p.id === state.hostId ? '<span class="host-tag">host</span>' : ''}
+        ${state.settings.ranked && !p.loggedIn ? '<span class="guest-tag">not logged in</span>' : ''}
         ${canKick ? `<button class="kick" data-kick="${esc(p.id)}" aria-label="${armed ? 'Confirm removing' : 'Remove'} ${esc(p.name)}" title="${armed ? 'Tap again to remove' : 'Remove from room'}">×</button>` : ''}
       </li>`;
     }).join('');
@@ -342,27 +352,76 @@
       `<button class="pack${added.has(pk.id) ? ' on' : ''}${busyPacks.has(pk.id) ? ' busy' : ''}" data-pack="${esc(pk.id)}" aria-pressed="${added.has(pk.id)}">${esc(pk.name)}</button>`
     ).join('')}</div>`).join('');
 
-    document.querySelectorAll('#modes .mode').forEach((el) => {
-      const on = el.dataset.mode === state.settings.mode;
-      el.classList.toggle('on', on);
-      el.setAttribute('aria-checked', on);
-    });
-    const modeName = { classic: 'Classic', hard: 'Hard', chaos: 'Chaos' }[state.settings.mode] || 'Classic';
-    $('#guest-mode').textContent = `Mode: ${modeName}. ${state.settings.rounds} songs.`;
+    // ---- game type, mode, settings ----
+    const st = state.settings;
+    const ranked = !!st.ranked;
+    $('#seg-casual').classList.toggle('on', !ranked);
+    $('#seg-ranked').classList.toggle('on', ranked);
+    $('#seg-casual').setAttribute('aria-selected', !ranked);
+    $('#seg-ranked').setAttribute('aria-selected', ranked);
+    $('#ranked-panel').hidden = !ranked;
+    $('#songs-card').hidden = ranked;
+    document.querySelectorAll('.casual-only').forEach((el) => (el.hidden = ranked));
+    $('#ranked-fixed').hidden = !ranked;
+    const rankedPacks = (state.packs || []).filter((pk) => pk.ranked);
+    $('#ranked-genres').innerHTML = rankedPacks.map((pk) => {
+      const on = st.rankedPack === pk.id;
+      const busy = state.ranked && state.ranked.loading === pk.id;
+      return `<button class="pack${on ? ' on' : ''}${busy ? ' busy' : ''}" data-rpack="${esc(pk.id)}" aria-pressed="${on}">${esc(pk.name)}</button>`;
+    }).join('');
 
-    const rSel = $('#set-rounds'), tSel = $('#set-time'), gSel = $('#set-guesses');
+    document.querySelectorAll('#modes .mode').forEach((el) => {
+      const m = el.dataset.mod;
+      const on = m === 'classic' ? !st.hard && !st.chaos : !!st[m];
+      el.classList.toggle('on', on);
+      el.setAttribute('aria-pressed', on);
+    });
+    $('#mods-title').textContent = ranked ? 'Mods' : 'Mode';
+    $('#mode-mult').textContent = st.hard && st.chaos ? 'Hard + Chaos together: 1.875× points'
+      : st.hard || st.chaos ? 'Tap Classic to turn it off, or add the other one too.' : 'Hard and Chaos can be on at the same time.';
+    const modeName = st.hard && st.chaos ? 'Hard + Chaos' : st.hard ? 'Hard' : st.chaos ? 'Chaos' : 'Classic';
+    const packName = (id) => ((state.packs || []).find((x) => x.id === id) || {}).name || 'no genre picked yet';
+    $('#guest-mode').textContent = ranked
+      ? `Ranked: ${packName(st.rankedPack)}. ${modeName}. 5 songs.`
+      : `Mode: ${modeName}. ${st.rounds} songs.`;
+    const me = state.players.find((p) => p.id === state.meId);
+    $('#guest-login').hidden = !(ranked && me && !me.loggedIn);
+
+    const rSel = $('#set-rounds'), tSel = $('#set-time'), gSel = $('#set-guesses'), mSel = $('#set-maxlen'), lSel = $('#set-listen');
     if (!rSel.options.length) {
       [3, 5, 7, 10, 15, 20].forEach((n) => rSel.add(new Option(`${n} songs`, n)));
       tSel.add(new Option('No time limit', 0));
       [30, 45, 60, 90, 120, 180].forEach((n) => tSel.add(new Option(n < 120 ? `${n} seconds` : `${n / 60} minutes`, n)));
       gSel.add(new Option('Unlimited', 0));
       [1, 3, 5, 10].forEach((n) => gSel.add(new Option(`${n} guess${n === 1 ? '' : 'es'}`, n)));
+      [15, 20].forEach((n) => mSel.add(new Option(`${n} seconds`, n)));
+      mSel.add(new Option('30 seconds (whole clip)', 30));
+      [15, 20].forEach((n) => lSel.add(new Option(`${n} seconds`, n)));
+      lSel.add(new Option('30 seconds (whole clip)', 30));
     }
-    rSel.value = state.settings.rounds;
-    tSel.value = state.settings.roundTime;
-    gSel.value = state.settings.maxGuesses;
-    $('#btn-start').disabled = state.poolSize < 2;
-    $('#btn-start').textContent = state.poolSize < 2 ? 'Add songs to start' : `Start ${state.settings.rounds} songs`;
+    rSel.value = st.rounds;
+    tSel.value = st.roundTime;
+    gSel.value = st.maxGuesses;
+    mSel.value = st.maxLen;
+    lSel.value = st.listenLen;
+
+    const start = $('#btn-start');
+    const warn = $('#ranked-warn');
+    warn.hidden = true;
+    if (ranked) {
+      const guests = state.players.filter((p) => p.connected && !p.loggedIn);
+      if (guests.length) {
+        warn.hidden = false;
+        warn.textContent = `Not logged in yet: ${guests.map((p) => p.name + (p.id === state.meId ? ' (you)' : '')).join(', ')}. Everyone needs an account for ranked.`;
+      }
+      const loading = state.ranked && state.ranked.loading;
+      start.disabled = !st.rankedPack || !!loading || guests.length > 0;
+      start.textContent = !st.rankedPack ? 'Pick a genre' : loading ? 'Loading songs…'
+        : guests.length ? 'Waiting for logins' : `Start ranked: ${packName(st.rankedPack)}`;
+    } else {
+      start.disabled = state.poolSize < 2;
+      start.textContent = state.poolSize < 2 ? 'Add songs to start' : `Start ${st.rounds} songs`;
+    }
   }
 
   function inviteUrl() {
@@ -383,15 +442,21 @@
 
   $('#form-playlist').onsubmit = async (e) => {
     e.preventDefault();
-    const input = $('#playlist-input').value.trim() || 'demo';
+    if (!$('#artist-sug').hidden && artistActive >= 0 && artistList[artistActive]) return pickArtist(artistList[artistActive]);
+    addInput($('#playlist-input').value.trim() || 'demo');
+  };
+  async function addInput(input, artistId) {
+    hideArtistSug();
     const btn = $('#btn-add');
     btn.disabled = true; btn.textContent = 'Loading…';
-    const res = await emit('addPlaylist', { input });
+    const res = await emit('addPlaylist', { input, artistId });
     btn.disabled = false; btn.textContent = 'Add';
     if (!res.ok) return toast(res.error, 'error', 6000);
     $('#playlist-input').value = '';
+    hideArtistSug();
     if (res.added === 0) toast('Those songs were already in the game', 'info');
-  };
+    else if (res.truncated) toast('Spotify only shared the first 100 songs of that playlist. The Deezer version of it will load all of them.', 'info', 7000);
+  }
   $('#btn-clear').onclick = () => emit('clearPool');
   const busyPacks = new Set();
   document.addEventListener('click', async (e) => {
@@ -417,12 +482,17 @@
       if (state.phase === 'lobby') renderLobby();
       return;
     }
-    const md = e.target.closest('#modes [data-mode]');
-    if (md) emit('settings', { mode: md.dataset.mode });
+    const md = e.target.closest('#modes [data-mod]');
+    if (md && state) {
+      const st = state.settings, m = md.dataset.mod;
+      emit('settings', m === 'classic' ? { hard: false, chaos: false } : { [m]: !st[m] });
+    }
   });
   $('#set-rounds').onchange = (e) => emit('settings', { rounds: e.target.value });
   $('#set-time').onchange = (e) => emit('settings', { roundTime: e.target.value });
   $('#set-guesses').onchange = (e) => emit('settings', { maxGuesses: e.target.value });
+  $('#set-maxlen').onchange = (e) => emit('settings', { maxLen: e.target.value });
+  $('#set-listen').onchange = (e) => emit('settings', { listenLen: e.target.value });
   $('#btn-start').onclick = async () => {
     unlockAudio();
     const res = await emit('start');
@@ -614,21 +684,30 @@
     startClip(r.clipUrl, override ? lenOverride : currentLen(), 'round');
   }
 
-  const LISTEN_LEN = 15;
+  // How long the song plays after you've guessed (host setting: 15, 20 or 30 s).
+  const listenLen = () => (state && ((state.round && state.round.listenLen) || (state.reveal && state.reveal.listenLen) || (state.game && state.game.listenLen))) || 15;
   function toggleListen() {
     if (playing && playing.mode === 'listen') return stopAudio();
-    startClip(clip.url, LISTEN_LEN, 'listen');
+    startClip(clip.url, listenLen(), 'listen');
   }
 
   // ---------- sound-wave ring around the play button ----------
   // Bars around the button follow the actual audio (Web Audio analyser).
-  let analyser = null, freq = null;
+  let analyser = null, freq = null, master = null;
+  function ensureMaster() {
+    if (!master) {
+      master = ctx.createGain();
+      master.gain.value = volumeGain();
+      master.connect(ctx.destination);
+    }
+    return master;
+  }
   function ensureAnalyser() {
     if (!analyser) {
       analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       analyser.smoothingTimeConstant = 0.55;
-      analyser.connect(ctx.destination);
+      analyser.connect(ensureMaster());
       freq = new Uint8Array(analyser.frequencyBinCount);
     }
     return analyser;
@@ -691,7 +770,7 @@
     $('.ring circle').style.strokeDashoffset = String(289 * (1 - (roundOn ? progress : 0)));
     const listenOn = mode === 'listen';
     document.querySelectorAll('[data-listen]').forEach((btn) => {
-      btn.textContent = listenOn ? 'Stop' : `Play ${LISTEN_LEN} seconds`;
+      btn.textContent = listenOn ? 'Stop' : `Play ${listenLen()} seconds`;
     });
     document.querySelectorAll('.listen-bar span').forEach((bar) => {
       bar.style.width = `${listenOn ? progress * 100 : 0}%`;
@@ -715,11 +794,11 @@
   const scrubber = $('#scrubber');
   let selectedLen = MIN_LEN; // exact length chosen (slider or +1s)
   const currentLen = () => selectedLen;
-  const setLen = (l) => { selectedLen = Math.round(Math.max(MIN_LEN, Math.min(MAX_LEN, l)) * 10) / 10; scrubber.value = sliderFromLen(selectedLen); };
+  const setLen = (l) => { selectedLen = Math.round(Math.max(MIN_LEN, Math.min(maxLen, l)) * 10) / 10; scrubber.value = sliderFromLen(selectedLen); };
 
   function buildTicks() {
-    const marks = [0.1, 0.5, 1, 3, 10, 30]; // Songless's labels
-    $('#ticks').innerHTML = marks.map((m) => `<span style="left:${(sliderFromLen(m) / 10).toFixed(2)}%">${m}s</span>`).join('');
+    const marks = [0.1, 0.5, 1, 3, 10, 30].filter((m) => m < maxLen).concat(maxLen); // Songless's labels
+    $('#ticks').innerHTML = [...new Set(marks)].map((m) => `<span style="left:${(sliderFromLen(m) / 10).toFixed(2)}%">${m}s</span>`).join('');
   }
   buildTicks();
 
@@ -760,7 +839,7 @@
   $('#btn-play').onclick = () => playClip();
   // +1s: one more second than the longest you've heard (or the slider, if that's further).
   $('#btn-plus').onclick = () => {
-    if (myHeard >= MAX_LEN) return;
+    if (myHeard >= maxLen) return;
     setLen(Math.max(currentLen(), myHeard) + 1);
     updateReadout();
     playClip(selectedLen);
@@ -774,6 +853,7 @@
     if (key !== roundKey) {
       roundKey = key;
       stopAudio();
+      if ((r.maxLen || MAX_LEN) !== maxLen) { maxLen = r.maxLen || MAX_LEN; buildTicks(); }
       myHeard = r.my.maxHeard || 0;
       setLen(myHeard || MIN_LEN);
       $('#done-card').dataset.status = '';
@@ -783,10 +863,15 @@
       celebrated = false;
       loadClip(r.clipUrl).catch(() => {});
     }
-    $('#round-label').textContent = `Song ${r.num} of ${r.total}`;
-    const tw = r.twist ? TWISTS[r.twist] : r.mode === 'hard' ? { name: 'Hard mode', blurb: 'Starts mid-song. Type the title yourself.' } : null;
-    $('#twist').hidden = !tw;
-    if (tw) { $('#twist b').textContent = tw.name; $('#twist span').textContent = tw.blurb; }
+    $('#round-label').textContent = `${r.ranked ? 'Ranked · ' : ''}Song ${r.num} of ${r.total}`;
+    const tws = [];
+    if (r.hard) tws.push({ name: 'Hard', blurb: 'Starts mid-song. Type the title yourself.' });
+    if (r.twist) tws.push(TWISTS[r.twist]);
+    $('#twist').hidden = !tws.length;
+    if (tws.length) {
+      $('#twist b').textContent = tws.map((t) => t.name).join(' + ') + (r.mult > 1 ? ` · ${r.mult}×` : '');
+      $('#twist span').textContent = tws.map((t) => t.blurb).join(' ');
+    }
     typedMode = !!r.typed;
     $('#guess-title').textContent = typedMode ? 'Type the title' : 'Your guess';
     gi.placeholder = typedMode ? 'Type the song title' : 'Start typing a song or artist…';
@@ -807,7 +892,7 @@
     $('#done-card').hidden = !done;
     if (done) {
       const msg = {
-        correct: `<div class="verdict">Got it</div><div class="big-pts">+${fmt(my.points)}</div>`,
+        correct: `<div class="verdict">Got it${my.bonus ? ', and first!' : ''}</div><div class="big-pts">+${fmt(my.points)}</div>${my.bonus ? `<div class="bonus-note">includes +${fmt(my.bonus)} for being first</div>` : ''}`,
         out: `<div class="verdict">Out of guesses</div>`,
         'gave-up': `<div class="verdict">Skipped</div>`,
         timeout: `<div class="verdict">${r.endsAt ? 'Time\'s up' : 'Song over'}</div>`,
@@ -816,16 +901,18 @@
       if ($('#done-card').dataset.status !== my.status) {
         $('#done-card').dataset.status = my.status;
         $('#done-card').innerHTML = msg +
-          `<button class="btn listen" data-listen>Play ${LISTEN_LEN} seconds</button><div class="listen-bar"><span></span></div>` +
+          `<button class="btn listen" data-listen>Play ${listenLen()} seconds</button><div class="listen-bar"><span></span></div>` +
           '<p>Here\'s the song while everyone else finishes.</p>';
         // Hear the song right after your guess. Your own device only.
         toggleListen();
       }
     }
 
+    const amHost = state.hostId === state.meId;
     $('#round-players').innerHTML = state.players.filter((p) => p.connected).map((p) => {
       const icon = { correct: '✓ ', out: '', 'gave-up': '', timeout: '' }[p.roundStatus] ?? '';
-      return `<li class="${p.roundStatus || ''}">${icon}${esc(p.name)}</li>`;
+      const inner = `${icon}${esc(p.name)}${p.id === state.hostId ? ' <small>host</small>' : ''}`;
+      return `<li class="${p.roundStatus || ''}">${amHost && p.id !== state.meId ? `<button data-player-menu="${esc(p.id)}">${inner}</button>` : inner}</li>`;
     }).join('');
 
     clearInterval(timerInt);
@@ -987,17 +1074,22 @@
     link.hidden = !v.link;
     if (v.link) link.href = v.link;
     const twistName = v.twist && TWISTS[v.twist] ? TWISTS[v.twist].name : null;
-    $('#reveal-mode').textContent = v.mode === 'hard' ? `Hard mode, ${v.mult}× points`
-      : twistName ? `Chaos twist: ${twistName}, ${v.mult}× points` : '';
+    const modeBits = [v.hard && 'Hard', twistName && `Chaos twist: ${twistName}`].filter(Boolean);
+    $('#reveal-mode').textContent = modeBits.length ? `${modeBits.join(', ')}, ${v.mult}× points` : '';
+    $('#reveal-plays').hidden = !v.plays;
+    if (v.plays) {
+      $('#reveal-plays').innerHTML = `<b>${fmtPlays(v.plays)}</b> plays on Spotify`;
+      $('#reveal-plays').title = `${fmt(v.plays)} plays`;
+    }
     const label = { correct: '', out: 'Missed it', 'gave-up': 'Skipped', timeout: 'Ran out of time' };
     const totals = Object.fromEntries(state.players.map((p) => [p.id, p.score]));
     $('#reveal-results').innerHTML = v.results.map((r) => {
       const how = r.status === 'correct'
-        ? `Heard ${fmtLen(Math.max(0.1, r.heard))}${r.guesses > 1 ? `, ${r.guesses - 1} wrong` : ''}`
+        ? `Heard ${fmtLen(Math.max(0.1, r.heard))}${r.guesses > 1 ? `, ${r.guesses - 1} wrong` : ''}${r.bonus ? ', first to get it' : ''}`
         : label[r.status] || '';
       return `<li>
         <div><div class="r-name">${esc(r.name)}</div><div class="r-sub">${how}. Total ${fmt(totals[r.id])}</div></div>
-        <span class="r-pts ${r.points ? '' : 'zero'}">+${fmt(r.points)}</span>
+        <span class="r-pts ${r.points ? '' : 'zero'}">${r.bonus ? '<i class="first-tag">1st</i>' : ''}+${fmt(r.points)}</span>
       </li>`;
     }).join('');
     $('#btn-next').textContent = v.last ? 'See final scores' : 'Next song';
@@ -1026,9 +1118,387 @@
     $('#winner').textContent = tied.length > 1 ? `${tied.map((p) => p.name).join(' & ')} tie` : top.name;
     $('#final-board').innerHTML = ps.map((p) =>
       `<li><span class="b-name">${esc(p.name)}</span><span class="b-score">${fmt(p.score)}</span></li>`).join('');
+    renderRankedResult();
   }
   $('#btn-again').onclick = () => { unlockAudio(); emit('start').then((r) => !r.ok && toast(r.error, 'error')); };
   $('#btn-lobby').onclick = () => emit('lobby');
+
+  // ---------- sheets (settings, log in, leaderboards, stats, players) ----------
+  const SHEETS = ['settings', 'auth', 'boards', 'profile', 'players'];
+  const sheetStack = [];
+  function openSheet(id) {
+    const el = $('#' + id);
+    el.hidden = false;
+    const i = sheetStack.indexOf(id);
+    if (i >= 0) sheetStack.splice(i, 1);
+    sheetStack.push(id);
+    el.style.zIndex = String(70 + sheetStack.length);
+  }
+  function closeSheet(id) {
+    $('#' + id).hidden = true;
+    const i = sheetStack.indexOf(id);
+    if (i >= 0) sheetStack.splice(i, 1);
+  }
+  for (const id of SHEETS) {
+    $('#' + id).addEventListener('click', (e) => {
+      if (e.target.id === id || e.target.closest('[data-close]')) closeSheet(id);
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && sheetStack.length) closeSheet(sheetStack[sheetStack.length - 1]);
+  });
+
+  // ---------- volume ----------
+  let volume = 80, muted = false;
+  try {
+    const v = Number(localStorage.getItem('sliver.volume'));
+    if (localStorage.getItem('sliver.volume') !== null && v >= 0 && v <= 100) volume = v;
+    muted = localStorage.getItem('sliver.muted') === '1';
+  } catch {}
+  function volumeGain() { return muted ? 0 : Math.pow(volume / 100, 2); } // feels even across the slider
+  function applyVolume() {
+    if (master && ctx) master.gain.setTargetAtTime(volumeGain(), ctx.currentTime, 0.02);
+    $('#volume').value = volume;
+    $('#volume').style.setProperty('--fill', `${muted ? 0 : volume}%`);
+    $('#volume-value').textContent = muted ? 'Muted' : `${volume}%`;
+    const b = $('#btn-mute');
+    b.innerHTML = muted || volume === 0
+      ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h3.5L12 5v14l-4.5-4H4z"/><path d="m16 9 5 6m0-6-5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>'
+      : `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h3.5L12 5v14l-4.5-4H4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7${volume > 50 ? 'M18.5 6a8.5 8.5 0 0 1 0 12' : ''}" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>`;
+    b.setAttribute('aria-label', muted ? 'Unmute' : 'Mute');
+    b.title = muted ? 'Unmute' : 'Mute';
+    try { localStorage.setItem('sliver.volume', String(volume)); localStorage.setItem('sliver.muted', muted ? '1' : '0'); } catch {}
+  }
+  $('#volume').addEventListener('input', (e) => { volume = Number(e.target.value); muted = false; applyVolume(); });
+  $('#btn-mute').onclick = () => { muted = !muted; if (!muted && volume === 0) volume = 50; applyVolume(); };
+  $('#btn-test-sound').onclick = () => {
+    unlockAudio();
+    const out = ensureMaster();
+    const t0 = ctx.currentTime + 0.02;
+    [660, 880].forEach((f, i) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0, t0 + i * 0.16);
+      g.gain.linearRampToValueAtTime(0.25, t0 + i * 0.16 + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + i * 0.16 + 0.35);
+      o.connect(g).connect(out);
+      o.start(t0 + i * 0.16); o.stop(t0 + i * 0.16 + 0.4);
+    });
+  };
+  applyVolume();
+
+  // ---------- accounts ----------
+  let auth = (() => { try { return JSON.parse(localStorage.getItem('sliver.auth')) || null; } catch { return null; } })();
+  function authToken() { return auth && auth.token ? auth.token : null; }
+  function saveAuth(a) {
+    auth = a;
+    try { a ? localStorage.setItem('sliver.auth', JSON.stringify(a)) : localStorage.removeItem('sliver.auth'); } catch {}
+    renderAccount();
+  }
+  async function api(path, { method = 'GET', body } = {}) {
+    const headers = {};
+    if (authToken()) headers.Authorization = `Bearer ${authToken()}`;
+    if (body) headers['Content-Type'] = 'application/json';
+    try {
+      const r = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+      return await r.json().catch(() => ({ ok: false, error: `Server error (${r.status})` }));
+    } catch { return { ok: false, error: 'Can\'t reach the server. Check your connection.' }; }
+  }
+  async function refreshMe() {
+    if (!authToken()) return renderAccount();
+    const res = await api('/api/me');
+    if (res.ok && res.user) saveAuth({ token: auth.token, user: res.user });
+    else if (res.ok) { saveAuth(null); toast('You were logged out. Log in again for ranked.', 'info'); }
+    else renderAccount();
+  }
+  function tellServerAboutLogin() { if (socket.connected) emit('auth', { token: authToken() }); }
+
+  function renderAccount() {
+    const u = auth && auth.user;
+    const box = $('#account-box');
+    if (u) {
+      box.innerHTML = `<div class="acct-row">
+          <span class="acct-av">${esc(u.name[0].toUpperCase())}</span>
+          <div class="acct-main"><div class="acct-name">${esc(u.name)} <span class="tag-no">#${esc(u.tag)}</span></div>
+          <div class="acct-sub">Rating <b>${fmt(u.rating)}</b> · ${fmt(u.games)} ranked game${u.games === 1 ? '' : 's'}</div></div>
+        </div>
+        <div class="acct-actions">
+          <button class="btn small" data-open-profile="${esc(u.id)}">My stats</button>
+          <button class="btn small" data-open-boards>Leaderboards</button>
+          <button class="btn ghost small" data-logout>Log out</button>
+        </div>`;
+    } else {
+      box.innerHTML = `<div class="acct-pitch"><b>Ranked play</b><span>Log in to put your scores on the leaderboards.</span></div>
+        <div class="acct-actions">
+          <button class="btn small primary-ish" data-open-auth="signup">Sign up</button>
+          <button class="btn small" data-open-auth="login">Log in</button>
+          <button class="btn ghost small" data-open-boards>Leaderboards</button>
+        </div>`;
+    }
+    $('#settings-account').innerHTML = u
+      ? `<p class="hint">Logged in as <b>${esc(u.name)}</b> #${esc(u.tag)} (${esc(u.email || '')})</p>
+         <div class="acct-actions"><button class="btn small" data-open-profile="${esc(u.id)}">My stats</button><button class="btn ghost small" data-logout>Log out</button></div>`
+      : `<p class="hint">Only needed for ranked games and leaderboards.</p>
+         <div class="acct-actions"><button class="btn small" data-open-auth="signup">Sign up</button><button class="btn small" data-open-auth="login">Log in</button></div>`;
+    if (u && !$('#name').value.trim()) $('#name').value = u.name;
+    if (state && state.phase === 'lobby') renderLobby();
+  }
+
+  let authMode = 'login';
+  function openAuth(mode = 'login') {
+    authMode = mode;
+    const signup = mode === 'signup';
+    $('#auth-title').textContent = signup ? 'Sign up' : 'Log in';
+    $('#auth-tab-login').classList.toggle('on', !signup);
+    $('#auth-tab-signup').classList.toggle('on', signup);
+    $('#auth-name-field').hidden = !signup;
+    $('#auth-submit').textContent = signup ? 'Create account' : 'Log in';
+    $('#auth-password').autocomplete = signup ? 'new-password' : 'current-password';
+    $('#auth-error').hidden = true;
+    if (signup && !$('#auth-name').value) $('#auth-name').value = $('#name').value.trim();
+    openSheet('auth');
+    (signup ? $('#auth-name') : $('#auth-email')).focus();
+  }
+  $('#auth-tab-login').onclick = () => openAuth('login');
+  $('#auth-tab-signup').onclick = () => openAuth('signup');
+  $('#auth-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = $('#auth-submit');
+    const body = { email: $('#auth-email').value, password: $('#auth-password').value };
+    if (authMode === 'signup') body.name = $('#auth-name').value;
+    btn.disabled = true;
+    const res = await api(authMode === 'signup' ? '/api/signup' : '/api/login', { method: 'POST', body });
+    btn.disabled = false;
+    if (!res.ok) { $('#auth-error').textContent = res.error; $('#auth-error').hidden = false; return; }
+    $('#auth-password').value = '';
+    saveAuth({ token: res.token, user: res.user });
+    tellServerAboutLogin();
+    closeSheet('auth');
+    toast(authMode === 'signup' ? `Welcome to Sliver, ${res.user.name}!` : `Welcome back, ${res.user.name}`, 'good');
+  };
+  async function logout() {
+    await api('/api/logout', { method: 'POST' });
+    saveAuth(null);
+    tellServerAboutLogin();
+    toast('Logged out', 'info');
+  }
+  $('#guest-login').onclick = () => openAuth('login');
+
+  // ---------- leaderboards ----------
+  let boardList = null;
+  async function openBoards(board) {
+    openSheet('boards');
+    loadBoard(board || $('#board-select').value || 'overall');
+  }
+  async function loadBoard(board) {
+    $('#board-list').innerHTML = '<li class="lb-empty">Loading…</li>';
+    $('#board-me').hidden = true;
+    const res = await api(`/api/leaderboard?board=${encodeURIComponent(board)}`);
+    if (!res.ok) { $('#board-list').innerHTML = `<li class="lb-empty">${esc(res.error)}</li>`; return; }
+    if (!boardList) {
+      boardList = res.boards;
+      const sel = $('#board-select');
+      const cats = [];
+      for (const b of boardList) { let c = cats.find((x) => x.name === b.cat); if (!c) cats.push(c = { name: b.cat, items: [] }); c.items.push(b); }
+      sel.innerHTML = cats.map((c) => `<optgroup label="${esc(c.name)}">${c.items.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('')}</optgroup>`).join('');
+    }
+    $('#board-select').value = res.board.id;
+    const overall = res.board.id === 'overall';
+    $('#board-note').textContent = overall
+      ? 'Rating adds up your best game on every genre (each one after your best counts a little less), like osu! pp.'
+      : `Top 25 best 5-song ranked games on ${res.board.name}. ${fmt(res.total)} player${res.total === 1 ? '' : 's'} so far.`;
+    const meId = auth && auth.user && auth.user.id;
+    $('#board-list').innerHTML = res.entries.length ? res.entries.map((e) => `
+      <li class="${e.id === meId ? 'me' : ''}${e.rank <= 3 ? ' top' + e.rank : ''}">
+        <span class="lb-rank">${e.rank}</span>
+        <button class="lb-name" data-open-profile="${esc(e.id)}">${esc(e.name)} <span class="tag-no">#${esc(e.tag)}</span></button>
+        <span class="lb-val">${overall ? `${fmt(e.value)}<small> rating</small>` : `${fmt(e.value)}<small> · ${fmt(e.pp)} pp</small>`}</span>
+      </li>`).join('') : '<li class="lb-empty">No ranked games here yet. Be the first!</li>';
+    if (res.me && res.me.rank > 25) {
+      $('#board-me').hidden = false;
+      $('#board-me').innerHTML = `You: <b>#${fmt(res.me.rank)}</b> with ${fmt(res.me.value)}${overall ? ' rating' : ''}`;
+    }
+  }
+  $('#board-select').onchange = (e) => loadBoard(e.target.value);
+  $('#btn-boards').onclick = () => openBoards();
+
+  // ---------- player stats ----------
+  const pct = (x) => `${Math.round((x || 0) * 100)}%`;
+  function ago(t) {
+    const m = Math.round((Date.now() - t) / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m} min ago`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `${h} hr ago`;
+    const d = Math.round(h / 24);
+    return d < 30 ? `${d} day${d === 1 ? '' : 's'} ago` : new Date(t).toLocaleDateString();
+  }
+  async function openProfile(id) {
+    openSheet('profile');
+    $('#profile-name').textContent = 'Stats';
+    $('#profile-body').innerHTML = '<p class="hint">Loading…</p>';
+    const res = await api(`/api/profile/${encodeURIComponent(id)}`);
+    if (!res.ok) { $('#profile-body').innerHTML = `<p class="hint">${esc(res.error)}</p>`; return; }
+    const p = res.profile, st = p.stats;
+    $('#profile-name').innerHTML = `${esc(p.name)} <span class="tag-no">#${esc(p.tag)}</span>`;
+    const mods = (r) => [r.hard && 'Hard', r.chaos && 'Chaos'].filter(Boolean).join(' + ');
+    $('#profile-body').innerHTML = `
+      <div class="pf-head">
+        <div><div class="label">Rating</div><div class="pf-rating">${fmt(p.rating)}</div></div>
+        <div><div class="label">Overall rank</div><div class="pf-rank">${p.globalRank ? `#${fmt(p.globalRank)}` : 'Unranked'}<small>${p.globalRank ? ` of ${fmt(p.players)}` : ''}</small></div></div>
+      </div>
+      <div class="tiles">
+        <div class="tile"><b>${fmt(st.games)}</b><span>Ranked games</span></div>
+        <div class="tile"><b>${pct(st.accuracy)}</b><span>Songs guessed</span></div>
+        <div class="tile"><b>${pct(st.firstTry)}</b><span>Right first try</span></div>
+        <div class="tile"><b>${st.correct ? fmtLen(Math.max(0.1, st.avgHeard)) : 'n/a'}</b><span>Avg. heard</span></div>
+        <div class="tile"><b>${fmt(st.avgScore)}</b><span>Avg. game</span></div>
+        <div class="tile"><b>${fmt(st.best)}</b><span>Best game${st.bestPack ? ` (${esc(st.bestPack)})` : ''}</span></div>
+      </div>
+      <h3>Best per genre</h3>
+      ${p.genres.length ? `<ul class="pf-list">${p.genres.map((g) => `
+        <li><button class="pf-genre" data-open-boards="${esc(g.packId)}">${esc(g.name)}</button>
+        <span class="pf-score">${fmt(g.best)}<small> · ${fmt(g.pp)} pp</small></span>
+        <span class="pf-pos">${g.rank ? `#${fmt(g.rank)}<small> of ${fmt(g.of)}</small>` : ''}</span></li>`).join('')}</ul>`
+        : '<p class="hint">No ranked games yet.</p>'}
+      ${p.recent.length ? `<h3>Recent games</h3><ul class="pf-list recent">${p.recent.map((r) => `
+        <li><span class="pf-genre-txt">${esc(r.packName)}${mods(r) ? ` <i class="mods">${esc(mods(r))}</i>` : ''}<small>${ago(r.at)} · ${r.correct}/${r.songs} songs</small></span>
+        <span class="pf-score">${fmt(r.score)}<small> · ${fmt(r.pp)} pp</small></span></li>`).join('')}</ul>` : ''}`;
+  }
+
+  // Buttons that open sheets can be anywhere (home, settings, results, leaderboards).
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest('[data-open-auth]');
+    if (a) return openAuth(a.dataset.openAuth);
+    const b = e.target.closest('[data-open-boards]');
+    if (b) return openBoards(b.dataset.openBoards || undefined);
+    const pf = e.target.closest('[data-open-profile]');
+    if (pf) return openProfile(pf.dataset.openProfile);
+    if (e.target.closest('[data-logout]')) return logout();
+  });
+
+  // ---------- ranked: lobby controls and results ----------
+  $('#seg-casual').onclick = () => state && state.settings.ranked && emit('settings', { ranked: false });
+  $('#seg-ranked').onclick = () => state && !state.settings.ranked && emit('settings', { ranked: true });
+  document.addEventListener('click', async (e) => {
+    const rp = e.target.closest('[data-rpack]');
+    if (!rp || !state) return;
+    const res = await emit('rankedPack', { packId: rp.dataset.rpack });
+    if (!res.ok) toast(res.error, 'error', 5000);
+  });
+  let lastRanked = null;
+  socket.on('rankedResult', (r) => {
+    lastRanked = r;
+    if (auth && auth.user) { auth.user.rating = r.rating; auth.user.games = (auth.user.games || 0) + 1; saveAuth(auth); }
+    if (state && state.phase === 'results') renderRankedResult();
+  });
+  function renderRankedResult() {
+    const box = $('#ranked-result');
+    const lg = state.lastGame;
+    if (!lg || !lg.ranked) { box.hidden = true; return; }
+    box.hidden = false;
+    const r = lastRanked && lastRanked.packId === lg.packId ? lastRanked : null;
+    const me = state.players.find((p) => p.id === state.meId);
+    if (!r) {
+      box.innerHTML = me && me.loggedIn ? '<p class="hint">Saving your ranked score…</p>' : '<p class="hint">This was a ranked game. Log in next time to get on the leaderboard.</p>';
+      return;
+    }
+    const delta = r.rating - r.ratingBefore;
+    box.innerHTML = `
+      <div class="label">Ranked · ${esc(r.packName)}</div>
+      <div class="rr-score">${fmt(r.score)} <small>${fmt(r.pp)} pp</small></div>
+      <p class="rr-line">${r.improved
+        ? `${r.prevBest ? 'New personal best' : 'First game on this genre'}! <b>#${fmt(r.packRank)}</b> of ${fmt(r.packPlayers)} on ${esc(r.packName)}.`
+        : !r.prevBest ? `No points this time, so you're not on the ${esc(r.packName)} board yet.`
+        : `Your best on ${esc(r.packName)} is still ${fmt(r.prevBest)}${r.packRank ? ` (#${fmt(r.packRank)})` : ''}.`}</p>
+      <p class="rr-line">Rating <b>${fmt(r.rating)}</b>${delta > 0 ? ` <span class="up">+${fmt(delta)}</span>` : ''}${r.globalRank && r.rating ? ` · #${fmt(r.globalRank)} overall` : ''}</p>
+      <div class="acct-actions"><button class="btn small" data-open-boards="${esc(r.packId)}">${esc(r.packName)} top 25</button>
+      <button class="btn small" data-open-profile="${esc(auth && auth.user ? auth.user.id : '')}">My stats</button></div>`;
+  }
+
+  // ---------- players sheet: host can hand over host or remove people any time ----------
+  let plArmed = null, plTimer = null;
+  function renderPlayersSheet() {
+    if (!state) return;
+    const isHost = state.hostId === state.meId;
+    $('#players-list').innerHTML = state.players.map((p) => {
+      const mine = p.id === state.meId;
+      const arm = (act) => plArmed === `${act}:${p.id}`;
+      return `<li class="${p.connected ? '' : 'offline'}">
+        <span class="acct-av">${esc((p.name || '?')[0].toUpperCase())}</span>
+        <div class="pl-main"><b>${esc(p.name)}${mine ? ' (you)' : ''}</b>
+          <small>${p.id === state.hostId ? 'Host · ' : ''}${fmt(p.score)} points${p.connected ? '' : ' · offline'}${p.loggedIn ? ' · logged in' : ''}</small></div>
+        ${isHost && !mine ? `<div class="pl-actions">
+          ${p.connected ? `<button class="btn small${arm('host') ? ' armed' : ''}" data-pl-host="${esc(p.id)}">${arm('host') ? 'Tap to confirm' : 'Make host'}</button>` : ''}
+          <button class="btn small danger${arm('kick') ? ' armed' : ''}" data-pl-kick="${esc(p.id)}">${arm('kick') ? 'Tap to remove' : 'Remove'}</button>
+        </div>` : ''}
+      </li>`;
+    }).join('');
+    $('#players-hint').textContent = isHost ? 'Tap twice to confirm. Works during a game too.' : 'Only the host can change the host or remove players.';
+  }
+  function openPlayers() { plArmed = null; renderPlayersSheet(); openSheet('players'); }
+  $('#btn-players').onclick = openPlayers;
+  document.addEventListener('click', async (e) => {
+    if (e.target.closest('[data-player-menu]')) return openPlayers();
+    const h = e.target.closest('[data-pl-host]'), k = e.target.closest('[data-pl-kick]');
+    if (!h && !k) return;
+    const id = (h || k).dataset[h ? 'plHost' : 'plKick'];
+    const key = `${h ? 'host' : 'kick'}:${id}`;
+    clearTimeout(plTimer);
+    if (plArmed !== key) {
+      plArmed = key;
+      plTimer = setTimeout(() => { plArmed = null; renderPlayersSheet(); }, 3000);
+      return renderPlayersSheet();
+    }
+    plArmed = null;
+    const res = await emit(h ? 'transferHost' : 'kick', { playerId: id });
+    if (!res.ok) toast(res.error, 'error');
+    else if (h) closeSheet('players');
+    renderPlayersSheet();
+  });
+
+  // ---------- artist suggestions while typing in the add box ----------
+  let artistList = [], artistActive = -1, artistTimer = null, artistReq = 0;
+  const looksLikeLink = (v) => /^(https?:\/\/|spotify:|www\.|open\.|deezer|link\.|\d+$)/i.test(v) || /^demo$/i.test(v);
+  function hideArtistSug() { $('#artist-sug').hidden = true; artistList = []; artistActive = -1; }
+  function renderArtistSug() {
+    const ul = $('#artist-sug');
+    if (!artistList.length) return hideArtistSug();
+    ul.hidden = false;
+    ul.innerHTML = '<li class="group">Artists</li>' + artistList.map((a, i) => `
+      <li data-artist="${i}" class="artist${i === artistActive ? ' active' : ''}">
+        ${a.picture ? `<img src="${esc(a.picture)}" alt="" loading="lazy" />` : `<span class="a-ph">${esc(a.name[0])}</span>`}
+        <div><div>${esc(a.name)}</div><div class="s-artist">${a.fans ? `${fmtPlays(a.fans)} fans · ` : ''}add their top songs</div></div>
+      </li>`).join('');
+  }
+  function pickArtist(a) { $('#playlist-input').value = a.name; addInput(a.name, a.id); }
+  $('#playlist-input').addEventListener('input', () => {
+    const v = $('#playlist-input').value.trim();
+    clearTimeout(artistTimer);
+    if (v.length < 2 || looksLikeLink(v)) { artistReq++; return hideArtistSug(); }
+    artistTimer = setTimeout(async () => {
+      const mine = ++artistReq;
+      const res = await api(`/api/artists?q=${encodeURIComponent(v)}`);
+      if (mine !== artistReq || $('#playlist-input').value.trim() !== v) return;
+      artistList = res.ok ? res.artists.slice(0, 6) : [];
+      artistActive = -1;
+      renderArtistSug();
+    }, 220);
+  });
+  $('#playlist-input').addEventListener('keydown', (e) => {
+    if ($('#artist-sug').hidden || !artistList.length) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); artistActive = (artistActive + 1) % artistList.length; renderArtistSug(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); artistActive = (artistActive - 1 + artistList.length) % artistList.length; renderArtistSug(); }
+    else if (e.key === 'Escape') hideArtistSug();
+  });
+  $('#artist-sug').addEventListener('mousedown', (e) => {
+    const li = e.target.closest('[data-artist]');
+    if (li) { e.preventDefault(); pickArtist(artistList[Number(li.dataset.artist)]); }
+  });
+  $('#playlist-input').addEventListener('blur', () => setTimeout(hideArtistSug, 150));
+
+  renderAccount();
+  refreshMe();
 
   // Keyboard: space plays the clip during a round (when not typing).
   document.addEventListener('keydown', (e) => {

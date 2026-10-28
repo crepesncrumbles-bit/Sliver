@@ -150,7 +150,7 @@ function client() {
       check(a.last.round.my.status === 'out', 'host out after 3 wrong guesses');
     } else {
       const expect = Math.max(0, pointsForLength(2) - wrongCount * 500);
-      check(res.points === expect, `correct guess scores ${expect} (2s heard, ${wrongCount} wrong)`);
+      check(res.points === expect + 500 && res.bonus === 500, `correct guess scores ${expect} + 500 for being first (2s heard, ${wrongCount} wrong)`);
     }
     const after = await a.call('guess', { songId: 0 });
     check(!after.ok, 'no more guesses once done');
