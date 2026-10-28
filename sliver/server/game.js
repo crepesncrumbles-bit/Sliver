@@ -54,6 +54,7 @@ class Room {
     this.settings = { rounds: 5, roundTime: 0, maxGuesses: 0, mode: 'classic' }; // 0 = no time limit
     this.sources = []; // { key, name, by, byId, packId, tracks, count }
     this.lastTwist = null;
+    this.gameId = 0; // bumps when a game starts or ends, so a slow song download can't revive an ended game
     this.kickedTokens = new Set(); // removed players can't rejoin by refreshing
     this.pool = []; // tracks
     this.poolVersion = 0;
@@ -235,10 +236,12 @@ class Room {
     for (const p of this.players.values()) p.score = 0;
     this.roundNum = 0;
     this.usedTrackKeys.clear();
+    this.gameId++;
     await this.nextRound();
   }
 
   async nextRound() {
+    const gid = this.gameId;
     this.clearTimers();
     if (this.roundNum >= this.settings.rounds) return this.finish();
     this.phase = 'loading';
@@ -260,6 +263,7 @@ class Room {
         console.warn(`  skipped "${pick.title}": ${err.message}`);
       }
     }
+    if (gid !== this.gameId || this.phase !== 'loading') return; // host ended the game meanwhile
     if (!track) {
       this.phase = 'lobby';
       this.broadcast();
@@ -445,7 +449,16 @@ class Room {
     this.broadcast();
   }
 
+  // Host ends the game early: everyone goes back to the lobby (songs and players stay).
+  endGame(byName) {
+    if (!['loading', 'round', 'reveal', 'results'].includes(this.phase)) return false;
+    this.backToLobby();
+    this.io.to(this.code).emit('toast', { kind: 'info', text: `${byName} ended the game` });
+    return true;
+  }
+
   backToLobby() {
+    this.gameId++;
     this.clearTimers();
     this.phase = 'lobby';
     this.round = null;

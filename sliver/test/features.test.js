@@ -191,6 +191,35 @@ const mgr = () => new RoomManager({ to: () => ({ emit() {} }) });
       room.clearTimers();
     }
 
+    console.log('host ends the game');
+    {
+      const room = mgr().create();
+      const host = room.addPlayer('Host', { id: 'e1' });
+      const bob = room.addPlayer('Bob', { id: 'e2' });
+      await room.addSource('demo', 'Host');
+      Object.assign(room.settings, { rounds: 5, roundTime: 0 });
+      await room.start();
+      room.reportListen(host.id, 0.1); room.guess(host.id, room.round.track.poolId); room.giveUp(bob.id);
+      check(room.phase === 'reveal' && host.score > 0, 'mid-game with points');
+      room.endGame('Host');
+      check(room.phase === 'lobby' && !room.round && host.score === 0 && room.pool.length === 12 && room.players.size === 2,
+        'End game: back to lobby, scores reset, songs and players kept');
+      // race: host ends while the next song is still downloading
+      let release;
+      const origLoad = room.loadClip.bind(room);
+      room.loadClip = (t) => new Promise((res) => { release = () => res(origLoad(t)); });
+      const pending = room.start();
+      await new Promise((r) => setTimeout(r, 10));
+      check(room.phase === 'loading', 'next song is loading');
+      room.endGame('Host');
+      release(); await pending;
+      check(room.phase === 'lobby' && !room.round, 'a song finishing its download can\'t restart an ended game');
+      room.loadClip = origLoad;
+      await room.start();
+      check(room.phase === 'round' && room.round.num === 1, 'a new game starts fresh at song 1');
+      room.clearTimers();
+    }
+
     console.log('classic unchanged');
     {
       const room = mgr().create();

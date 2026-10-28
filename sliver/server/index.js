@@ -213,6 +213,12 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('endGame', (_, ack) => {
+    if (!hostOnly(ack)) return;
+    room.endGame(player.name);
+    ack && ack({ ok: true });
+  });
+
   socket.on('lobby', (_, ack) => {
     if (!hostOnly(ack)) return;
     room.backToLobby();

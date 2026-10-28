@@ -48,6 +48,8 @@ A black window opens and your browser goes to <http://localhost:3000>.
 
 ### Room controls
 - **Leave room** (top left) takes you back to the home screen. Tap it twice to confirm.
+- **End game** (top right, host only, during a game) stops the game and brings everyone back to the lobby.
+  Songs and players stay; scores reset. Tap it twice to confirm.
 - The host can remove a player with the **×** next to their name (tap twice to confirm). Removed players
   can't get back in by refreshing; they'd have to rejoin with the code.
 - When someone else gets the song right, a pop-up at the top shows their name and points.

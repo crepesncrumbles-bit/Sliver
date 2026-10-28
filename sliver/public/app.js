@@ -226,6 +226,28 @@
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#settings').hidden) closeSettings(); });
 
+  // ---------- end game (host) ----------
+  // Same two-tap confirm as Leave room. Sends everyone back to the lobby.
+  let endArmed = null;
+  $('#btn-end').onclick = async () => {
+    const btn = $('#btn-end');
+    if (!endArmed) {
+      btn.classList.add('confirm');
+      btn.textContent = 'Tap again to end';
+      endArmed = setTimeout(disarmEnd, 3000);
+      return;
+    }
+    disarmEnd();
+    const res = await emit('endGame');
+    if (!res.ok) toast(res.error, 'error');
+  };
+  function disarmEnd() {
+    clearTimeout(endArmed); endArmed = null;
+    const btn = $('#btn-end');
+    btn.classList.remove('confirm');
+    btn.textContent = 'End game';
+  }
+
   // ---------- leave room ----------
   // One tap arms it ("Tap again to leave"), a second tap within 3 s leaves.
   // Mid-song that protects against leaving by accident.
@@ -257,6 +279,7 @@
     history.replaceState(null, '', '/');
     $('#join-code').value = '';
     $('#btn-leave').hidden = true;
+    $('#btn-end').hidden = true;
     document.body.classList.remove('in-game');
     show('home');
   }
@@ -268,6 +291,9 @@
     document.querySelectorAll('.guest-only').forEach((el) => (el.hidden = isHost));
     const phase = state.phase;
     $('#btn-leave').hidden = false;
+    const inGame = ['loading', 'round', 'reveal'].includes(state.phase);
+    $('#btn-end').hidden = !(isHost && inGame);
+    if ($('#btn-end').hidden) disarmEnd();
     document.body.classList.toggle('in-game', ['loading', 'round', 'reveal'].includes(phase));
     if (phase === 'lobby') renderLobby();
     else if (phase === 'loading') show('loading');
