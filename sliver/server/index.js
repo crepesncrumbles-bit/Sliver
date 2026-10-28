@@ -74,9 +74,14 @@ const server = http.createServer((req, res) => {
 const io = new Realtime(server, '/ws');
 rooms = new RoomManager(io, { demoOnly });
 
+const contexts = new Map(); // socket id -> { drop() } so a kick can detach that player's socket
+
 io.on('connection', (socket) => {
   let room = null;
   let player = null;
+  contexts.set(socket.id, {
+    drop: () => { if (room) socket.leaveRoom(room.code); room = null; player = null; },
+  });
 
   const fail = (ack, err) => ack && ack({ ok: false, error: err.message || String(err) });
   const need = (ack) => {
@@ -103,6 +108,7 @@ io.on('connection', (socket) => {
   socket.on('join', ({ code, name, token } = {}, ack) => {
     const r = rooms.get(code);
     if (!r) return fail(ack, new Error(`No room called ${String(code || '').toUpperCase()} — it may have closed`));
+    if (token && r.kickedTokens.has(token)) return fail(ack, new Error('The host removed you from this room'));
     let p = token ? r.reconnect(token, socket) : null;
     if (!p) {
       if (r.players.size >= 12) return fail(ack, new Error('Room is full (12 players)'));
@@ -213,6 +219,20 @@ io.on('connection', (socket) => {
     ack && ack({ ok: true });
   });
 
+  socket.on('kick', ({ playerId } = {}, ack) => {
+    if (!need(ack)) return;
+    try {
+      if (room.hostId !== player.id) throw new Error('Only the host can remove players');
+      const t = room.players.get(playerId);
+      const ctx = t && t.id !== player.id && contexts.get(t.socketId);
+      const r = room;
+      if (ctx) ctx.drop(); // detach them first so they don't get the room-wide notice
+      const target = r.kick(player.id, playerId);
+      io.to(target.socketId).emit('kicked', { by: player.name });
+      ack && ack({ ok: true });
+    } catch (err) { fail(ack, err); }
+  });
+
   socket.on('leave', (_, ack) => {
     if (room && player) {
       const r = room;
@@ -224,7 +244,10 @@ io.on('connection', (socket) => {
     ack && ack({ ok: true });
   });
 
-  socket.on('disconnect', () => room && room.disconnect(socket.id));
+  socket.on('disconnect', () => {
+    contexts.delete(socket.id);
+    if (room) room.disconnect(socket.id);
+  });
 });
 
 server.listen(PORT, HOST, () => {

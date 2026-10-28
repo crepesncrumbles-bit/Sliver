@@ -159,6 +159,73 @@
     render(prev);
   });
 
+  // ---------- kick (host only) ----------
+  // First tap on × asks "Remove Name?", second tap within 3 s removes them.
+  let armedKick = null, kickTimer = null;
+  document.addEventListener('click', async (e) => {
+    const k = e.target.closest('[data-kick]');
+    if (!k) return;
+    const id = k.dataset.kick;
+    clearTimeout(kickTimer);
+    if (armedKick !== id) {
+      armedKick = id;
+      kickTimer = setTimeout(() => { armedKick = null; if (state && state.phase === 'lobby') renderLobby(); }, 3000);
+      renderLobby();
+      return;
+    }
+    armedKick = null;
+    const res = await emit('kick', { playerId: id });
+    if (!res.ok) toast(res.error, 'error');
+  });
+  socket.on('kicked', () => {
+    goHome();
+    toast('The host removed you from the room', 'error', 5000);
+  });
+
+  // ---------- "X got it" pop-ups ----------
+  const POP_COLORS = ['#FFD43B', '#2FD6A0', '#FF9EC7', '#8FB4FF', '#FFB36B', '#C9A7FF'];
+  let popN = 0;
+  socket.on('gotIt', (g) => {
+    if (!state || g.playerId === state.meId) return; // your own win already gets confetti
+    const el = document.createElement('div');
+    el.className = 'pop-msg';
+    el.style.background = POP_COLORS[popN++ % POP_COLORS.length];
+    el.innerHTML = `<span class="dot">♪</span><span><b>${esc(g.name)}</b> got the song</span>${g.points ? `<span class="pts">+${fmt(g.points)}</span>` : ''}`;
+    const box = $('#gotit');
+    box.appendChild(el);
+    while (box.children.length > 3) box.firstChild.remove();
+    setTimeout(() => el.remove(), 3100);
+  });
+
+  // ---------- settings (themes) ----------
+  function renderThemes() {
+    const T = window.SliverThemes;
+    const cur = T.current();
+    $('#theme-grid').innerHTML = T.THEMES.map((t) => {
+      const v = t.vars;
+      return `<button class="theme${t.id === cur ? ' on' : ''}" data-theme-id="${t.id}" role="radio" aria-checked="${t.id === cur}">
+        <span class="sw" style="background:${v['--page']}">
+          <span class="sw-card" style="background:${v['--paper']}"></span>
+          <span class="sw-disc" style="background:${v['--pop']};box-shadow:0 0 0 2px ${v['--stroke']}"></span>
+          <span class="sw-bar" style="top:28px;background:${v['--accent']}"></span>
+          <span class="sw-bar" style="top:40px;right:34px;background:${v['--line']}"></span>
+        </span>
+        <span class="name">${t.name}</span>
+      </button>`;
+    }).join('');
+  }
+  function openSettings() { renderThemes(); $('#settings').hidden = false; $('#btn-settings-close').focus(); }
+  function closeSettings() { $('#settings').hidden = true; }
+  $('#btn-settings').onclick = openSettings;
+  $('#btn-settings-close').onclick = closeSettings;
+  $('#btn-settings-done').onclick = closeSettings;
+  $('#settings').addEventListener('click', (e) => {
+    if (e.target.id === 'settings') return closeSettings();
+    const t = e.target.closest('[data-theme-id]');
+    if (t) { window.SliverThemes.set(t.dataset.themeId); renderThemes(); }
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#settings').hidden) closeSettings(); });
+
   // ---------- leave room ----------
   // One tap arms it ("Tap again to leave"), a second tap within 3 s leaves.
   // Mid-song that protects against leaving by accident.
@@ -213,20 +280,19 @@
   function renderLobby() {
     show('lobby');
     $('#lobby-code').textContent = state.code;
-    const invite = inviteUrl();
-    $('#invite-text').innerHTML = invite.lan
-      ? `Friends on the same Wi-Fi can open <code>${esc(invite.url)}</code>`
-      : `Send friends the invite link, or have them enter the code.`;
-
-    const AV = ['#FFD43B', '#FF9EC7', '#8FF0CF', '#AFC0FF', '#FFC48A', '#D7B8FF'];
-    $('#lobby-players').innerHTML = state.players.map((p, i) => `
-      <li class="${p.connected ? '' : 'offline'}">
-        <span class="av" style="background:${AV[i % AV.length]}">${esc((p.name || '?')[0].toUpperCase())}</span>
-        ${esc(p.name)}${p.id === state.meId ? ' (you)' : ''}
-        ${p.id === state.hostId ? '<span class="host-tag">host</span>' : ''}
-      </li>`).join('');
-
     const isHost = state.hostId === state.meId;
+    const AV = ['#FFD43B', '#FF9EC7', '#8FF0CF', '#AFC0FF', '#FFC48A', '#D7B8FF'];
+    $('#lobby-players').innerHTML = state.players.map((p, i) => {
+      const canKick = isHost && p.id !== state.meId;
+      const armed = armedKick === p.id;
+      return `<li class="${p.connected ? '' : 'offline'}${armed ? ' arm' : ''}">
+        <span class="av" style="background:${AV[i % AV.length]}">${esc((p.name || '?')[0].toUpperCase())}</span>
+        ${armed ? `Remove ${esc(p.name)}?` : `${esc(p.name)}${p.id === state.meId ? ' (you)' : ''}`}
+        ${p.id === state.hostId ? '<span class="host-tag">host</span>' : ''}
+        ${canKick ? `<button class="kick" data-kick="${esc(p.id)}" aria-label="${armed ? 'Confirm removing' : 'Remove'} ${esc(p.name)}" title="${armed ? 'Tap again to remove' : 'Remove from room'}">×</button>` : ''}
+      </li>`;
+    }).join('');
+
     $('#pool-count').textContent = `${fmt(state.poolSize)} song${state.poolSize === 1 ? '' : 's'}`;
     $('#sources').innerHTML = state.sources.map((src) => {
       const canRemove = isHost || src.byId === state.meId;
@@ -489,7 +555,7 @@
     gain.gain.linearRampToValueAtTime(level, t0 + fadeIn);
     gain.gain.setValueAtTime(level, t0 + len - fadeOut);
     gain.gain.linearRampToValueAtTime(0, t0 + len);
-    node.connect(gain).connect(ctx.destination);
+    node.connect(gain).connect(ensureAnalyser());
     src.start(t0, from);
     src.stop(t0 + len + 0.005);
     const entry = { source: src, gain };
@@ -500,6 +566,7 @@
       updateReadout();
     }
     playing = { source: src, gain, startedAt: t0, len, raf: 0, mode };
+    if (mode === 'round') startViz();
     src.onended = () => {
       activeSources.delete(entry);
       if (playing && playing.source === src) { playing = null; setPlayingUI(false, 0); }
@@ -527,11 +594,74 @@
     startClip(clip.url, LISTEN_LEN, 'listen');
   }
 
+  // ---------- sound-wave ring around the play button ----------
+  // Bars around the button follow the actual audio (Web Audio analyser).
+  let analyser = null, freq = null;
+  function ensureAnalyser() {
+    if (!analyser) {
+      analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.55;
+      analyser.connect(ctx.destination);
+      freq = new Uint8Array(analyser.frequencyBinCount);
+    }
+    return analyser;
+  }
+  const viz = $('#viz');
+  const vctx = viz.getContext('2d');
+  const BARS_N = 60;
+  const levels = new Float32Array(BARS_N);
+  const reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let vizRaf = 0, vizColors = null;
+  function startViz() {
+    if (reduceMotion) return;
+    const cs = getComputedStyle(document.documentElement);
+    vizColors = [cs.getPropertyValue('--accent').trim() || '#FF4F9A', cs.getPropertyValue('--pop').trim() || '#FFD43B'];
+    if (!vizRaf) vizRaf = requestAnimationFrame(drawViz);
+  }
+  function drawViz() {
+    vizRaf = 0;
+    const active = !!(playing && playing.mode === 'round' && analyser);
+    if (active) analyser.getByteFrequencyData(freq);
+    const half = BARS_N / 2;
+    let any = false;
+    for (let i = 0; i < BARS_N; i++) {
+      const j = i < half ? i : BARS_N - 1 - i;            // mirror left/right
+      const bin = Math.floor(2 + (j / half) ** 1.3 * (freq ? freq.length * 0.62 : 1));
+      const target = active ? Math.pow(freq[bin] / 255, 1.4) : 0;
+      levels[i] = target > levels[i] ? target : levels[i] * 0.86;
+      if (levels[i] > 0.015) any = true;
+    }
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const size = 300 * dpr;
+    if (viz.width !== size) { viz.width = size; viz.height = size; }
+    vctx.clearRect(0, 0, size, size);
+    vctx.save();
+    vctx.translate(size / 2, size / 2);
+    vctx.scale(dpr, dpr);
+    vctx.lineCap = 'round';
+    vctx.lineWidth = 4.5;
+    const R0 = 72, MAX = 38;
+    for (let i = 0; i < BARS_N; i++) {
+      const a = -Math.PI / 2 + (i / BARS_N) * Math.PI * 2;
+      const len = 3 + levels[i] * MAX;
+      vctx.strokeStyle = vizColors[i % 2];
+      vctx.globalAlpha = 0.55 + levels[i] * 0.45;
+      vctx.beginPath();
+      vctx.moveTo(Math.cos(a) * R0, Math.sin(a) * R0);
+      vctx.lineTo(Math.cos(a) * (R0 + len), Math.sin(a) * (R0 + len));
+      vctx.stroke();
+    }
+    vctx.restore();
+    viz.classList.toggle('on', active || any);
+    if (active || any) vizRaf = requestAnimationFrame(drawViz);
+  }
+
   function setPlayingUI(on, progress) {
     const mode = on && playing ? playing.mode : null;
     const roundOn = mode === 'round';
-    $('.icon-play').hidden = roundOn;
-    $('.icon-stop').hidden = !roundOn;
+    $('.icon-play').toggleAttribute('hidden', roundOn); // SVGs need the attribute, not .hidden
+    $('.icon-stop').toggleAttribute('hidden', !roundOn);
     $('.ring circle').style.strokeDashoffset = String(289 * (1 - (roundOn ? progress : 0)));
     const listenOn = mode === 'listen';
     document.querySelectorAll('[data-listen]').forEach((btn) => {

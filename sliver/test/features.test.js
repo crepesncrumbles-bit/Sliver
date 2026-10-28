@@ -163,6 +163,34 @@ const mgr = () => new RoomManager({ to: () => ({ emit() {} }) });
       room.clearTimers();
     }
 
+    console.log('kicking and defaults');
+    {
+      const m = mgr();
+      const room = m.create();
+      const host = room.addPlayer('Host', { id: 'h1' });
+      const bob = room.addPlayer('Bob', { id: 'b1' });
+      const cat = room.addPlayer('Cat', { id: 'c1' });
+      check(room.settings.roundTime === 0, 'new rooms default to no time limit');
+      let err = null; try { room.kick(bob.id, cat.id); } catch (e) { err = e.message; }
+      check(/Only the host/.test(err) && room.players.size === 3, 'only the host can remove players');
+      err = null; try { room.kick(host.id, host.id); } catch (e) { err = e.message; }
+      check(/Leave room/.test(err), 'host can\'t kick themselves');
+      const gone = room.kick(host.id, bob.id);
+      check(gone.name === 'Bob' && !room.players.has(bob.id) && room.kickedTokens.has(bob.token), 'host removes Bob');
+      check(room.reconnect(bob.token, { id: 'b2' }) === null, 'Bob can\'t sneak back in with his old session');
+      await room.addSource('demo', 'Host');
+      room.settings.rounds = 1; await room.start();
+      room.kick(host.id, cat.id);
+      check(room.phase === 'round' && room.players.size === 1, 'kicking mid-song keeps the game going');
+      const events = [];
+      room.io = { to: () => ({ emit: (e, d) => events.push([e, d]) }) };
+      room.reportListen(host.id, 0.5);
+      room.guess(host.id, room.round.track.poolId);
+      const got = events.find(([e]) => e === 'gotIt');
+      check(got && got[1].name === 'Host' && got[1].points === 7388, 'correct guess announces "Host got the song" with points');
+      room.clearTimers();
+    }
+
     console.log('classic unchanged');
     {
       const room = mgr().create();

@@ -46,6 +46,16 @@ A black window opens and your browser goes to <http://localhost:3000>.
 - Or paste a public Spotify/Deezer playlist link, or type an artist's name, and click **Add**.
 - Remove any single playlist with its **×**. The host can remove anything; others can remove what they added.
 
+### Room controls
+- **Leave room** (top left) takes you back to the home screen. Tap it twice to confirm.
+- The host can remove a player with the **×** next to their name (tap twice to confirm). Removed players
+  can't get back in by refreshing; they'd have to rejoin with the code.
+- When someone else gets the song right, a pop-up at the top shows their name and points.
+
+### Settings
+The gear (top right) opens Settings, where each person can pick a color theme: Cobalt, Sunset, Bubblegum,
+Jungle, Grape, GX Red, Midnight, Neon or Mono. It's saved on that device only.
+
 ### Game modes (host picks in the lobby)
 - **Classic:** every clip starts at the top of the song, like Songless.
 - **Hard (1.5× points):** each clip starts somewhere random in the song, and there's no list to pick from.
@@ -63,7 +73,7 @@ A black window opens and your browser goes to <http://localhost:3000>.
 
 - Each wrong guess costs 500. Guesses are **unlimited** by default, like Songless;
   the host can cap them (1, 3, 5 or 10) in Settings.
-- **Time per song** can be **No time limit** (the round ends when everyone's done, or the host taps
+- **Time per song** defaults to **No time limit** (the round ends when everyone's done, or the host taps
   *End round now*) or 30 s to 3 min.
 - The guess box only suggests songs in this game's pool, and hides ones you've already tried.
   Type an artist's name to see **all** of their songs in the game.

@@ -51,9 +51,10 @@ class Room {
     this.hostId = null;
     this.phase = 'lobby'; // lobby | loading | round | reveal | results
     // roundTime 0 = no time limit; maxGuesses 0 = unlimited (Songless default)
-    this.settings = { rounds: 5, roundTime: 60, maxGuesses: 0, mode: 'classic' };
+    this.settings = { rounds: 5, roundTime: 0, maxGuesses: 0, mode: 'classic' }; // 0 = no time limit
     this.sources = []; // { key, name, by, byId, packId, tracks, count }
     this.lastTwist = null;
+    this.kickedTokens = new Set(); // removed players can't rejoin by refreshing
     this.pool = []; // tracks
     this.poolVersion = 0;
     this.roundNum = 0;
@@ -94,7 +95,18 @@ class Room {
 
   // Player chose "Leave room": remove them for good (unlike a dropped connection,
   // which keeps their spot so a refresh can rejoin).
-  leave(playerId) {
+  // Host removes someone. Returns the removed player (so the server can notify them).
+  kick(byId, targetId) {
+    if (byId !== this.hostId) throw new Error('Only the host can remove players');
+    if (targetId === byId) throw new Error('Use Leave room to leave');
+    const target = this.players.get(targetId);
+    if (!target) throw new Error('That player already left');
+    this.kickedTokens.add(target.token);
+    this.leave(targetId, `${target.name} was removed by the host`);
+    return target;
+  }
+
+  leave(playerId, notice) {
     const p = this.players.get(playerId);
     if (!p) return;
     this.players.delete(playerId);
@@ -105,7 +117,7 @@ class Room {
     }
     if (this.players.size) {
       this.maybeEndRound();
-      this.io.to(this.code).emit('toast', { kind: 'info', text: `${p.name} left the room` });
+      this.io.to(this.code).emit('toast', { kind: 'info', text: notice || `${p.name} left the room` });
       this.broadcast();
     } else {
       this.clearTimers();
@@ -371,7 +383,10 @@ class Room {
       const base = pointsForLength(r.maxHeard) - wrong * WRONG_PENALTY;
       r.points = Math.max(0, Math.round(base * (this.round.mult || 1)));
       const p = this.players.get(playerId);
-      if (p) p.score += r.points;
+      if (p) {
+        p.score += r.points;
+        this.io.to(this.code).emit('gotIt', { playerId, name: p.name, points: r.points, heard: r.maxHeard });
+      }
     } else if (max && r.guesses.length >= max) {
       r.status = 'out';
     }
