@@ -1,10 +1,11 @@
 # Sliver — guess the song from a sliver of it
 
-A Songless-style party game you run on your own laptop. Everyone hears the same tiny clip
-from a random spot in a song, drags a slider to hear more (0.1 s up to 15 s), and guesses.
+A Songless-style party game for you and your friends. Everyone hears the same tiny clip
+from the start of a song, drags a slider to hear more (0.1 s up to 30 s), and guesses.
 The less you needed, the more points you get.
 
-No accounts, no installs besides Node.js, nothing to deploy.
+Runs on your laptop with just Node.js, or online for free on Render. Accounts are optional
+and only needed for ranked play and leaderboards.
 
 ---
 
