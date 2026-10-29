@@ -20,6 +20,22 @@ function codeEmail(code, purpose) {
   return { subject: `Your Sliver code: ${code}`, text, html };
 }
 
+// Turns the email service's error into a plain-English fix for the Render logs.
+function hintFor(status, body) {
+  const b = String(body || '').toLowerCase();
+  if (b.includes('unrecognised ip') || b.includes('unrecognized ip') || b.includes('authorised ip') || b.includes('authorized ip'))
+    return 'Brevo is blocking Render\'s IP address. In Brevo: account menu → Security → Authorized IPs → turn OFF "IP blocking" (Render\'s IPs change, so you can\'t list them).';
+  if (b.includes('key not found') || status === 401)
+    return 'The API key is wrong. Re-copy it from Brevo (SMTP & API → API Keys, starts with xkeysib-) into BREVO_API_KEY on Render — no quotes or spaces.';
+  if (b.includes('sender') && (b.includes('not valid') || b.includes('invalid') || b.includes('not verified')))
+    return 'MAIL_FROM must exactly match a sender marked Verified in Brevo (Senders, Domains & Dedicated IPs → Senders).';
+  if (b.includes('not yet activated') || b.includes('not activated') || b.includes('suspended') || b.includes('validation'))
+    return 'Your Brevo account isn\'t cleared to send yet. Check your Brevo inbox/dashboard for an activation or validation request.';
+  if (status === 402 || b.includes('credit'))
+    return 'Brevo says you\'re out of free emails for today (300/day).';
+  return '';
+}
+
 function createMailer(env = process.env) {
   const from = cleanEnv(env.MAIL_FROM, 'MAIL_FROM');
   const brevo = cleanEnv(env.BREVO_API_KEY, 'BREVO_API_KEY');
@@ -43,15 +59,41 @@ function createMailer(env = process.env) {
     }
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      throw new Error(`Email service said HTTP ${res.status}: ${body.slice(0, 300)}`);
+      const hint = hintFor(res.status, body);
+      throw new Error(`Email service said HTTP ${res.status}: ${body.slice(0, 300)}${hint ? '\n  → FIX: ' + hint : ''}`);
     }
+  };
+
+  // Startup check: is the key accepted, and is MAIL_FROM a verified sender?
+  const check = async () => {
+    if (!brevo) return 'resend (not checked)';
+    const headers = { 'api-key': brevo, Accept: 'application/json' };
+    const res = await fetch('https://api.brevo.com/v3/account', { headers });
+    const body = await res.text().catch(() => '');
+    if (!res.ok) {
+      const hint = hintFor(res.status, body);
+      throw new Error(`Brevo HTTP ${res.status}: ${body.slice(0, 200)}${hint ? '\n  → FIX: ' + hint : ''}`);
+    }
+    let note = 'key OK ✓';
+    try {
+      const s = await fetch('https://api.brevo.com/v3/senders', { headers });
+      if (s.ok) {
+        const list = (await s.json()).senders || [];
+        const me = list.find((x) => String(x.email).toLowerCase() === from.toLowerCase());
+        if (!me) note += `, but ⚠ ${from} is not in your Brevo senders (have: ${list.map((x) => x.email).join(', ') || 'none'}) → set MAIL_FROM to one of those`;
+        else if (me.active === false) note += `, but ⚠ sender ${from} is not verified yet in Brevo`;
+        else note += `, sender ${from} verified ✓`;
+      }
+    } catch { /* sender list is just a bonus */ }
+    return note;
   };
 
   return {
     kind: brevo ? 'brevo' : 'resend',
     from,
+    check,
     sendCode: (to, code, purpose) => send({ to, ...codeEmail(code, purpose) }),
   };
 }
 
-module.exports = { createMailer, codeEmail };
+module.exports = { createMailer, codeEmail, hintFor };

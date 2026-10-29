@@ -420,6 +420,12 @@ server.listen(PORT, HOST, () => {
   const lan = lanAddresses();
   console.log('\n  🎵 Sliver is running!\n');
   console.log(mailer ? `  Email codes: on (${mailer.kind}, from ${mailer.from})` : '  Email codes: off (sign-ups don\'t need a code; see README to turn on)');
+  if (mailer && mailer.check) {
+    mailer.check().then(
+      (r) => console.log(`  Email check: ${r}`),
+      (e) => console.error(`  ⚠ Email check FAILED: ${e.message}`),
+    );
+  }
   if (store.kind === 'upstash') {
     console.log('  Accounts: saved in your Upstash database');
     store.cmd('PING').then(
