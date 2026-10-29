@@ -728,6 +728,7 @@ class Room {
           score: p.score,
           connected: p.connected,
           loggedIn: !!p.userId,
+          userId: p.userId || null,
           roundStatus: this.round && this.phase === 'round' ? this.resultFor(p.id).status : null,
         })),
       round: null,

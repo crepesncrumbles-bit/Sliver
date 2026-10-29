@@ -106,6 +106,7 @@ async function handleApi(req, res, p, url) {
       const out = await accounts.leaderboard(url.searchParams.get('board') || 'overall', me && me.id);
       return sendJson(res, 200, { ok: true, ...out });
     }
+    if (p.startsWith('/api/friends')) return await handleFriends(req, res, p);
     const prof = p.match(/^\/api\/profile\/([\w-]{6,40})$/);
     if (prof) return sendJson(res, 200, { ok: true, profile: await accounts.profile(prof[1]) });
     if (p === '/api/artists') {
@@ -124,7 +125,71 @@ async function handleApi(req, res, p, url) {
   }
 }
 
-const API_PATHS = /^\/api\/(signup|signup\/verify|signup\/resend|reset\/start|reset\/finish|login|logout|me|leaderboard|profile\/[\w-]+|artists)$/;
+// ---------- friends ----------
+// Who's online: userId -> Set of socket ids (one person can have several tabs or devices).
+const userSockets = new Map();
+function setOnline(userId, socketId, on) {
+  if (!userId) return;
+  const set = userSockets.get(userId) || new Set();
+  if (on) set.add(socketId); else set.delete(socketId);
+  if (set.size) userSockets.set(userId, set); else userSockets.delete(userId);
+}
+function notifyUser(userId, event, data) {
+  for (const sid of userSockets.get(userId) || []) io.to(sid).emit(event, data);
+}
+// What a friend can see about you: online, and the room you're in (so they can join).
+function presence(userId) {
+  const sids = userSockets.get(userId);
+  if (!sids || !sids.size) return { online: false, room: null };
+  for (const sid of sids) {
+    const ctx = contexts.get(sid);
+    const r = ctx && ctx.room();
+    if (r) return { online: true, room: r.code, playing: r.phase !== 'lobby' && r.phase !== 'results', ranked: !!(r.game && r.game.ranked) };
+  }
+  return { online: true, room: null };
+}
+
+async function handleFriends(req, res, p) {
+  const me = await accounts.session(bearer(req));
+  if (!me) return sendJson(res, 401, { ok: false, error: 'Log in to use friends' });
+  if (p === '/api/friends' && req.method === 'GET') {
+    return sendJson(res, 200, { ok: true, ...(await accounts.friends(me.id, presence)) });
+  }
+  if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'Use POST' });
+  const body = await readBody(req);
+  const other = body.id ? String(body.id) : null;
+  const needId = () => { if (!other) throw new AccountError('Pick a player'); return other; };
+  let out;
+  switch (p) {
+    case '/api/friends/request':
+      if (rateLimited(`friend:${me.id}`)) return sendJson(res, 429, { ok: false, error: 'Too many friend requests. Wait a few minutes.' });
+      out = await accounts.requestFriend(me.id, { code: body.code, id: other });
+      notifyUser(out.other, 'friendsChanged', out.status === 'sent'
+        ? { text: `${me.name} #${me.tag} sent you a friend request` }
+        : { text: `${me.name} accepted your friend request` });
+      break;
+    case '/api/friends/accept':
+      out = await accounts.acceptFriend(me.id, needId());
+      notifyUser(out.other, 'friendsChanged', { text: `${me.name} accepted your friend request` });
+      break;
+    case '/api/friends/remove':
+      out = await accounts.removeFriend(me.id, needId());
+      notifyUser(out.other, 'friendsChanged', {});
+      break;
+    case '/api/friends/block':
+      out = await accounts.block(me.id, needId());
+      notifyUser(out.other, 'friendsChanged', {});
+      break;
+    case '/api/friends/unblock':
+      out = await accounts.unblock(me.id, needId());
+      break;
+    default:
+      return sendJson(res, 404, { ok: false, error: 'Not found' });
+  }
+  return sendJson(res, 200, { ok: true, ...out, ...(await accounts.friends(me.id, presence)) });
+}
+
+const API_PATHS = /^\/api\/(signup|signup\/verify|signup\/resend|reset\/start|reset\/finish|login|logout|me|leaderboard|profile\/[\w-]+|artists|friends(\/(request|accept|remove|block|unblock))?)$/;
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -196,9 +261,13 @@ io.on('connection', (socket) => {
   let user = null; // logged-in account on this connection
   contexts.set(socket.id, {
     drop: () => { if (room) socket.leaveRoom(room.code); room = null; player = null; },
+    room: () => (room && rooms.get(room.code) === room ? room : null),
   });
   const useAuth = async (token) => {
+    const before = user;
     user = token ? await accounts.session(token).catch(() => null) : null;
+    if (before && (!user || before.id !== user.id)) setOnline(before.id, socket.id, false);
+    if (user) setOnline(user.id, socket.id, true);
     return user;
   };
 
@@ -235,6 +304,10 @@ io.on('connection', (socket) => {
     if (!p) {
       if (r.players.size >= 12) return fail(ack, new Error('Room is full (12 players)'));
       if (r.game && r.game.ranked) return fail(ack, new Error('A ranked game is running in that room. Join when it ends.'));
+      const host = r.players.get(r.hostId);
+      if (user && host && host.userId && await accounts.isBlockedEitherWay(host.userId, user.id).catch(() => false)) {
+        return fail(ack, new Error('You can\'t join this room'));
+      }
       p = r.addPlayer(name, socket);
     }
     room = r; player = p;
@@ -410,7 +483,26 @@ io.on('connection', (socket) => {
     ack && ack({ ok: true });
   });
 
+  // Invite a friend into the room you're in. They get a pop-up with a Join button.
+  const lastInvite = new Map(); // friendId -> time
+  socket.on('invite', async ({ userId } = {}, ack) => {
+    try {
+      if (!user) throw new Error('Log in to invite friends');
+      if (!need(ack)) return;
+      userId = String(userId || '');
+      if (!(await accounts.areFriends(user.id, userId))) throw new Error('You can only invite friends');
+      if (await accounts.isBlockedEitherWay(user.id, userId)) throw new Error('You can\'t invite that player');
+      if (!userSockets.has(userId)) throw new Error('They\'re offline right now. Send them the invite link instead.');
+      if ([...room.players.values()].some((x) => x.userId === userId && x.connected)) throw new Error('They\'re already in this room');
+      if (Date.now() - (lastInvite.get(userId) || 0) < 10000) throw new Error('Invite sent. Give them a few seconds.');
+      lastInvite.set(userId, Date.now());
+      notifyUser(userId, 'invite', { from: { id: user.id, name: user.name, tag: user.tag }, code: room.code });
+      ack && ack({ ok: true });
+    } catch (err) { fail(ack, err); }
+  });
+
   socket.on('disconnect', () => {
+    if (user) setOnline(user.id, socket.id, false);
     contexts.delete(socket.id);
     if (room) room.disconnect(socket.id);
   });

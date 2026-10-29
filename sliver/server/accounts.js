@@ -26,7 +26,14 @@ const K = {
   best: (id) => `ubest:${id}`,
   plays: (id) => `plays:${id}`,
   board: (b) => `lb:${b}`,
+  fr: (id) => `fr:${id}`,       // hash: otherId -> "friend" | "in" (they asked me) | "out" (I asked them)
+  blk: (id) => `blk:${id}`,     // hash: otherId -> when I blocked them
+  fcode: (c) => `fcode:${c}`,   // friend code -> userId
 };
+
+const MAX_FRIENDS = 200;
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O, 1/I
+const cleanFriendCode = (c) => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
 
 const ppFor = (score) => Math.round(Number(score || 0) / 100);
 const toObj = (flat) => {
@@ -360,6 +367,110 @@ class Accounts {
       },
       genres,
       recent,
+    };
+  }
+
+  // ---------- friends ----------
+  // Each account gets a short, unique friend code (e.g. "K7QM2X") to share.
+  async friendCode(id) {
+    const have = await this.store.cmd('HGET', K.user(id), 'fcode');
+    if (have) return have;
+    for (let i = 0; i < 8; i++) {
+      const code = Array.from({ length: 6 }, () => CODE_CHARS[crypto.randomInt(0, CODE_CHARS.length)]).join('');
+      if (await this.store.cmd('SET', K.fcode(code), id, 'NX')) {
+        await this.store.cmd('HSET', K.user(id), 'fcode', code);
+        return code;
+      }
+    }
+    throw new Error('Couldn\'t make a friend code');
+  }
+
+  async relation(me, other) {
+    const [fr, iBlocked, theyBlocked] = await this.store.pipeline([
+      ['HGET', K.fr(me), other], ['HGET', K.blk(me), other], ['HGET', K.blk(other), me],
+    ]);
+    return { fr: fr || null, iBlocked: !!iBlocked, theyBlocked: !!theyBlocked };
+  }
+
+  async isBlockedEitherWay(a, b) {
+    if (!a || !b) return false;
+    const r = await this.relation(a, b);
+    return r.iBlocked || r.theyBlocked;
+  }
+
+  async areFriends(a, b) {
+    if (!a || !b) return false;
+    return (await this.store.cmd('HGET', K.fr(a), b)) === 'friend';
+  }
+
+  // Send a request by friend code or account id. If they already asked you, you're now friends.
+  async requestFriend(me, { code, id } = {}) {
+    let other = id ? String(id) : null;
+    if (!other) {
+      const c = cleanFriendCode(code);
+      if (c.length < 4) throw new AccountError('Enter your friend\'s code (6 letters/numbers)');
+      other = await this.store.cmd('GET', K.fcode(c));
+      if (!other) throw new AccountError(`No player has the code ${c}`);
+    }
+    if (other === me) throw new AccountError('That\'s your own code');
+    const them = await this.getUser(other);
+    if (!them) throw new AccountError('No player found');
+    const r = await this.relation(me, other);
+    if (r.iBlocked) throw new AccountError(`You blocked ${them.name}. Unblock them first.`);
+    if (r.theyBlocked) throw new AccountError(`${them.name} isn't accepting friend requests`);
+    if (r.fr === 'friend') throw new AccountError(`You're already friends with ${them.name}`);
+    if (r.fr === 'out') throw new AccountError(`You already asked ${them.name}. Waiting for them to accept.`);
+    if (r.fr === 'in') return this.acceptFriend(me, other);
+    const count = int(await this.store.cmd('HLEN', K.fr(me)));
+    if (count >= MAX_FRIENDS) throw new AccountError(`You can have up to ${MAX_FRIENDS} friends and requests`);
+    await this.store.pipeline([['HSET', K.fr(me), other, 'out'], ['HSET', K.fr(other), me, 'in']]);
+    return { status: 'sent', other, name: them.name };
+  }
+
+  async acceptFriend(me, other) {
+    if ((await this.store.cmd('HGET', K.fr(me), other)) !== 'in') throw new AccountError('No friend request from that player');
+    await this.store.pipeline([['HSET', K.fr(me), other, 'friend'], ['HSET', K.fr(other), me, 'friend']]);
+    const them = await this.getUser(other);
+    return { status: 'friends', other, name: them ? them.name : 'Player' };
+  }
+
+  // Decline a request, cancel your own, or unfriend: all just remove the link both ways.
+  async removeFriend(me, other) {
+    await this.store.pipeline([['HDEL', K.fr(me), String(other)], ['HDEL', K.fr(String(other)), me]]);
+    return { status: 'removed', other };
+  }
+
+  async block(me, other) {
+    other = String(other);
+    if (other === me) throw new AccountError('You can\'t block yourself');
+    if (!(await this.getUser(other))) throw new AccountError('No player found');
+    await this.store.pipeline([
+      ['HDEL', K.fr(me), other], ['HDEL', K.fr(other), me], ['HSET', K.blk(me), other, Date.now()],
+    ]);
+    return { status: 'blocked', other };
+  }
+
+  async unblock(me, other) {
+    await this.store.cmd('HDEL', K.blk(me), String(other));
+    return { status: 'unblocked', other };
+  }
+
+  // Everything for the Friends screen. online(id) -> { online, room } is filled in by the server.
+  async friends(me, online = () => ({ online: false })) {
+    const [frFlat, blkFlat] = await this.store.pipeline([['HGETALL', K.fr(me)], ['HGETALL', K.blk(me)]]);
+    const fr = toObj(frFlat), blk = toObj(blkFlat);
+    const ids = [...new Set([...Object.keys(fr), ...Object.keys(blk)])];
+    const info = ids.length ? await this.store.pipeline(ids.map((x) => ['HMGET', K.user(x), 'name', 'rating'])) : [];
+    const who = new Map(ids.map((x, i) => [x, { id: x, name: (info[i] && info[i][0]) || null, tag: tagFor(x), rating: int(info[i] && info[i][1]) }]));
+    const pick = (state) => Object.keys(fr).filter((x) => fr[x] === state && who.get(x).name).map((x) => who.get(x));
+    const friends = pick('friend').map((f) => ({ ...f, ...online(f.id) }))
+      .sort((a, b) => (b.online - a.online) || a.name.localeCompare(b.name));
+    return {
+      code: await this.friendCode(me),
+      friends,
+      incoming: pick('in'),
+      outgoing: pick('out'),
+      blocked: Object.keys(blk).filter((x) => who.get(x).name).map((x) => who.get(x)),
     };
   }
 }

@@ -92,6 +92,16 @@ class MiniRedis {
         write();
         return n;
       }
+      case 'HLEN': { const e = this.entry(a[0], 'hash'); return e ? e.v.size : 0; }
+      case 'HDEL': {
+        const e = this.entry(a[0], 'hash');
+        if (!e) return 0;
+        let n = 0;
+        for (const f of a.slice(1)) if (e.v.delete(f)) n++;
+        if (!e.v.size) this.data.delete(a[0]);
+        write();
+        return n;
+      }
       case 'HGET': { const e = this.entry(a[0], 'hash'); return e && e.v.has(a[1]) ? e.v.get(a[1]) : null; }
       case 'HMGET': { const e = this.entry(a[0], 'hash'); return a.slice(1).map((f) => (e && e.v.has(f) ? e.v.get(f) : null)); }
       case 'HGETALL': { const e = this.entry(a[0], 'hash'); return e ? [...e.v.entries()].flat() : []; }

@@ -539,3 +539,21 @@ h3.sub { font-family: var(--display); font-weight: 700; font-size: 16px; margin:
 .linkish { font: inherit; font-size: 14px; font-weight: 700; color: var(--brand); background: none; border: 0; padding: 4px 2px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 
 .pack.more { border-style: dashed; color: var(--brand); font-weight: 700; }
+
+/* ---------- friends ---------- */
+.gear { position: relative; }
+.badge { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--red); color: #fff; font: 700 11px/18px var(--body, sans-serif); text-align: center; border: 2px solid var(--page, #000); }
+.fr-code { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 12px 14px; border-radius: 14px; background: var(--paper-2); }
+.fr-mycode { font-family: var(--display); font-weight: 800; font-size: 24px; letter-spacing: 3px; }
+.fr-add { display: flex; gap: 8px; margin: 10px 0 4px; }
+.fr-add .input { flex: 1; min-width: 0; text-transform: uppercase; letter-spacing: 2px; }
+.fr-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ink-2); opacity: .4; flex: none; }
+.fr-dot.on { background: var(--mint); opacity: 1; }
+.pl-list li .fr-st { color: var(--ink-2); font-size: 13px; }
+.pl-list li .fr-st b { color: var(--ink); }
+.invite-pop { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 90; width: min(92vw, 420px); background: var(--paper); color: var(--ink); border: 2px solid var(--stroke); border-radius: 18px; padding: 14px 16px; box-shadow: 0 6px 0 var(--page-deep); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; animation: up .2s ease-out; }
+.invite-pop .ip-text { flex: 1; min-width: 160px; }
+.invite-pop .ip-text small { display: block; color: var(--ink-2); }
+.invite-pop .acct-actions { flex-wrap: nowrap; }
+.badge.inline { position: static; display: inline-block; margin-left: 4px; border: 0; vertical-align: 1px; }
+.pf-friend { margin: 10px 0 4px; align-items: center; }

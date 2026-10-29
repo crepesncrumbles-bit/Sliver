@@ -21,6 +21,10 @@
       <button id="btn-players" class="gear" aria-label="Players" title="Players" hidden>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11.5a3.75 3.75 0 1 0 0-7.5 3.75 3.75 0 0 0 0 7.5Zm7.5.5a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM2 19.2C2 16 5.1 13.5 9 13.5s7 2.5 7 5.7c0 .5-.4.8-.9.8H2.9c-.5 0-.9-.3-.9-.8Zm15.6.8c.2-.3.4-.6.4-1 0-1.8-.8-3.4-2.1-4.6.5-.1 1.1-.2 1.6-.2 3 0 5.5 1.9 5.5 4.4 0 .8-.6 1.4-1.4 1.4h-4Z"/></svg>
       </button>
+      <button id="btn-friends" class="gear" aria-label="Friends" title="Friends" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 11.5a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM2 19.6c0-3.3 3.6-6.1 8-6.1 1.3 0 2.5.2 3.6.7A5.5 5.5 0 0 0 13 21H2.9c-.5 0-.9-.6-.9-1.4ZM18.5 13a1 1 0 0 1 1 1v2.5H22a1 1 0 1 1 0 2h-2.5V21a1 1 0 1 1-2 0v-2.5H15a1 1 0 1 1 0-2h2.5V14a1 1 0 0 1 1-1Z"/></svg>
+        <span id="friends-badge" class="badge" hidden></span>
+      </button>
       <button id="btn-boards" class="gear" aria-label="Leaderboards" title="Leaderboards">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v2h3.5c.3 0 .5.2.5.5V8a4.5 4.5 0 0 1-4.3 4.5 5.5 5.5 0 0 1-3.7 3V18h3a1 1 0 0 1 1 1v2H7v-2a1 1 0 0 1 1-1h3v-2.5a5.5 5.5 0 0 1-3.7-3A4.5 4.5 0 0 1 3 8V5.5c0-.3.2-.5.5-.5H7V3Zm0 4H5v1c0 1.2.8 2.2 2 2.4V7Zm10 0v3.4c1.2-.2 2-1.2 2-2.4V7h-2Z"/></svg>
       </button>
@@ -316,6 +320,28 @@
       <p class="hint" id="players-hint"></p>
     </section>
   </div>
+
+  <!-- FRIENDS -->
+  <div id="friends" class="sheet-backdrop" hidden>
+    <section class="sheet narrow" role="dialog" aria-modal="true" aria-labelledby="friends-title">
+      <div class="sheet-head">
+        <h2 id="friends-title">Friends</h2>
+        <button class="x" data-close aria-label="Close">×</button>
+      </div>
+      <div class="fr-code">
+        <div><div class="label">Your friend code</div><div id="fr-mycode" class="fr-mycode">······</div></div>
+        <button id="fr-copy" class="btn small">Copy</button>
+      </div>
+      <form id="fr-add" class="fr-add" autocomplete="off">
+        <input id="fr-add-code" class="input" placeholder="Friend's code" maxlength="8" aria-label="Friend's code" />
+        <button class="btn small primary-ish" type="submit">Add</button>
+      </form>
+      <div id="fr-body"><p class="hint">Loading…</p></div>
+      <p class="hint">Blocked players can't send you requests or invites, and can't join rooms you host while logged in.</p>
+    </section>
+  </div>
+
+  <div id="invite-pop" class="invite-pop" hidden role="alertdialog" aria-live="assertive"></div>
 
   <div id="gotit" class="gotit" aria-live="polite"></div>
   <div id="toasts" class="toasts" aria-live="polite"></div>

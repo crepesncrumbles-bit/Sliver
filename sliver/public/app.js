@@ -49,6 +49,7 @@
   let pool = { version: -1, songs: [] };
   let clockSkew = 0; // serverNow - Date.now()
   let lanBase = null;
+  let friendsData = null; // { code, friends, incoming, outgoing, blocked } when logged in
 
   // ---------- helpers ----------
   function loadSession() {
@@ -144,6 +145,7 @@
   }
 
   socket.on('connect', () => {
+    if (authToken()) emit('auth', { token: authToken() }).then(() => refreshFriends());
     if (!state) tryRejoin();
     else if (session) emit('join', { code: session.code, token: session.token, name: savedName(), auth: authToken() });
   });
@@ -1146,7 +1148,7 @@
   $('#btn-lobby').onclick = () => emit('lobby');
 
   // ---------- sheets (settings, log in, leaderboards, stats, players) ----------
-  const SHEETS = ['settings', 'auth', 'boards', 'profile', 'players'];
+  const SHEETS = ['settings', 'auth', 'boards', 'profile', 'players', 'friends'];
   const sheetStack = [];
   function openSheet(id) {
     const el = $('#' + id);
@@ -1245,6 +1247,7 @@
           <div class="acct-sub">Rating <b>${fmt(u.rating)}</b> · ${fmt(u.games)} ranked game${u.games === 1 ? '' : 's'}</div></div>
         </div>
         <div class="acct-actions">
+          <button class="btn small" data-open-friends>Friends${friendsData && friendsData.incoming.length ? ` <span class="badge inline">${friendsData.incoming.length}</span>` : ''}</button>
           <button class="btn small" data-open-profile="${esc(u.id)}">My stats</button>
           <button class="btn small" data-open-boards>Leaderboards</button>
           <button class="btn ghost small" data-logout>Log out</button>
@@ -1263,6 +1266,8 @@
       : `<p class="hint">Only needed for ranked games and leaderboards.</p>
          <div class="acct-actions"><button class="btn small" data-open-auth="signup">Sign up</button><button class="btn small" data-open-auth="login">Log in</button></div>`;
     if (u && !$('#name').value.trim()) $('#name').value = u.name;
+    $('#btn-friends').hidden = !u;
+    if (!u) { friendsData = null; updateFriendBadge(); }
     if (state && state.phase === 'lobby') renderLobby();
   }
 
@@ -1326,6 +1331,7 @@
     $('#auth-code').value = '';
     saveAuth({ token: res.token, user: res.user });
     tellServerAboutLogin();
+    refreshFriends();
     closeSheet('auth');
     setAuthMode('login');
     toast(msg, 'good');
@@ -1417,8 +1423,18 @@
     if (!res.ok) { $('#profile-body').innerHTML = `<p class="hint">${esc(res.error)}</p>`; return; }
     const p = res.profile, st = p.stats;
     $('#profile-name').innerHTML = `${esc(p.name)} <span class="tag-no">#${esc(p.tag)}</span>`;
+    const meU = auth && auth.user;
+    const fs = meU && p.id !== meU.id ? friendState(p.id) : 'self';
+    const frBtns = fs === 'self' ? '' : `<div class="acct-actions pf-friend">${
+      fs === 'friend' ? '<span class="fr-st">✓ Friends</span>'
+      : fs === 'out' ? '<span class="fr-st">Friend request sent</span>'
+      : fs === 'in' ? `<button class="btn small primary-ish" data-fr-accept="${esc(p.id)}">Accept friend request</button>`
+      : fs === 'blocked' ? `<button class="btn small" data-fr-unblock="${esc(p.id)}">Unblock</button>`
+      : `<button class="btn small" data-fr-request="${esc(p.id)}">Add friend</button>`}
+      ${fs !== 'blocked' ? `<button class="btn ghost small" data-fr-block="${esc(p.id)}">Block</button>` : ''}</div>`;
     const mods = (r) => [r.hard && 'Hard', r.chaos && 'Chaos'].filter(Boolean).join(' + ');
     $('#profile-body').innerHTML = `
+      ${frBtns}
       <div class="pf-head">
         <div><div class="label">Rating</div><div class="pf-rating">${fmt(p.rating)}</div></div>
         <div><div class="label">Overall rank</div><div class="pf-rank">${p.globalRank ? `#${fmt(p.globalRank)}` : 'Unranked'}<small>${p.globalRank ? ` of ${fmt(p.players)}` : ''}</small></div></div>
@@ -1504,6 +1520,8 @@
         <span class="acct-av">${esc((p.name || '?')[0].toUpperCase())}</span>
         <div class="pl-main"><b>${esc(p.name)}${mine ? ' (you)' : ''}</b>
           <small>${p.id === state.hostId ? 'Host · ' : ''}${fmt(p.score)} points${p.connected ? '' : ' · offline'}${p.loggedIn ? ' · logged in' : ''}</small></div>
+        ${!mine && p.userId && auth && auth.user && friendState(p.userId) === null ? `<button class="btn small" data-fr-request="${esc(p.userId)}">Add friend</button>` : ''}
+        ${!mine && p.userId && friendState(p.userId) === 'out' ? '<span class="fr-st">Request sent</span>' : ''}
         ${isHost && !mine ? `<div class="pl-actions">
           ${p.connected ? `<button class="btn small${arm('host') ? ' armed' : ''}" data-pl-host="${esc(p.id)}">${arm('host') ? 'Tap to confirm' : 'Make host'}</button>` : ''}
           <button class="btn small danger${arm('kick') ? ' armed' : ''}" data-pl-kick="${esc(p.id)}">${arm('kick') ? 'Tap to remove' : 'Remove'}</button>
@@ -1573,8 +1591,178 @@
   });
   $('#playlist-input').addEventListener('blur', () => setTimeout(hideArtistSug, 150));
 
+
+  // ---------- friends: codes, requests, invites, blocking ----------
+  let frArmed = null, frTimer = null;
+  function friendState(id) {
+    const d = friendsData;
+    if (!d) return null;
+    if (d.friends.some((f) => f.id === id)) return 'friend';
+    if (d.incoming.some((f) => f.id === id)) return 'in';
+    if (d.outgoing.some((f) => f.id === id)) return 'out';
+    if (d.blocked.some((f) => f.id === id)) return 'blocked';
+    return null;
+  }
+  function updateFriendBadge() {
+    const n = friendsData ? friendsData.incoming.length : 0;
+    $('#friends-badge').hidden = !n;
+    $('#friends-badge').textContent = n > 9 ? '9+' : String(n);
+  }
+  function gotFriends(res) {
+    if (!res || !res.ok || !res.friends) return;
+    friendsData = { code: res.code, friends: res.friends, incoming: res.incoming, outgoing: res.outgoing, blocked: res.blocked };
+    updateFriendBadge();
+    if (!$('#friends').hidden) renderFriends();
+    if (!$('#players').hidden) renderPlayersSheet();
+    if (state === null) renderAccountQuiet();
+  }
+  function renderAccountQuiet() {
+    // Re-render the home account card (for the request count) without touching anything else.
+    const u = auth && auth.user;
+    if (u) { const keep = $('#name').value; renderAccount(); $('#name').value = keep; }
+  }
+  async function refreshFriends() {
+    if (!authToken()) { friendsData = null; updateFriendBadge(); return; }
+    gotFriends(await api('/api/friends'));
+  }
+  async function friendAction(path, body, okMsg) {
+    const res = await api(`/api/friends/${path}`, { method: 'POST', body });
+    if (!res.ok) { toast(res.error, 'error', 5000); return res; }
+    gotFriends(res);
+    if (okMsg) toast(typeof okMsg === 'function' ? okMsg(res) : okMsg, 'good');
+    if (!$('#profile').hidden && body.id) openProfile(body.id);
+    return res;
+  }
+  function friendStatus(f) {
+    if (!f.online) return 'Offline';
+    if (f.room) return f.ranked ? `Playing ranked in <b>${esc(f.room)}</b>` : f.playing ? `In a game in <b>${esc(f.room)}</b>` : `In room <b>${esc(f.room)}</b>`;
+    return 'Online';
+  }
+  function renderFriends() {
+    const d = friendsData;
+    if (!d) { $('#fr-body').innerHTML = '<p class="hint">Loading…</p>'; return; }
+    $('#fr-mycode').textContent = d.code;
+    const inRoom = !!(state && session);
+    const row = (f, actions, sub) => `<li>
+        <span class="acct-av">${esc((f.name || '?')[0].toUpperCase())}</span>
+        <div class="pl-main"><button class="lb-name" data-open-profile="${esc(f.id)}">${esc(f.name)} <span class="tag-no">#${esc(f.tag)}</span></button>
+          <small class="fr-st">${sub}</small></div>
+        <div class="pl-actions">${actions}</div></li>`;
+    const armed = (k) => frArmed === k;
+    let html = '';
+    if (d.incoming.length) {
+      html += `<h3>Friend requests</h3><ul class="pl-list">${d.incoming.map((f) => row(f,
+        `<button class="btn small primary-ish" data-fr-accept="${esc(f.id)}">Accept</button>
+         <button class="btn small" data-fr-remove="${esc(f.id)}">Decline</button>`, 'Wants to be friends')).join('')}</ul>`;
+    }
+    html += `<h3>Friends${d.friends.length ? ` · ${d.friends.filter((f) => f.online).length} online` : ''}</h3>`;
+    html += d.friends.length ? `<ul class="pl-list">${d.friends.map((f) => {
+      const here = inRoom && state.players.some((p) => p.userId === f.id && p.connected);
+      const main = here ? '<span class="fr-st">In your room</span>'
+        : inRoom && f.online ? `<button class="btn small primary-ish" data-fr-invite="${esc(f.id)}">Invite</button>`
+        : f.room && !f.ranked && !inRoom ? `<button class="btn small primary-ish" data-fr-join="${esc(f.room)}">Join</button>` : '';
+      return row(f, `${main}
+        <button class="btn small${armed('rm:' + f.id) ? ' armed' : ''}" data-fr-unfriend="${esc(f.id)}">${armed('rm:' + f.id) ? 'Tap to remove' : 'Remove'}</button>
+        <button class="btn small danger${armed('bl:' + f.id) ? ' armed' : ''}" data-fr-block="${esc(f.id)}">${armed('bl:' + f.id) ? 'Tap to block' : 'Block'}</button>`,
+        `<span class="fr-dot${f.online ? ' on' : ''}"></span> ${friendStatus(f)}`);
+    }).join('')}</ul>` : '<p class="hint">No friends yet. Share your code, or tap "Add friend" on someone in your room or on the leaderboards.</p>';
+    if (d.outgoing.length) {
+      html += `<h3>Sent requests</h3><ul class="pl-list">${d.outgoing.map((f) => row(f,
+        `<button class="btn small" data-fr-remove="${esc(f.id)}">Cancel</button>`, 'Waiting for them to accept')).join('')}</ul>`;
+    }
+    if (d.blocked.length) {
+      html += `<h3>Blocked</h3><ul class="pl-list">${d.blocked.map((f) => row(f,
+        `<button class="btn small" data-fr-unblock="${esc(f.id)}">Unblock</button>`, 'Blocked')).join('')}</ul>`;
+    }
+    $('#fr-body').innerHTML = html;
+  }
+  async function openFriends() {
+    if (!authToken()) { openAuth('login'); toast('Log in to add friends', 'info'); return; }
+    frArmed = null;
+    renderFriends();
+    openSheet('friends');
+    refreshFriends();
+  }
+  $('#btn-friends').onclick = openFriends;
+  setInterval(() => { if (!$('#friends').hidden && !frArmed) refreshFriends(); }, 10000); // keep online/room status fresh
+  $('#fr-copy').onclick = async () => {
+    const code = friendsData && friendsData.code;
+    if (!code) return;
+    try { await navigator.clipboard.writeText(code); toast(`Copied ${code}`, 'good'); } catch { toast(`Your code is ${code}`, 'info'); }
+  };
+  $('#fr-add').onsubmit = async (e) => {
+    e.preventDefault();
+    const code = $('#fr-add-code').value.trim();
+    if (!code) return $('#fr-add-code').focus();
+    const res = await friendAction('request', { code }, (r) => (r.status === 'friends' ? `You and ${r.name} are now friends` : `Friend request sent to ${r.name}`));
+    if (res.ok) $('#fr-add-code').value = '';
+  };
+  // Two-tap confirm for Remove and Block.
+  function armFr(key) {
+    clearTimeout(frTimer);
+    if (frArmed === key) { frArmed = null; return true; }
+    frArmed = key;
+    frTimer = setTimeout(() => { frArmed = null; if (!$('#friends').hidden) renderFriends(); }, 3000);
+    if (!$('#friends').hidden) renderFriends();
+    return false;
+  }
+  async function joinFriendRoom(code) {
+    const name = ($('#name').value.trim() || (auth && auth.user && auth.user.name) || '').slice(0, 20);
+    if (!name) { closeSheet('friends'); return getName(); }
+    rememberName(name);
+    if (state) { await emit('leave'); goHome(); }
+    const res = await emit('join', { code, name, auth: authToken() });
+    if (!res.ok) return toast(res.error, 'error');
+    closeSheet('friends'); closeSheet('profile');
+    joined(res);
+  }
+  document.addEventListener('click', async (e) => {
+    const t = (attr) => e.target.closest(`[data-${attr}]`);
+    let el;
+    if ((el = t('open-friends'))) return openFriends();
+    if ((el = t('fr-request'))) return friendAction('request', { id: el.dataset.frRequest }, (r) => (r.status === 'friends' ? `You and ${r.name} are now friends` : `Friend request sent to ${r.name}`));
+    if ((el = t('fr-accept'))) return friendAction('accept', { id: el.dataset.frAccept }, (r) => `You and ${r.name} are now friends`);
+    if ((el = t('fr-remove'))) return friendAction('remove', { id: el.dataset.frRemove });
+    if ((el = t('fr-unblock'))) return friendAction('unblock', { id: el.dataset.frUnblock }, 'Unblocked');
+    if ((el = t('fr-unfriend'))) { if (armFr('rm:' + el.dataset.frUnfriend)) friendAction('remove', { id: el.dataset.frUnfriend }, 'Removed from friends'); return; }
+    if ((el = t('fr-block'))) {
+      const id = el.dataset.frBlock;
+      if (!$('#friends').hidden && !armFr('bl:' + id)) return;
+      return friendAction('block', { id }, 'Blocked. They can\'t send you requests or invites now.');
+    }
+    if ((el = t('fr-invite'))) {
+      el.disabled = true;
+      const res = await emit('invite', { userId: el.dataset.frInvite });
+      el.disabled = false;
+      return res.ok ? toast('Invite sent', 'good') : toast(res.error, 'error', 5000);
+    }
+    if ((el = t('fr-join'))) return joinFriendRoom(el.dataset.frJoin);
+  });
+
+  // Someone sent a request / accepted / removed you: refresh, and say so if there's news.
+  socket.on('friendsChanged', (m) => {
+    if (m && m.text) toast(m.text, 'good', 5000);
+    refreshFriends();
+  });
+
+  // A friend invited you into their room.
+  let inviteTimer = null;
+  socket.on('invite', (inv) => {
+    if (!inv || !inv.code || (state && session && session.code === inv.code)) return;
+    const pop = $('#invite-pop');
+    pop.innerHTML = `<span class="acct-av">${esc((inv.from.name || '?')[0].toUpperCase())}</span>
+      <div class="ip-text"><b>${esc(inv.from.name)}</b> invited you to play<small>Room ${esc(inv.code)}${state ? ' · you\'ll leave this room' : ''}</small></div>
+      <div class="acct-actions"><button class="btn small primary-ish" data-ip-join>Join</button><button class="btn small ghost" data-ip-no>Not now</button></div>`;
+    pop.hidden = false;
+    pop.querySelector('[data-ip-join]').onclick = () => { pop.hidden = true; joinFriendRoom(inv.code); };
+    pop.querySelector('[data-ip-no]').onclick = () => { pop.hidden = true; };
+    clearTimeout(inviteTimer);
+    inviteTimer = setTimeout(() => { pop.hidden = true; }, 30000);
+    try { if (document.hidden && 'Notification' in window && Notification.permission === 'granted') new Notification(`${inv.from.name} invited you to Sliver`); } catch {}
+  });
+
   renderAccount();
-  refreshMe();
+  refreshMe().then(refreshFriends);
 
   // Keyboard: space plays the clip during a round (when not typing).
   document.addEventListener('keydown', (e) => {
