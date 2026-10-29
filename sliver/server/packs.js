@@ -27,20 +27,58 @@ const PACKS = [
   { id: 'afrobeats', cat: 'Genres', name: 'Afrobeats', spotify: null, backup: 'afrobeats hits' },
   { id: 'movies', cat: 'Genres', name: 'Movie & TV', spotify: null, backup: 'movie soundtrack hits' },
 
+  // Arabic & Middle East (Deezer playlists found by search)
+  { id: 'arabic-hits', cat: 'Arabic & Middle East', name: 'Arabic Hits', spotify: null, backup: 'arabic hits' },
+  { id: 'khaleeji', cat: 'Arabic & Middle East', name: 'Khaleeji', spotify: null, backup: 'khaleeji hits' },
+  { id: 'egyptian', cat: 'Arabic & Middle East', name: 'Egyptian Pop', spotify: null, backup: 'egyptian pop hits' },
+  { id: 'arabic-classics', cat: 'Arabic & Middle East', name: 'Arabic Classics (Tarab)', spotify: null, backup: 'arabic classics tarab' },
+  { id: 'arabic-rap', cat: 'Arabic & Middle East', name: 'Arabic Rap & Mahraganat', spotify: null, backup: 'arabic rap hits' },
+  { id: 'maghreb', cat: 'Arabic & Middle East', name: 'Raï & Maghreb', spotify: null, backup: 'rai maghreb hits' },
+  { id: 'turkish', cat: 'Arabic & Middle East', name: 'Turkish Pop', spotify: null, backup: 'turkish pop hits' },
+
   // (spotify: null = no Spotify playlist I'm sure of; uses the Deezer search directly)
 
-  // Artists
-  ...[
-    'Taylor Swift', 'Drake', 'The Weeknd', 'Bad Bunny', 'Beyoncé', 'Kendrick Lamar',
-    'Billie Eilish', 'Ariana Grande', 'SZA', 'Travis Scott', 'Rihanna', 'Bruno Mars',
-    'Ed Sheeran', 'Eminem', 'Michael Jackson', 'Queen', 'The Beatles', 'Coldplay',
-  ].map((artist) => ({ id: 'artist-' + artist.toLowerCase().replace(/[^a-z0-9]+/g, '-'), cat: 'Artists', name: artist, artist })),
+  // Artists: every song they have on Deezer (albums, EPs, singles); popular songs come up more often.
+  ...artists('Pop artists', [
+    'Taylor Swift', 'Ariana Grande', 'Billie Eilish', 'Dua Lipa', 'Ed Sheeran', 'Bruno Mars', 'Rihanna',
+    'Beyoncé', 'The Weeknd', 'Justin Bieber', 'Harry Styles', 'Olivia Rodrigo', 'Sabrina Carpenter',
+    'Lady Gaga', 'Katy Perry', 'Adele', 'Lana Del Rey', 'Miley Cyrus', 'Selena Gomez', 'Shawn Mendes',
+    'Post Malone', 'Doja Cat', 'Chappell Roan', 'Charli xcx', 'Maroon 5', 'One Direction', 'Michael Jackson',
+    'Shakira', 'Bad Bunny',
+  ]),
+  ...artists('Hip-hop & R&B artists', [
+    'Drake', 'Kendrick Lamar', 'Travis Scott', 'SZA', 'Eminem', 'Kanye West', 'J. Cole', 'Future',
+    '21 Savage', 'Lil Baby', 'Juice WRLD', 'XXXTENTACION', 'Nicki Minaj', 'Cardi B', 'Chris Brown',
+    'Frank Ocean', 'Tyler, The Creator', 'Playboi Carti', 'Lil Uzi Vert', 'Metro Boomin', 'Lil Wayne',
+    'Usher', '2Pac', 'The Notorious B.I.G.', '50 Cent', 'Daniel Caesar', 'Brent Faiyaz',
+  ]),
+  ...artists('Rock, alt & country artists', [
+    'Queen', 'The Beatles', 'Coldplay', 'Imagine Dragons', 'Linkin Park', 'Arctic Monkeys', 'Nirvana',
+    'Red Hot Chili Peppers', 'Fleetwood Mac', 'AC/DC', "Guns N' Roses", 'Green Day', 'Twenty One Pilots',
+    'Tame Impala', 'The Neighbourhood', 'Radiohead', 'Oasis', 'Paramore', 'Fall Out Boy',
+    'Morgan Wallen', 'Zach Bryan', 'Luke Combs',
+  ]),
+  ...artists('Arabic artists', [
+    'Amr Diab', 'Nancy Ajram', 'Elissa', 'Tamer Hosny', 'Mohamed Hamaki', 'Sherine', 'Haifa Wehbe',
+    'Myriam Fares', 'Ragheb Alama', 'Wael Kfoury', 'Assala', 'Kadim Al Sahir', 'Mohammed Abdu',
+    'Majid Al Mohandis', 'Rashed Al Majed', 'Hussain Al Jassmi', 'Balqees', 'Fairuz', 'Umm Kulthum',
+    'Abdel Halim Hafez', 'Wegz', 'Marwan Pablo', 'Marwan Moussa', 'Cairokee', 'Saint Levant',
+    'ElGrandeToto', 'Mohamed Ramadan', 'Ahmed Saad',
+  ]),
+  ...artists('K-pop artists', ['BTS', 'BLACKPINK', 'Stray Kids', 'NewJeans', 'TWICE', 'Jungkook', 'ROSÉ', 'aespa']),
 ];
+
+function artists(cat, names) {
+  return names.map((artist) => ({
+    id: 'artist-' + artist.toLowerCase().normalize('NFKD').replace(/\p{M}/gu, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+    cat, name: artist, artist,
+  }));
+}
 
 const byId = new Map(PACKS.map((p) => [p.id, p]));
 
 // Ranked play uses the genre and decade packs; each one has its own leaderboard.
-for (const p of PACKS) p.ranked = p.cat !== 'Artists';
+for (const p of PACKS) p.ranked = !p.artist;
 const RANKED = PACKS.filter((p) => p.ranked);
 
 function publicPacks() {

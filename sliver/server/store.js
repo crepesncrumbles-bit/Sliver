@@ -178,6 +178,7 @@ class MiniRedis {
 // ---------- Upstash Redis over HTTPS (no driver needed) ----------
 class UpstashStore {
   constructor(url, token) {
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url; // pasted without https://
     this.url = url.replace(/\/+$/, '');
     this.token = token;
     this.kind = 'upstash';
@@ -190,6 +191,9 @@ class UpstashStore {
       body: JSON.stringify(body),
     });
     const json = await res.json().catch(() => null);
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(`Upstash rejected the token (HTTP ${res.status}). Check UPSTASH_REDIS_REST_TOKEN in Render: paste only the long token, and use the normal token, not the read-only one.`);
+    }
     if (!res.ok && !Array.isArray(json)) throw new Error(`Database error (HTTP ${res.status}) ${json && json.error ? json.error : ''}`.trim());
     return json;
   }
@@ -210,9 +214,18 @@ class UpstashStore {
   }
 }
 
+// Forgiving about how the values were pasted: surrounding quotes, a leading
+// "UPSTASH_REDIS_REST_URL=" copied along with the value, or stray spaces/newlines.
+function cleanEnv(value, name) {
+  let v = String(value || '').trim();
+  if (name && v.toUpperCase().startsWith(name + '=')) v = v.slice(name.length + 1).trim();
+  v = v.replace(/^["'`]+|["'`]+$/g, '').trim();
+  return v;
+}
+
 function createStore({ dir } = {}) {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  const url = cleanEnv(process.env.UPSTASH_REDIS_REST_URL, 'UPSTASH_REDIS_REST_URL');
+  const token = cleanEnv(process.env.UPSTASH_REDIS_REST_TOKEN, 'UPSTASH_REDIS_REST_TOKEN');
   if (url && token) return new UpstashStore(url, token);
   const file = path.join(dir || path.join(__dirname, '..', 'data'), 'sliver-db.json');
   const store = new MiniRedis(file);
@@ -221,4 +234,4 @@ function createStore({ dir } = {}) {
   return store;
 }
 
-module.exports = { MiniRedis, UpstashStore, createStore };
+module.exports = { MiniRedis, UpstashStore, createStore, cleanEnv };

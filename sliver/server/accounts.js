@@ -10,6 +10,9 @@ const crypto = require('crypto');
 const packs = require('./packs');
 
 const SESSION_DAYS = 60;
+const CODE_MINUTES = 15;
+const CODE_TRIES = 5;
+const RESEND_SECONDS = 45;
 const TOP_N = 25;
 const WEIGHT = 0.95;
 
@@ -17,6 +20,9 @@ const K = {
   user: (id) => `user:${id}`,
   email: (e) => `email:${e}`,
   sess: (t) => `sess:${t}`,
+  pend: (e) => `pend:${e}`,     // sign-up waiting for its email code
+  reset: (e) => `reset:${e}`,   // password reset waiting for its email code
+  sent: (e, why = 'signup') => `sent:${why}:${e}`,     // "just sent a code" (stops spamming someone's inbox)
   best: (id) => `ubest:${id}`,
   plays: (id) => `plays:${id}`,
   board: (b) => `lb:${b}`,
@@ -46,10 +52,36 @@ function ratingFrom(bestMap) {
 
 class AccountError extends Error {}
 
+const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
+const newCode = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+const cleanCode = (c) => String(c || '').replace(/\D/g, '').slice(0, 6);
+
+function checkName(name) {
+  name = String(name || '').trim().replace(/\s+/g, ' ');
+  if (name.length < 2 || name.length > 20) throw new AccountError('Username needs 2 to 20 characters');
+  return name;
+}
+function checkEmail(email) {
+  email = String(email || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) || email.length > 120) throw new AccountError('That email doesn\'t look right');
+  return email;
+}
+function checkPassword(password) {
+  password = String(password || '');
+  if (password.length < 6) throw new AccountError('Password needs at least 6 characters');
+  if (password.length > 200) throw new AccountError('That password is too long');
+  return password;
+}
+
 class Accounts {
-  constructor(store) {
+  // mailer: optional. When set, sign-ups need a 6-digit code from their email,
+  // and "Forgot password?" works.
+  constructor(store, mailer = null) {
     this.store = store;
+    this.mailer = mailer;
   }
+
+  get emailCodes() { return !!this.mailer; }
 
   publicUser(u) {
     if (!u || !u.id) return null;
@@ -62,30 +94,131 @@ class Accounts {
     return u.id ? u : null;
   }
 
-  async newSession(userId) {
+  // Session value is "userId.passwordVersion", so changing the password logs out old devices.
+  async newSession(userId, pv = 0) {
     const token = crypto.randomBytes(32).toString('base64url');
-    await this.store.cmd('SET', K.sess(token), userId, 'EX', SESSION_DAYS * 86400);
+    await this.store.cmd('SET', K.sess(token), `${userId}.${pv}`, 'EX', SESSION_DAYS * 86400);
     return token;
   }
 
-  async signup({ name, email, password } = {}) {
-    name = String(name || '').trim().replace(/\s+/g, ' ');
-    email = String(email || '').trim().toLowerCase();
-    password = String(password || '');
-    if (name.length < 2 || name.length > 20) throw new AccountError('Username needs 2 to 20 characters');
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) || email.length > 120) throw new AccountError('That email doesn\'t look right');
-    if (password.length < 6) throw new AccountError('Password needs at least 6 characters');
-    if (password.length > 200) throw new AccountError('That password is too long');
+  async hashPassword(password) {
+    const salt = crypto.randomBytes(16).toString('base64');
+    const hash = (await scrypt(password, salt)).toString('base64');
+    return { salt, hash };
+  }
+
+  async createUser(name, email, salt, hash) {
     const id = crypto.randomBytes(9).toString('base64url');
     const claimed = await this.store.cmd('SET', K.email(email), id, 'NX');
     if (!claimed) throw new AccountError('That email already has an account. Log in instead.');
-    const salt = crypto.randomBytes(16).toString('base64');
-    const hash = (await scrypt(password, salt)).toString('base64');
     await this.store.cmd('HSET', K.user(id),
-      'id', id, 'name', name, 'email', email, 'salt', salt, 'hash', hash, 'created', Date.now(),
+      'id', id, 'name', name, 'email', email, 'salt', salt, 'hash', hash, 'created', Date.now(), 'pv', 0,
       'games', 0, 'songs', 0, 'correct', 0, 'firstTry', 0, 'heard10', 0, 'points', 0, 'best', 0, 'bestPack', '', 'rating', 0);
-    const token = await this.newSession(id);
+    const token = await this.newSession(id, 0);
     return { token, user: { ...this.publicUser({ id, name, rating: 0, games: 0 }), email } };
+  }
+
+  // Throttle: one code per email every RESEND_SECONDS.
+  async throttle(email, why = 'signup') {
+    const ok = await this.store.cmd('SET', K.sent(email, why), '1', 'NX', 'EX', RESEND_SECONDS);
+    if (!ok) throw new AccountError('A code was just sent. Wait a few seconds before asking for another.');
+  }
+
+  async sendCode(email, code, purpose) {
+    try {
+      await this.mailer.sendCode(email, code, purpose);
+    } catch (err) {
+      console.error('email send failed:', err.message);
+      await this.store.cmd('DEL', K.sent(email, purpose));
+      throw new AccountError('Couldn\'t send the email right now. Try again in a minute.');
+    }
+  }
+
+  // Step 1 of sign-up. Without email set up, the account is created right away.
+  async signup({ name, email, password } = {}) {
+    name = checkName(name);
+    email = checkEmail(email);
+    password = checkPassword(password);
+    if (await this.store.cmd('GET', K.email(email))) throw new AccountError('That email already has an account. Log in instead.');
+    const { salt, hash } = await this.hashPassword(password);
+    if (!this.mailer) return this.createUser(name, email, salt, hash);
+    await this.throttle(email);
+    const code = newCode();
+    await this.store.cmd('HSET', K.pend(email), 'name', name, 'salt', salt, 'hash', hash, 'code', sha(code), 'tries', 0);
+    await this.store.cmd('EXPIRE', K.pend(email), CODE_MINUTES * 60);
+    await this.sendCode(email, code, 'signup');
+    return { pending: true, email };
+  }
+
+  // Step 2 of sign-up: the code from the email.
+  async verifySignup({ email, code } = {}) {
+    email = checkEmail(email);
+    const p = toObj(await this.store.cmd('HGETALL', K.pend(email)));
+    if (!p.code) throw new AccountError('That code expired. Sign up again to get a new one.');
+    await this.checkCode(K.pend(email), p, code);
+    await this.store.cmd('DEL', K.pend(email));
+    return this.createUser(p.name, email, p.salt, p.hash);
+  }
+
+  async resendSignup({ email } = {}) {
+    email = checkEmail(email);
+    if (!this.mailer) throw new AccountError('Email codes aren\'t set up on this server');
+    const p = toObj(await this.store.cmd('HGETALL', K.pend(email)));
+    if (!p.code) throw new AccountError('That sign-up expired. Fill in the form again.');
+    await this.throttle(email);
+    const code = newCode();
+    await this.store.cmd('HSET', K.pend(email), 'code', sha(code), 'tries', 0);
+    await this.store.cmd('EXPIRE', K.pend(email), CODE_MINUTES * 60);
+    await this.sendCode(email, code, 'signup');
+    return { pending: true, email };
+  }
+
+  async checkCode(key, rec, code) {
+    const c = cleanCode(code);
+    if (c.length !== 6) throw new AccountError('Enter the 6-digit code from the email');
+    if (int(rec.tries) >= CODE_TRIES) {
+      await this.store.cmd('DEL', key);
+      throw new AccountError('Too many wrong codes. Start again to get a new one.');
+    }
+    const a = Buffer.from(sha(c)), b = Buffer.from(rec.code);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      const tries = await this.store.cmd('HINCRBY', key, 'tries', 1);
+      const left = CODE_TRIES - int(tries);
+      if (left <= 0) { await this.store.cmd('DEL', key); throw new AccountError('Too many wrong codes. Start again to get a new one.'); }
+      throw new AccountError(`That code isn't right. ${left} ${left === 1 ? 'try' : 'tries'} left.`);
+    }
+  }
+
+  // Forgot password, step 1. Same answer whether or not the email has an account.
+  async startReset({ email } = {}) {
+    if (!this.mailer) throw new AccountError('Password reset isn\'t set up on this server');
+    email = checkEmail(email);
+    const id = await this.store.cmd('GET', K.email(email));
+    await this.throttle(email, 'reset');
+    if (id) {
+      const code = newCode();
+      await this.store.cmd('HSET', K.reset(email), 'code', sha(code), 'tries', 0);
+      await this.store.cmd('EXPIRE', K.reset(email), CODE_MINUTES * 60);
+      await this.sendCode(email, code, 'reset');
+    }
+    return { pending: true, email };
+  }
+
+  // Forgot password, step 2: code + new password. Logs out every other device.
+  async finishReset({ email, code, password } = {}) {
+    email = checkEmail(email);
+    password = checkPassword(password);
+    const r = toObj(await this.store.cmd('HGETALL', K.reset(email)));
+    if (!r.code) throw new AccountError('That code expired. Ask for a new one.');
+    await this.checkCode(K.reset(email), r, code);
+    const id = await this.store.cmd('GET', K.email(email));
+    const u = id ? await this.getUser(id) : null;
+    if (!u) throw new AccountError('Account not found');
+    const { salt, hash } = await this.hashPassword(password);
+    const pv = int(u.pv) + 1;
+    await this.store.pipeline([['HSET', K.user(id), 'salt', salt, 'hash', hash, 'pv', pv], ['DEL', K.reset(email)]]);
+    const token = await this.newSession(id, pv);
+    return { token, user: { ...this.publicUser(u), email: u.email } };
   }
 
   async login({ email, password } = {}) {
@@ -96,17 +229,25 @@ class Accounts {
     const salt = u ? u.salt : 'no-such-user-salt';
     const got = await scrypt(password || '', salt);
     const want = u ? Buffer.from(u.hash, 'base64') : Buffer.alloc(64);
-    if (!u || !crypto.timingSafeEqual(got, want)) throw new AccountError('Wrong email or password');
-    const token = await this.newSession(u.id);
+    if (!u || !crypto.timingSafeEqual(got, want)) {
+      if (!u && this.mailer && await this.store.cmd('HGET', K.pend(email), 'code')) {
+        throw new AccountError('That sign-up isn\'t finished. Enter the code from your email, or sign up again.');
+      }
+      throw new AccountError('Wrong email or password');
+    }
+    const token = await this.newSession(u.id, int(u.pv));
     return { token, user: { ...this.publicUser(u), email: u.email } };
   }
 
   async session(token) {
     if (!token || typeof token !== 'string' || token.length > 100) return null;
-    const id = await this.store.cmd('GET', K.sess(token));
-    if (!id) return null;
+    const val = await this.store.cmd('GET', K.sess(token));
+    if (!val) return null;
+    const [id, pv] = String(val).split('.');
     const u = await this.getUser(id);
-    return u ? { ...this.publicUser(u), email: u.email } : null;
+    if (!u) return null;
+    if (int(pv) !== int(u.pv)) return null; // password changed since this login
+    return { ...this.publicUser(u), email: u.email };
   }
 
   async logout(token) {

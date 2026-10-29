@@ -63,7 +63,10 @@
 
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const fmt = (n) => Number(n || 0).toLocaleString('en-US');
-  const norm = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  // Works for any script: Latin, Arabic (folds أ/إ/آ, ة, ى and drops harakat), Korean, …
+  const norm = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/\p{M}/gu, '')
+    .replace(/[أإآٱ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/ؤ/g, 'و').replace(/ئ/g, 'ي').replace(/ـ/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 
   // Lengths snap to tenths of a second (0.1, 0.2 … 3.0 … 30.0) so the points match Songless exactly.
   const lenFromSlider = (v) => Math.max(MIN_LEN, Math.min(maxLen, Math.round(MIN_LEN * Math.pow(maxLen / MIN_LEN, v / 1000) * 10) / 10));
@@ -348,9 +351,18 @@
       if (!c) cats.push(c = { name: pk.cat, packs: [] });
       c.packs.push(pk);
     }
-    $('#packs').innerHTML = cats.map((c) => `<h3>${esc(c.name)}</h3><div class="pack-row">${c.packs.map((pk) =>
-      `<button class="pack${added.has(pk.id) ? ' on' : ''}${busyPacks.has(pk.id) ? ' busy' : ''}" data-pack="${esc(pk.id)}" aria-pressed="${added.has(pk.id)}">${esc(pk.name)}</button>`
-    ).join('')}</div>`).join('');
+    // Long rows (the artist lists) show 10 at first; "+ N more" opens the rest.
+    $('#packs').innerHTML = cats.map((c) => {
+      const long = c.packs.length > 12;
+      const open = !long || openCats.has(c.name);
+      const shown = open ? c.packs : c.packs.filter((pk, i) => i < 10 || added.has(pk.id));
+      const more = long ? (open
+        ? `<button class="pack more" data-cat-toggle="${esc(c.name)}">Show fewer</button>`
+        : `<button class="pack more" data-cat-toggle="${esc(c.name)}">+ ${c.packs.length - shown.length} more</button>`) : '';
+      return `<h3>${esc(c.name)}</h3><div class="pack-row">${shown.map((pk) =>
+        `<button class="pack${added.has(pk.id) ? ' on' : ''}${busyPacks.has(pk.id) ? ' busy' : ''}" data-pack="${esc(pk.id)}" aria-pressed="${added.has(pk.id)}">${esc(pk.name)}</button>`
+      ).join('')}${more}</div>`;
+    }).join('');
 
     // ---- game type, mode, settings ----
     const st = state.settings;
@@ -431,6 +443,8 @@
   }
   fetch('/api/info').then((r) => r.json()).then((info) => {
     lanBase = info.lan && info.lan[0];
+    emailCodes = !!info.emailCodes;
+    if (!$('#auth').hidden && authMode === 'login') setAuthMode('login', { keepMessages: true });
     if (state && state.phase === 'lobby') renderLobby();
   }).catch(() => {});
 
@@ -459,6 +473,14 @@
   }
   $('#btn-clear').onclick = () => emit('clearPool');
   const busyPacks = new Set();
+  const openCats = new Set();
+  document.addEventListener('click', (e) => {
+    const t = e.target.closest('[data-cat-toggle]');
+    if (!t) return;
+    const c = t.dataset.catToggle;
+    openCats.has(c) ? openCats.delete(c) : openCats.add(c);
+    if (state && state.phase === 'lobby') renderLobby();
+  });
   document.addEventListener('click', async (e) => {
     const rm = e.target.closest('[data-remove]');
     if (rm) {
@@ -1244,37 +1266,91 @@
     if (state && state.phase === 'lobby') renderLobby();
   }
 
+  // Modes: login · signup · verify (code after sign-up) · reset (email for a code) · reset2 (code + new password)
   let authMode = 'login';
-  function openAuth(mode = 'login') {
+  let emailCodes = false; // the server sends codes (set from /api/info)
+  function setAuthMode(mode, { keepMessages = false } = {}) {
     authMode = mode;
-    const signup = mode === 'signup';
-    $('#auth-title').textContent = signup ? 'Sign up' : 'Log in';
-    $('#auth-tab-login').classList.toggle('on', !signup);
-    $('#auth-tab-signup').classList.toggle('on', signup);
-    $('#auth-name-field').hidden = !signup;
-    $('#auth-submit').textContent = signup ? 'Create account' : 'Log in';
-    $('#auth-password').autocomplete = signup ? 'new-password' : 'current-password';
-    $('#auth-error').hidden = true;
-    if (signup && !$('#auth-name').value) $('#auth-name').value = $('#name').value.trim();
-    openSheet('auth');
-    (signup ? $('#auth-name') : $('#auth-email')).focus();
+    const signupSide = mode === 'signup' || mode === 'verify';
+    const show = (id, on) => { $(id).hidden = !on; };
+    $('#auth-title').textContent = { login: 'Log in', signup: 'Sign up', verify: 'Check your email', reset: 'Reset password', reset2: 'Reset password' }[mode];
+    $('#auth-tab-login').classList.toggle('on', !signupSide);
+    $('#auth-tab-signup').classList.toggle('on', signupSide);
+    show('#auth-name-field', mode === 'signup');
+    show('#auth-email-field', mode === 'login' || mode === 'signup' || mode === 'reset');
+    show('#auth-code-field', mode === 'verify' || mode === 'reset2');
+    show('#auth-password-field', mode === 'login' || mode === 'signup' || mode === 'reset2');
+    $('#auth-password-label').textContent = mode === 'reset2' ? 'New password' : 'Password';
+    $('#auth-password').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
+    $('#auth-submit').textContent = { login: 'Log in', signup: emailCodes ? 'Send me a code' : 'Create account', verify: 'Verify and create account', reset: 'Send me a code', reset2: 'Set new password' }[mode];
+    const email = esc($('#auth-email').value.trim());
+    $('#auth-lead').hidden = !['verify', 'reset', 'reset2'].includes(mode);
+    $('#auth-lead').innerHTML = mode === 'verify' ? `We sent a 6-digit code to <b>${email}</b>. It can take a minute, and it might land in spam.`
+      : mode === 'reset' ? 'Enter your account\'s email and we\'ll send you a code.'
+      : mode === 'reset2' ? `If <b>${email}</b> has an account, a code is on its way (check spam too). Enter it with your new password.` : '';
+    show('#auth-forgot', mode === 'login' && emailCodes);
+    show('#auth-resend', mode === 'verify' || mode === 'reset2');
+    show('#auth-back', mode === 'verify' || mode === 'reset' || mode === 'reset2');
+    $('#auth-back').textContent = mode === 'reset' ? 'Back to log in' : 'Use a different email';
+    show('#auth-note', mode === 'login' || mode === 'signup');
+    if (!keepMessages) { $('#auth-error').hidden = true; $('#auth-ok').hidden = true; }
+    if (mode === 'verify' || mode === 'reset2') $('#auth-code').value = '';
   }
+  function openAuth(mode = 'login') {
+    if (mode === 'signup' && !$('#auth-name').value) $('#auth-name').value = $('#name').value.trim();
+    setAuthMode(mode);
+    openSheet('auth');
+    const focus = { login: '#auth-email', signup: '#auth-name', reset: '#auth-email' }[mode];
+    if (focus) $(focus).focus();
+  }
+  const authError = (msg) => { $('#auth-ok').hidden = true; $('#auth-error').textContent = msg; $('#auth-error').hidden = false; };
+  const authOk = (msg) => { $('#auth-error').hidden = true; $('#auth-ok').textContent = msg; $('#auth-ok').hidden = false; };
   $('#auth-tab-login').onclick = () => openAuth('login');
   $('#auth-tab-signup').onclick = () => openAuth('signup');
-  $('#auth-form').onsubmit = async (e) => {
-    e.preventDefault();
-    const btn = $('#auth-submit');
-    const body = { email: $('#auth-email').value, password: $('#auth-password').value };
-    if (authMode === 'signup') body.name = $('#auth-name').value;
-    btn.disabled = true;
-    const res = await api(authMode === 'signup' ? '/api/signup' : '/api/login', { method: 'POST', body });
-    btn.disabled = false;
-    if (!res.ok) { $('#auth-error').textContent = res.error; $('#auth-error').hidden = false; return; }
+  $('#auth-forgot').onclick = () => { setAuthMode('reset'); $('#auth-email').focus(); };
+  $('#auth-back').onclick = () => { setAuthMode(authMode === 'verify' ? 'signup' : authMode === 'reset2' ? 'reset' : 'login'); };
+  $('#auth-resend').onclick = async () => {
+    const email = $('#auth-email').value;
+    const res = await api(authMode === 'verify' ? '/api/signup/resend' : '/api/reset/start', { method: 'POST', body: { email } });
+    if (!res.ok) return authError(res.error);
+    $('#auth-code').value = '';
+    authOk('New code sent. Use the newest email.');
+  };
+  $('#auth-code').addEventListener('input', () => {
+    const v = $('#auth-code').value.replace(/\D/g, '').slice(0, 6);
+    if ($('#auth-code').value !== v) $('#auth-code').value = v;
+    if (v.length === 6 && authMode === 'verify') $('#auth-form').requestSubmit();
+  });
+  function loggedIn(res, msg) {
     $('#auth-password').value = '';
+    $('#auth-code').value = '';
     saveAuth({ token: res.token, user: res.user });
     tellServerAboutLogin();
     closeSheet('auth');
-    toast(authMode === 'signup' ? `Welcome to Sliver, ${res.user.name}!` : `Welcome back, ${res.user.name}`, 'good');
+    setAuthMode('login');
+    toast(msg, 'good');
+  }
+  $('#auth-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = $('#auth-submit');
+    const email = $('#auth-email').value, password = $('#auth-password').value, code = $('#auth-code').value;
+    const calls = {
+      login: ['/api/login', { email, password }],
+      signup: ['/api/signup', { name: $('#auth-name').value, email, password }],
+      verify: ['/api/signup/verify', { email, code }],
+      reset: ['/api/reset/start', { email }],
+      reset2: ['/api/reset/finish', { email, code, password }],
+    };
+    const [path, body] = calls[authMode];
+    const mode = authMode;
+    btn.disabled = true;
+    const res = await api(path, { method: 'POST', body });
+    btn.disabled = false;
+    if (!res.ok) return authError(res.error);
+    if (mode === 'signup' && res.pending) { $('#auth-password').value = ''; setAuthMode('verify'); $('#auth-code').focus(); return; }
+    if (mode === 'reset') { $('#auth-password').value = ''; setAuthMode('reset2'); $('#auth-code').focus(); return; }
+    if (mode === 'reset2') return loggedIn(res, 'Password changed. You\'re logged in.');
+    loggedIn(res, mode === 'login' ? `Welcome back, ${res.user.name}` : `Welcome to Sliver, ${res.user.name}!`);
   };
   async function logout() {
     await api('/api/logout', { method: 'POST' });
@@ -1468,7 +1544,7 @@
     ul.innerHTML = '<li class="group">Artists</li>' + artistList.map((a, i) => `
       <li data-artist="${i}" class="artist${i === artistActive ? ' active' : ''}">
         ${a.picture ? `<img src="${esc(a.picture)}" alt="" loading="lazy" />` : `<span class="a-ph">${esc(a.name[0])}</span>`}
-        <div><div>${esc(a.name)}</div><div class="s-artist">${a.fans ? `${fmtPlays(a.fans)} fans · ` : ''}add their top songs</div></div>
+        <div><div>${esc(a.name)}</div><div class="s-artist">${a.fans ? `${fmtPlays(a.fans)} fans · ` : ''}add all their songs</div></div>
       </li>`).join('');
   }
   function pickArtist(a) { $('#playlist-input').value = a.name; addInput(a.name, a.id); }

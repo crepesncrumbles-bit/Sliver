@@ -32,8 +32,7 @@ function pointsForLength(len) {
   return Math.round(3500 + 6500 * Math.pow(remaining, 1.55));
 }
 
-const norm = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '')
-  .replace(/\(.*?\)|\[.*?\]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+const { normText: norm } = require('./text');
 
 const id = (n = 12) => crypto.randomBytes(n).toString('base64url');
 
@@ -44,6 +43,16 @@ function makeCode(existing) {
     code = Array.from({ length: 4 }, () => letters[crypto.randomInt(letters.length)]).join('');
   } while (existing.has(code));
   return code;
+}
+
+// Random song, favouring popular ones when a source gave popularity weights
+// (artists' full catalogues). Songs without a weight count as 1.
+function pickIndex(list) {
+  if (!list.some((t) => t.weight)) return crypto.randomInt(list.length);
+  const total = list.reduce((sum, t) => sum + (t.weight || 1), 0);
+  let r = Math.random() * total;
+  for (let i = 0; i < list.length; i++) { r -= list[i].weight || 1; if (r <= 0) return i; }
+  return list.length - 1;
 }
 
 class Room {
@@ -186,7 +195,7 @@ class Room {
       if (!pack) throw new Error('Unknown pack');
       if (this.sources.some((s) => s.packId === packId)) throw new Error(`${pack.name} is already in`);
       ({ tracks } = await this.loadPackCached(pack));
-      name = pack.artist ? `${pack.name} — top songs` : pack.name;
+      name = pack.artist ? `${pack.name}: all songs` : pack.name;
     } else {
       const text = String(input || '').trim();
       if (!text || /^demo$/i.test(text)) {
@@ -392,7 +401,7 @@ class Room {
 
     let clip = null, track = null;
     for (let attempt = 0; attempt < 8 && unused.length; attempt++) {
-      const pick = unused.splice(crypto.randomInt(unused.length), 1)[0];
+      const pick = unused.splice(pickIndex(unused), 1)[0];
       this.usedTrackKeys.add(pick.poolId);
       try {
         clip = await this.loadClip(pick);

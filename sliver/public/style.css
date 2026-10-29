@@ -529,3 +529,13 @@ h3.sub { font-family: var(--display); font-weight: 700; font-size: 16px; margin:
   .pf-head { gap: 18px; }
   .pl-actions { width: 100%; justify-content: flex-end; }
 }
+
+/* ---------- email codes ---------- */
+.auth-lead { margin: 0 0 14px; line-height: 1.5; }
+.code-box { font-family: var(--display); font-weight: 800; font-size: 26px; letter-spacing: 10px; text-align: center; }
+.form-ok { background: var(--good-bg); color: var(--mint-ink); border-radius: var(--r-ctl); padding: 10px 12px; font-size: 14px; font-weight: 600; margin: 0 0 12px; }
+.auth-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 16px; margin-top: 12px; }
+.auth-links:empty { display: none; }
+.linkish { font: inherit; font-size: 14px; font-weight: 700; color: var(--brand); background: none; border: 0; padding: 4px 2px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+
+.pack.more { border-style: dashed; color: var(--brand); font-weight: 700; }

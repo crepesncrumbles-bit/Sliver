@@ -80,7 +80,7 @@ const mgr = () => new RoomManager({ to: () => ({ emit() {} }) });
       await room.addSource({ packId: 'afrobeats' }, 'Host');
       check(!calls.some((u) => u.includes('spotify')), 'packs without a Spotify id go straight to Deezer');
       const r3 = await room.addSource({ packId: 'artist-drake' }, 'Host');
-      check(r3.name === 'Drake — top songs' && r3.added > 0, 'artist pack loads top songs');
+      check(r3.name === 'Drake: all songs' && r3.added > 0, 'artist pack loads top songs');
       const pub = room.publicState(room.hostId);
       check(pub.packs.length === packs.PACKS.length && pub.sources.every((s) => !('tracks' in s)), 'state lists packs; doesn\'t leak track lists');
       check(pub.sources.find((s) => s.packId === 'hiphop'), 'state marks which packs are added');
@@ -91,7 +91,7 @@ const mgr = () => new RoomManager({ to: () => ({ emit() {} }) });
       const room = mgr().create();
       room.addPlayer('Host', { id: 'h' });
       const r = await room.addSource({ input: 'taylor swift' }, 'Host');
-      check(r.name === 'Taylor Swift — top songs' && r.added === 25, '"taylor swift" adds her top songs');
+      check(r.name === 'Taylor Swift: all songs' && r.added === 25, '"taylor swift" adds her top songs');
       let err = null; try { await room.addSource({ input: 'nobody xyz' }, 'Host'); } catch (e) { err = e.message; }
       check(/No artist called/.test(err), 'unknown artist gets a clear message');
     }

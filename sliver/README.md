@@ -43,7 +43,9 @@ A black window opens and your browser goes to <http://localhost:3000>.
 4. Pick rounds and seconds per round, then **Start game**.
 
 ### Adding songs
-- Tap any pack (genres, decades, artists) to add it. Tap it again to remove it.
+- Tap any pack (genres, decades, Arabic & Middle East, artists) to add it. Tap it again to remove it.
+  Artist packs (Western, Arabic, K-pop) load **all** of the artist's songs on Deezer: albums, EPs and singles,
+  without live/remix versions. Popular songs come up more often; every song is in the guess list.
 - Or paste a public Spotify/Deezer playlist link, or start typing an artist's name and pick them from the
   suggestions. Playlists can be longer than 100 songs (up to 2,000).
 - Remove any single playlist with its **×**. The host can remove anything; others can remove what they added.
@@ -90,7 +92,9 @@ Hard and Chaos can both be on at once for **1.875×** points. Tap Classic to tur
   (×0.95, ×0.95², …). The trophy button opens the leaderboards; tap any name to see their stats
   (rating, rank, accuracy, first-try %, average time heard, best per genre, recent games).
 - Ending a ranked game early saves nothing. Players who leave before the end aren't saved.
-- There's no password reset (Sliver can't send email), so pick a password you'll remember.
+- With email codes turned on (below), sign-up sends a 6-digit code to your email, and **Forgot password?**
+  sends a code to set a new password (this logs out your other devices). Without them, accounts are created
+  right away and there's no password reset.
 
 ### Scoring (same as Songless)
 - Drag the slider (0.1 s up to the whole 30 s clip) or tap **+1s**, then play.
@@ -126,6 +130,15 @@ Notes: if nobody has the page open for 15 minutes, the free server sleeps; the n
 a minute to wake it. Rooms reset when it sleeps or restarts. To update the game later, upload the
 changed files to GitHub the same way; Render redeploys automatically.
 
+### Email verification codes (optional, free, 5 minutes)
+1. Sign up at **brevo.com** (free plan: 300 emails a day).
+2. **Senders, domains & dedicated IPs → Senders → Add a sender**: your Gmail address. Click the link Brevo emails you.
+3. **SMTP & API → API keys → Generate a new API key**, copy it.
+4. In Render → **Environment**, add `BREVO_API_KEY` (the key) and `MAIL_FROM` (that Gmail address) →
+   **Save, rebuild and deploy**. The log says "Email codes: on (brevo, from …)".
+
+Codes sent from a Gmail address through Brevo sometimes land in spam; tell friends to check there.
+
 ### Keep accounts and leaderboards (free database, 5 minutes)
 Render's free server forgets its files whenever it sleeps, so accounts need a database. Upstash is free:
 1. Sign up at **upstash.com** → **Redis** → **Create database** → any name, pick the region closest to
@@ -135,7 +148,9 @@ Render's free server forgets its files whenever it sleeps, so accounts need a da
 3. In Render: your service → **Environment** → **Add environment variable** → add both, with those exact
    names and values → **Save, rebuild and deploy**.
 
-The Render log then says "Accounts: saved in your Upstash database". Upstash archives a free database
+The Render log then says "Accounts: saved in your Upstash database" and "Database check: connected ✓".
+If it says "Database check FAILED", the message says what's wrong (usually the token was pasted with quotes
+or the read-only token was used). Upstash archives a free database
 after 30 days with no use (it emails first, and you can restore it). On your laptop no setup is needed:
 accounts save to `data/sliver-db.json`.
 

@@ -9,8 +9,7 @@ const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (
 const SEED_TRACK = '4uLU6hMCjMI75M1A2tKUQC'; // any public track works for getting a token
 const HASH_TTL = 6 * 60 * 60 * 1000;
 
-const norm = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '')
-  .replace(/\(.*?\)|\[.*?\]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+const { normText: norm } = require('./text');
 
 // ---------- anonymous token (from the public embed page) ----------
 function nextData(html) {

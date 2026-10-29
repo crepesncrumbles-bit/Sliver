@@ -2,6 +2,7 @@
 // Deezer's public API needs no login or API key.
 
 const API = 'https://api.deezer.com';
+const { normText } = require('./text');
 const MAX_TRACKS = 2000;
 
 async function getJson(url) {
@@ -103,40 +104,105 @@ async function loadDeezerPlaylistSearch(query, name) {
   return { name: name || src.name, tracks: src.tracks };
 }
 
-// An artist's most popular songs (also used when someone types an artist's name).
+// An artist's songs: their top 100 plus the songs from their albums, EPs and singles
+// (up to MAX_ARTIST_SONGS). Each song gets a `weight` from Deezer's popularity rank,
+// so games mostly pick well-known songs while every song is still guessable.
+const MAX_ARTIST_SONGS = 400;
+const MAX_RELEASES = 45;
+const SKIP_VERSION = /[([\-–].*\b(live|remix|remixed|instrumental|karaoke|sped ?up|slowed|reverb|a ?cappella|acapella|commentary|voice memo|demo version)\b/i;
+const artistCache = new Map(); // artistId -> { at, promise }
+const ARTIST_TTL = 6 * 60 * 60 * 1000;
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Deezer allows ~50 requests per 5 s; on "quota" errors wait and retry once.
+async function getJsonRetry(url) {
+  try { return await getJson(url); } catch (err) {
+    if (!/quota/i.test(err.message)) throw err;
+    await wait(1500);
+    return getJson(url);
+  }
+}
+
+async function findArtist(q, artistId) {
+  if (artistId && /^\d+$/.test(String(artistId))) return getJson(`${API}/artist/${artistId}`);
+  if (!q) throw new Error('Type an artist name');
+  const found = await getJson(`${API}/search/artist?q=${encodeURIComponent(q)}&limit=5`);
+  const nq = normText(q).replace(/ /g, '');
+  const list = found.data || [];
+  return list.find((a) => normText(a.name).replace(/ /g, '') === nq) || list[0] || null;
+}
+
+async function artistSongs(artist) {
+  const seen = new Set();
+  const out = [];
+  const add = (t, cover) => {
+    if (!t || !t.preview || t.readable === false) return;
+    if (t.artist && t.artist.id && String(t.artist.id) !== String(artist.id)) return; // other artists on compilations
+    const title = t.title_short || t.title;
+    if (SKIP_VERSION.test(t.title || '')) return;
+    const key = normText(title);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push({ ...toTrack(t, cover), rank: Number(t.rank) || 0 });
+  };
+
+  const [top, releases] = await Promise.all([
+    getJsonRetry(`${API}/artist/${artist.id}/top?limit=100`),
+    getJsonRetry(`${API}/artist/${artist.id}/albums?limit=100`).catch(() => ({ data: [] })),
+  ]);
+  for (const t of top.data || []) add(t);
+
+  // Biggest releases first (by fans), albums before singles when tied.
+  const rel = (releases.data || [])
+    .filter((a) => !/live|remix|karaoke|instrumental/i.test(a.title || ''))
+    .sort((a, b) => (b.fans || 0) - (a.fans || 0) || (a.record_type === 'album' ? -1 : 1))
+    .slice(0, MAX_RELEASES);
+  for (let i = 0; i < rel.length && out.length < MAX_ARTIST_SONGS; i += 8) {
+    const batch = rel.slice(i, i + 8);
+    const lists = await Promise.all(batch.map((a) =>
+      getJsonRetry(`${API}/album/${a.id}/tracks?limit=100`).then((r) => ({ a, tracks: r.data || [] })).catch(() => ({ a, tracks: [] }))));
+    for (const { a, tracks } of lists) for (const t of tracks) add(t, a.cover_medium);
+    if (i + 8 < rel.length) await wait(900); // stay under Deezer's rate limit
+  }
+
+  // Popularity weights averaging 1: hits ~2–3, deep cuts ~0.2.
+  const roots = out.map((t) => Math.sqrt(Math.max(1, t.rank)));
+  const mean = roots.reduce((x, y) => x + y, 0) / Math.max(1, roots.length);
+  out.forEach((t, i) => { t.weight = Math.max(0.15, Math.round((roots[i] / mean) * 100) / 100); delete t.rank; });
+  return out.slice(0, MAX_ARTIST_SONGS);
+}
+
 // artistId (from the suggestions list) picks the exact artist; otherwise search by name.
 async function loadDeezerArtist(artistName, artistId) {
   const q = String(artistName || '').trim();
-  let artist = null;
-  if (artistId && /^\d+$/.test(String(artistId))) {
-    artist = await getJson(`${API}/artist/${artistId}`);
-  } else {
-    if (!q) throw new Error('Type an artist name');
-    const found = await getJson(`${API}/search/artist?q=${encodeURIComponent(q)}&limit=5`);
-    const nq = q.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const list = found.data || [];
-    artist = list.find((a) => a.name.toLowerCase().replace(/[^a-z0-9]/g, '') === nq) || list[0];
+  const artist = await findArtist(q, artistId);
+  if (!artist || !artist.id) throw new Error(`No artist called "${q}" found. For a playlist, paste its link.`);
+  const hit = artistCache.get(String(artist.id));
+  let tracks;
+  if (hit && Date.now() - hit.at < ARTIST_TTL) tracks = await hit.promise;
+  else {
+    const promise = artistSongs(artist);
+    artistCache.set(String(artist.id), { at: Date.now(), promise });
+    promise.catch(() => artistCache.delete(String(artist.id)));
+    tracks = await promise;
   }
-  if (!artist) throw new Error(`No artist called "${q}" found. For a playlist, paste its link.`);
-  const top = await getJson(`${API}/artist/${artist.id}/top?limit=60`);
-  const tracks = (top.data || []).filter((t) => t.preview && t.readable !== false).map((t) => toTrack(t));
   if (tracks.length < 2) throw new Error(`Not enough playable songs by ${artist.name}`);
-  return { name: `${artist.name} — top songs`, tracks, image: artist.picture_medium || null };
+  return { name: `${artist.name}: all songs`, tracks: tracks.map((t) => ({ ...t })), image: artist.picture_medium || null };
 }
 
 // Artist suggestions while typing (name, picture, fans), most popular first.
-const artistCache = new Map();
+const artistSearchCache = new Map();
 async function searchArtists(query) {
   const q = String(query || '').trim().toLowerCase().slice(0, 60);
   if (q.length < 2) return [];
-  const hit = artistCache.get(q);
+  const hit = artistSearchCache.get(q);
   if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.list;
   const data = await getJson(`${API}/search/artist?q=${encodeURIComponent(q)}&limit=8`);
   const list = (data.data || []).map((a) => ({
     id: String(a.id), name: a.name, picture: a.picture_small || a.picture_medium || null, fans: a.nb_fan || 0,
   }));
-  artistCache.set(q, { at: Date.now(), list });
-  if (artistCache.size > 500) artistCache.delete(artistCache.keys().next().value);
+  artistSearchCache.set(q, { at: Date.now(), list });
+  if (artistSearchCache.size > 500) artistSearchCache.delete(artistSearchCache.keys().next().value);
   return list;
 }
 

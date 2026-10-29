@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev:mock": "node server/index.js --demo-only",
-    "test": "node test/spotify.test.js && node test/features.test.js && node test/ranked.test.js && node test/smoke.js"
+    "test": "node test/spotify.test.js && node test/features.test.js && node test/ranked.test.js && node test/email.test.js && node test/smoke.js"
   },
   "engines": {
     "node": ">=18"

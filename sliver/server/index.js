@@ -9,6 +9,7 @@ const { Realtime } = require('./realtime');
 const { RoomManager } = require('./game');
 const { createStore } = require('./store');
 const { Accounts, AccountError } = require('./accounts');
+const { createMailer } = require('./mailer');
 const { searchArtists } = require('./deezer');
 const { spotifyPlays } = require('./spotifyweb');
 
@@ -37,7 +38,8 @@ function lanAddresses() {
 
 let rooms; // set below
 const store = createStore({ dir: process.env.DATA_DIR });
-const accounts = new Accounts(store);
+const mailer = createMailer();
+const accounts = new Accounts(store, mailer);
 
 // ---------- small JSON API helpers ----------
 const sendJson = (res, code, obj) => {
@@ -71,16 +73,24 @@ function rateLimited(ip) {
   list.push(now);
   attempts.set(ip, list);
   if (attempts.size > 5000) attempts.delete(attempts.keys().next().value);
-  return list.length > 20;
+  return list.length > 40;
 }
 
 async function handleApi(req, res, p, url) {
   try {
-    if (p === '/api/signup' || p === '/api/login') {
+    const authRoutes = {
+      '/api/signup': (b) => accounts.signup(b),
+      '/api/login': (b) => accounts.login(b),
+      '/api/signup/verify': (b) => accounts.verifySignup(b),
+      '/api/signup/resend': (b) => accounts.resendSignup(b),
+      '/api/reset/start': (b) => accounts.startReset(b),
+      '/api/reset/finish': (b) => accounts.finishReset(b),
+    };
+    if (authRoutes[p]) {
       if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'Use POST' });
       if (rateLimited(clientIp(req))) return sendJson(res, 429, { ok: false, error: 'Too many tries. Wait a few minutes.' });
       const body = await readBody(req);
-      const out = p === '/api/signup' ? await accounts.signup(body) : await accounts.login(body);
+      const out = await authRoutes[p](body);
       return sendJson(res, 200, { ok: true, ...out });
     }
     if (p === '/api/logout') {
@@ -106,12 +116,15 @@ async function handleApi(req, res, p, url) {
     return sendJson(res, 404, { ok: false, error: 'Not found' });
   } catch (err) {
     if (err instanceof AccountError) return sendJson(res, 400, { ok: false, error: err.message });
-    console.error('API error:', err);
-    return sendJson(res, 500, { ok: false, error: 'Something went wrong on the server. Try again.' });
+    console.error('API error:', err.message, err.cause ? `(${err.cause.message})` : '');
+    const dbProblem = /Upstash|Database|fetch failed|ENOTFOUND|ECONNREFUSED/i.test(err.message + (err.cause ? err.cause.message : ''));
+    return sendJson(res, 500, { ok: false, error: dbProblem
+      ? 'The account database isn\'t answering. If you run this site, check the Render logs for "Database check".'
+      : 'Something went wrong on the server. Try again.' });
   }
 }
 
-const API_PATHS = /^\/api\/(signup|login|logout|me|leaderboard|profile\/[\w-]+|artists)$/;
+const API_PATHS = /^\/api\/(signup|signup\/verify|signup\/resend|reset\/start|reset\/finish|login|logout|me|leaderboard|profile\/[\w-]+|artists)$/;
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -124,7 +137,7 @@ const server = http.createServer((req, res) => {
     // When hosted (Render sets RENDER=true), there's no Wi-Fi address to share: use the public URL.
     const lan = process.env.RENDER ? [] : lanAddresses().map((ip) => `http://${ip}:${PORT}`);
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    return res.end(JSON.stringify({ port: PORT, lan, demoOnly, accounts: store.kind }));
+    return res.end(JSON.stringify({ port: PORT, lan, demoOnly, accounts: store.kind, emailCodes: !!mailer }));
   }
 
   // The clip URL hides which song it is: only the room code and a per-round random nonce.
@@ -406,7 +419,14 @@ io.on('connection', (socket) => {
 server.listen(PORT, HOST, () => {
   const lan = lanAddresses();
   console.log('\n  🎵 Sliver is running!\n');
-  if (store.kind === 'upstash') console.log('  Accounts: saved in your Upstash database');
+  console.log(mailer ? `  Email codes: on (${mailer.kind}, from ${mailer.from})` : '  Email codes: off (sign-ups don\'t need a code; see README to turn on)');
+  if (store.kind === 'upstash') {
+    console.log('  Accounts: saved in your Upstash database');
+    store.cmd('PING').then(
+      (r) => console.log(`  Database check: ${r === 'PONG' ? 'connected ✓' : 'unexpected reply ' + JSON.stringify(r)}`),
+      (e) => console.error(`  ⚠ Database check FAILED: ${e.message}${e.cause ? ' (' + e.cause.message + ')' : ''}`),
+    );
+  }
   else if (process.env.RENDER) console.log('  ⚠ Accounts are saved on Render\'s temporary disk and will reset. Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (see README).');
   else console.log(`  Accounts: saved in ${store.file}`);
   console.log(`  On this laptop:     http://localhost:${PORT}`);
