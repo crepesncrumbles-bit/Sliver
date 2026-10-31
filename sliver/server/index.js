@@ -12,6 +12,9 @@ const { Accounts, AccountError } = require('./accounts');
 const { createMailer } = require('./mailer');
 const { searchArtists } = require('./deezer');
 const { spotifyPlays } = require('./spotifyweb');
+const { Stats } = require('./stats');
+const crypto = require('crypto');
+const ICONS = require('../public/icons.js');
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -40,6 +43,10 @@ let rooms; // set below
 const store = createStore({ dir: process.env.DATA_DIR });
 const mailer = createMailer();
 const accounts = new Accounts(store, mailer);
+const stats = new Stats(store);
+const STARTED = Date.now();
+// Admin page (/admin.html): set ADMIN_KEY on Render to turn it on.
+const ADMIN_KEY = String(process.env.ADMIN_KEY || '').trim();
 
 // ---------- small JSON API helpers ----------
 const sendJson = (res, code, obj) => {
@@ -91,6 +98,7 @@ async function handleApi(req, res, p, url) {
       if (rateLimited(clientIp(req))) return sendJson(res, 429, { ok: false, error: 'Too many tries. Wait a few minutes.' });
       const body = await readBody(req);
       const out = await authRoutes[p](body);
+      if (out && out.token && (p === '/api/signup' || p === '/api/signup/verify')) stats.bump('signups');
       return sendJson(res, 200, { ok: true, ...out });
     }
     if (p === '/api/logout') {
@@ -107,8 +115,21 @@ async function handleApi(req, res, p, url) {
       return sendJson(res, 200, { ok: true, ...out });
     }
     if (p.startsWith('/api/friends')) return await handleFriends(req, res, p);
+    if (p === '/api/admin/stats') return await handleAdmin(req, res, url);
+    if (p === '/api/me/settings') {
+      if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'Use POST' });
+      const me = await accounts.session(bearer(req));
+      if (!me) return sendJson(res, 401, { ok: false, error: 'Log in first' });
+      const body = await readBody(req);
+      const out = await accounts.updateSettings(me.id, { icon: body.icon, hidden: body.hidden });
+      refreshUserInRooms(out.user);
+      return sendJson(res, 200, { ok: true, ...out });
+    }
     const prof = p.match(/^\/api\/profile\/([\w-]{6,40})$/);
-    if (prof) return sendJson(res, 200, { ok: true, profile: await accounts.profile(prof[1]) });
+    if (prof) {
+      const viewer = await accounts.session(bearer(req));
+      return sendJson(res, 200, { ok: true, profile: await accounts.profile(prof[1], viewer && viewer.id) });
+    }
     if (p === '/api/artists') {
       if (demoOnly) return sendJson(res, 200, { ok: true, artists: [] });
       const artists = await searchArtists(url.searchParams.get('q')).catch(() => []);
@@ -125,6 +146,58 @@ async function handleApi(req, res, p, url) {
   }
 }
 
+// ---------- admin ----------
+function adminKeyOk(given) {
+  if (!ADMIN_KEY || !given) return false;
+  const a = Buffer.from(crypto.createHash('sha256').update(String(given)).digest('hex'));
+  const b = Buffer.from(crypto.createHash('sha256').update(ADMIN_KEY).digest('hex'));
+  return crypto.timingSafeEqual(a, b);
+}
+async function handleAdmin(req, res, url) {
+  if (!ADMIN_KEY) return sendJson(res, 404, { ok: false, error: 'The admin page is off. Add ADMIN_KEY in Render → Environment to turn it on.' });
+  const given = req.headers['x-admin-key'] || url.searchParams.get('key');
+  if (!adminKeyOk(given)) {
+    if (rateLimited(`admin:${clientIp(req)}`)) return sendJson(res, 429, { ok: false, error: 'Too many tries. Wait a few minutes.' });
+    return sendJson(res, 401, { ok: false, error: 'Wrong admin key' });
+  }
+  const list = [...rooms.rooms.values()];
+  const connected = (r) => [...r.players.values()].filter((p) => p.connected);
+  const live = {
+    rooms: list.length,
+    activeRooms: list.filter((r) => connected(r).length).length,
+    playing: list.filter((r) => connected(r).length && ['loading', 'round', 'reveal'].includes(r.phase)).length,
+    rankedNow: list.filter((r) => connected(r).length && r.game && r.game.ranked).length,
+    players: list.reduce((n, r) => n + connected(r).length, 0),
+    onlineAccounts: userSockets.size,
+    connections: contexts.size,
+    roomList: list.filter((r) => r.players.size).map((r) => {
+      const host = r.players.get(r.hostId);
+      return {
+        code: r.code, phase: r.phase, players: connected(r).length, total: r.players.size,
+        host: host ? host.name : null, ranked: !!(r.game ? r.game.ranked : r.settings.ranked),
+        mode: [r.settings.hard && 'Hard', r.settings.chaos && 'Chaos'].filter(Boolean).join(' + ') || 'Classic',
+        songs: r.pool.length, round: r.round ? r.round.num : null, idleMin: Math.round((Date.now() - r.lastActive) / 60000),
+      };
+    }).sort((a, b) => b.players - a.players),
+  };
+  const counts = await stats.read();
+  const board = await accounts.leaderboard('overall').catch(() => ({ entries: [] }));
+  return sendJson(res, 200, {
+    ok: true,
+    now: Date.now(),
+    server: {
+      uptimeMin: Math.round((Date.now() - STARTED) / 60000),
+      memoryMB: Math.round(process.memoryUsage().rss / 1048576),
+      node: process.version,
+      database: store.kind === 'upstash' ? 'Upstash' : 'local file',
+      emailCodes: mailer ? mailer.kind : 'off',
+    },
+    live,
+    ...counts,
+    top: board.entries.slice(0, 10).map((e) => ({ rank: e.rank, name: e.hidden ? 'Hidden player' : e.name, tag: e.tag, rating: e.value })),
+  });
+}
+
 // ---------- friends ----------
 // Who's online: userId -> Set of socket ids (one person can have several tabs or devices).
 const userSockets = new Map();
@@ -133,6 +206,16 @@ function setOnline(userId, socketId, on) {
   const set = userSockets.get(userId) || new Set();
   if (on) set.add(socketId); else set.delete(socketId);
   if (set.size) userSockets.set(userId, set); else userSockets.delete(userId);
+}
+// Account settings changed (icon, hidden): update that person in any room they're in.
+function refreshUserInRooms(user) {
+  for (const sid of userSockets.get(user.id) || []) {
+    const ctx = contexts.get(sid);
+    if (!ctx) continue;
+    ctx.setUser(user);
+    const r = ctx.room(), pl = ctx.player();
+    if (r && pl && !(r.game && r.game.ranked)) { r.setAccount(pl.id, user); r.broadcast(); }
+  }
 }
 function notifyUser(userId, event, data) {
   for (const sid of userSockets.get(userId) || []) io.to(sid).emit(event, data);
@@ -189,7 +272,7 @@ async function handleFriends(req, res, p) {
   return sendJson(res, 200, { ok: true, ...out, ...(await accounts.friends(me.id, presence)) });
 }
 
-const API_PATHS = /^\/api\/(signup|signup\/verify|signup\/resend|reset\/start|reset\/finish|login|logout|me|leaderboard|profile\/[\w-]+|artists|friends(\/(request|accept|remove|block|unblock))?)$/;
+const API_PATHS = /^\/api\/(signup|signup\/verify|signup\/resend|reset\/start|reset\/finish|login|logout|me|leaderboard|profile\/[\w-]+|artists|me\/settings|admin\/stats|friends(\/(request|accept|remove|block|unblock))?)$/;
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -248,12 +331,22 @@ async function onRanked(room, entries) {
 
 rooms = new RoomManager(io, {
   demoOnly,
+  onStat: (name) => stats.bump(name),
+  popularity: !process.env.NO_POPULARITY,
   packCacheMs: 20 * 60 * 1000,
   plays: demoOnly || process.env.NO_PLAYS ? null : spotifyPlays,
   onRanked,
 });
 
 const contexts = new Map(); // socket id -> { drop() } so a kick can detach that player's socket
+
+// Peak players (for the admin page): checked on every join and every 20 s, saved at most once a minute.
+function notePlayers() {
+  let n = 0;
+  for (const r of rooms.rooms.values()) for (const p of r.players.values()) if (p.connected) n++;
+  stats.notePlayers(n);
+}
+setInterval(notePlayers, 20 * 1000).unref();
 
 io.on('connection', (socket) => {
   let room = null;
@@ -262,6 +355,8 @@ io.on('connection', (socket) => {
   contexts.set(socket.id, {
     drop: () => { if (room) socket.leaveRoom(room.code); room = null; player = null; },
     room: () => (room && rooms.get(room.code) === room ? room : null),
+    player: () => player,
+    setUser: (u) => { if (user && u && user.id === u.id) user = { ...user, ...u }; },
   });
   const useAuth = async (token) => {
     const before = user;
@@ -283,19 +378,20 @@ io.on('connection', (socket) => {
   };
   const sendPool = () => socket.emit('pool', { version: room.poolVersion, songs: room.poolList() });
 
-  socket.on('create', async ({ name, auth } = {}, ack) => {
+  socket.on('create', async ({ name, auth, icon } = {}, ack) => {
     if (auth !== undefined) await useAuth(auth);
     if (room) socket.leaveRoom(room.code);
     room = rooms.create();
-    player = room.addPlayer(name, socket);
+    player = room.addPlayer(name, socket, icon);
     room.setAccount(player.id, user);
     socket.join(room.code);
     ack && ack({ ok: true, code: room.code, token: player.token, playerId: player.id });
     sendPool();
     room.broadcast();
+    notePlayers();
   });
 
-  socket.on('join', async ({ code, name, token, auth } = {}, ack) => {
+  socket.on('join', async ({ code, name, token, auth, icon } = {}, ack) => {
     if (auth !== undefined) await useAuth(auth);
     const r = rooms.get(code);
     if (!r) return fail(ack, new Error(`No room called ${String(code || '').toUpperCase()} — it may have closed`));
@@ -308,7 +404,9 @@ io.on('connection', (socket) => {
       if (user && host && host.userId && await accounts.isBlockedEitherWay(host.userId, user.id).catch(() => false)) {
         return fail(ack, new Error('You can\'t join this room'));
       }
-      p = r.addPlayer(name, socket);
+      p = r.addPlayer(name, socket, icon);
+    } else if (icon !== undefined) {
+      p.icon = ICONS.includes(icon) ? icon : '';
     }
     room = r; player = p;
     // Keep the account a ranked player started with, even if this device lost its login.
@@ -317,9 +415,15 @@ io.on('connection', (socket) => {
     ack && ack({ ok: true, code: room.code, token: p.token, playerId: p.id });
     sendPool();
     room.broadcast();
+    notePlayers();
   });
 
   socket.on('getPool', () => room && sendPool());
+
+  socket.on('setIcon', ({ icon } = {}, ack) => {
+    if (room && player) room.setIcon(player.id, icon);
+    ack && ack({ ok: true });
+  });
 
   // Logged in or out while connected.
   socket.on('auth', async ({ token } = {}, ack) => {
@@ -331,18 +435,19 @@ io.on('connection', (socket) => {
     ack && ack({ ok: true, user });
   });
 
-  socket.on('addPlaylist', async ({ input, packId, artistId } = {}, ack) => {
+  socket.on('addPlaylist', async ({ input, packId, artistId, artistMode } = {}, ack) => {
     if (!need(ack)) return;
     if (room.phase !== 'lobby' && room.phase !== 'results') return fail(ack, new Error('Add songs between games'));
+    if (room.settings.hostOnlySongs && room.hostId !== player.id) return fail(ack, new Error('The host turned on "Only the host adds songs"'));
     try {
-      const result = await room.addSource({ input, packId, artistId }, { name: player.name, id: player.id });
+      const result = await room.addSource({ input, packId, artistId, artistMode }, { name: player.name, id: player.id });
       ack && ack({ ok: true, ...result });
       io.to(room.code).emit('toast', { kind: 'info', text: `${player.name} added ${result.added} songs from "${result.name}"` });
       io.to(room.code).emit('pool', { version: room.poolVersion, songs: room.poolList() });
       room.broadcast();
     } catch (err) {
       const msg = /fetch failed|ENOTFOUND|EAI_AGAIN/i.test(err.message + (err.cause ? err.cause.message : ''))
-        ? 'Couldn\'t reach Spotify/Deezer. Is this laptop online? You can still play with "demo".'
+        ? 'Couldn\'t reach Spotify/Deezer/Anghami. Is this laptop online? You can still play with "demo".'
         : err.message;
       fail(ack, new Error(msg));
     }
@@ -351,6 +456,7 @@ io.on('connection', (socket) => {
   socket.on('removeSource', ({ key } = {}, ack) => {
     if (!need(ack)) return;
     try {
+      if (room.settings.hostOnlySongs && room.hostId !== player.id) throw new Error('Only the host can change songs right now');
       const { name } = room.removeSource(key, player);
       ack && ack({ ok: true });
       io.to(room.code).emit('toast', { kind: 'info', text: `${player.name} removed "${name}"` });
@@ -512,6 +618,7 @@ server.listen(PORT, HOST, () => {
   const lan = lanAddresses();
   console.log('\n  🎵 Sliver is running!\n');
   console.log(mailer ? `  Email codes: on (${mailer.kind}, from ${mailer.from})` : '  Email codes: off (sign-ups don\'t need a code; see README to turn on)');
+  console.log(ADMIN_KEY ? '  Admin page: on (/admin.html)' : '  Admin page: off (set ADMIN_KEY to turn it on)');
   if (mailer && mailer.check) {
     mailer.check().then(
       (r) => console.log(`  Email check: ${r}`),

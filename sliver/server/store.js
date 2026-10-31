@@ -71,6 +71,13 @@ class MiniRedis {
     const write = () => { this.scheduleSave(); };
     switch (cmd) {
       case 'PING': return 'PONG';
+      case 'SCAN': { // whole keyspace in one go: [cursor "0", keys]
+        const i = a.findIndex((x) => String(x).toUpperCase() === 'MATCH');
+        const pat = i >= 0 ? String(a[i + 1]) : '*';
+        const re = new RegExp('^' + pat.split('*').map((x) => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$');
+        const now = Date.now();
+        return ['0', [...this.data.entries()].filter(([k, e]) => !(e.exp && e.exp <= now) && re.test(k)).map(([k]) => k)];
+      }
       case 'GET': { const e = this.entry(a[0], 'str'); return e ? e.v : null; }
       case 'SET': {
         const [key, val, ...opts] = a;

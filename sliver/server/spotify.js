@@ -6,7 +6,7 @@
 // Only public playlists work (private ones aren't visible to the embed player).
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36';
-const MAX_TRACKS = 2000;
+const MAX_TRACKS = 500; // most songs one playlist can add
 const { extractToken, rememberToken, morePlaylistTracks } = require('./spotifyweb');
 
 function isSpotify(text) {
@@ -107,6 +107,8 @@ async function loadSpotifySource(input) {
     }
     result.truncated = more.length === 0; // Spotify wouldn't share past the first 100
   }
+  result.capped = result.tracks.length >= MAX_TRACKS && listed >= 100 && !result.truncated;
+  if (listed > MAX_TRACKS) result.capped = true;
   return result;
 }
 

@@ -19,6 +19,7 @@ const PACKS = [
   { id: 'pop', cat: 'Genres', name: 'Pop', spotify: '37i9dQZF1DXarRysLJmuju', backup: 'pop hits' },
   { id: 'rnb', cat: 'Genres', name: 'R&B', spotify: '37i9dQZF1DX4SBhb3fqCJd', backup: 'r&b hits' },
   { id: 'rock', cat: 'Genres', name: 'Rock Classics', spotify: '37i9dQZF1DWXRqgorJj26U', backup: 'rock classics' },
+  { id: 'metal', cat: 'Genres', name: 'Metal', spotify: null, backup: ['metal hits', 'heavy metal classics', 'metalcore hits'] },
   { id: 'country', cat: 'Genres', name: 'Country', spotify: '37i9dQZF1DX1lVhptIYRda', backup: 'country hits' },
   { id: 'latin', cat: 'Genres', name: 'Latin', spotify: '37i9dQZF1DX10zKzsJ2jva', backup: 'latin hits reggaeton' },
   { id: 'dance', cat: 'Genres', name: 'Dance & EDM', spotify: '37i9dQZF1DX4dyzvuaRJ0n', backup: 'dance edm hits' },
@@ -30,9 +31,11 @@ const PACKS = [
   // Arabic & Middle East (Deezer playlists found by search)
   { id: 'arabic-hits', cat: 'Arabic & Middle East', name: 'Arabic Hits', spotify: null, backup: 'arabic hits' },
   { id: 'khaleeji', cat: 'Arabic & Middle East', name: 'Khaleeji', spotify: null, backup: 'khaleeji hits' },
-  { id: 'egyptian', cat: 'Arabic & Middle East', name: 'Egyptian Pop', spotify: null, backup: 'egyptian pop hits' },
+  // Egyptian packs merge several public playlists (Arabic and English searches) for more songs.
+  { id: 'egyptian', cat: 'Arabic & Middle East', name: 'Egyptian Pop', spotify: null, backup: ['egyptian pop hits', 'اغاني مصرية', 'top egypt', 'amr diab tamer hosny hits'] },
+  { id: 'egyptian-classics', cat: 'Arabic & Middle East', name: 'Egyptian Classics', spotify: null, backup: ['egyptian classics', 'اغاني زمن الفن الجميل', 'abdel halim umm kulthum'] },
   { id: 'arabic-classics', cat: 'Arabic & Middle East', name: 'Arabic Classics (Tarab)', spotify: null, backup: 'arabic classics tarab' },
-  { id: 'arabic-rap', cat: 'Arabic & Middle East', name: 'Arabic Rap & Mahraganat', spotify: null, backup: 'arabic rap hits' },
+  { id: 'arabic-rap', cat: 'Arabic & Middle East', name: 'Arabic Rap & Mahraganat', spotify: null, backup: ['arabic rap hits', 'mahraganat', 'مهرجانات', 'egyptian rap'] },
   { id: 'maghreb', cat: 'Arabic & Middle East', name: 'Raï & Maghreb', spotify: null, backup: 'rai maghreb hits' },
   { id: 'turkish', cat: 'Arabic & Middle East', name: 'Turkish Pop', spotify: null, backup: 'turkish pop hits' },
 
@@ -58,20 +61,31 @@ const PACKS = [
     'Tame Impala', 'The Neighbourhood', 'Radiohead', 'Oasis', 'Paramore', 'Fall Out Boy',
     'Morgan Wallen', 'Zach Bryan', 'Luke Combs',
   ]),
-  ...artists('Arabic artists', [
-    'Amr Diab', 'Nancy Ajram', 'Elissa', 'Tamer Hosny', 'Mohamed Hamaki', 'Sherine', 'Haifa Wehbe',
-    'Myriam Fares', 'Ragheb Alama', 'Wael Kfoury', 'Assala', 'Kadim Al Sahir', 'Mohammed Abdu',
-    'Majid Al Mohandis', 'Rashed Al Majed', 'Hussain Al Jassmi', 'Balqees', 'Fairuz', 'Umm Kulthum',
-    'Abdel Halim Hafez', 'Wegz', 'Marwan Pablo', 'Marwan Moussa', 'Cairokee', 'Saint Levant',
-    'ElGrandeToto', 'Mohamed Ramadan', 'Ahmed Saad',
+  ...artists('Metal artists', [
+    'Metallica', 'Iron Maiden', 'Slipknot', 'System of a Down', 'Black Sabbath', 'Megadeth',
+    'Avenged Sevenfold', 'Bring Me The Horizon', 'Rammstein', 'Pantera', 'Judas Priest', 'Ghost',
+    'Korn', 'Disturbed', 'Tool', 'Gojira', 'Sleep Token', 'Motörhead',
   ]),
+  // Egyptian and Arabic artists also pull songs from Apple's catalogue (Deezer misses many).
+  ...artists('Egyptian artists', [
+    'Amr Diab', 'Tamer Hosny', 'Mohamed Hamaki', 'Sherine', 'Angham', 'Mohamed Mounir', 'Ruby',
+    'Hany Shaker', 'Mohamed Fouad', 'Ehab Tawfik', 'Hesham Abbas', 'Bahaa Sultan', 'Ahmed Saad',
+    'Hamza Namira', 'Mohamed Mohie', 'Hakim', 'Amr Mostafa', 'Mohamed Ramadan', 'Wegz', 'Marwan Pablo',
+    'Marwan Moussa', 'Abyusif', 'Cairokee', 'Wust El Balad', 'Massar Egbari', 'Hassan Shakosh',
+    'Essam Sasa', 'Ahmed Sheba', 'Umm Kulthum', 'Abdel Halim Hafez', 'Mohamed Abdel Wahab', 'Warda',
+  ], { arabic: true }),
+  ...artists('Arabic artists', [
+    'Nancy Ajram', 'Elissa', 'Haifa Wehbe', 'Myriam Fares', 'Ragheb Alama', 'Wael Kfoury', 'Assala',
+    'Kadim Al Sahir', 'Mohammed Abdu', 'Majid Al Mohandis', 'Rashed Al Majed', 'Hussain Al Jassmi',
+    'Balqees', 'Fairuz', 'Saint Levant', 'ElGrandeToto', 'Saad Lamjarred', 'Nawal Al Zoghbi',
+  ], { arabic: true }),
   ...artists('K-pop artists', ['BTS', 'BLACKPINK', 'Stray Kids', 'NewJeans', 'TWICE', 'Jungkook', 'ROSÉ', 'aespa']),
 ];
 
-function artists(cat, names) {
+function artists(cat, names, extra = {}) {
   return names.map((artist) => ({
     id: 'artist-' + artist.toLowerCase().normalize('NFKD').replace(/\p{M}/gu, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
-    cat, name: artist, artist,
+    cat, name: artist, artist, ...extra,
   }));
 }
 
@@ -82,7 +96,7 @@ for (const p of PACKS) p.ranked = !p.artist;
 const RANKED = PACKS.filter((p) => p.ranked);
 
 function publicPacks() {
-  return PACKS.map(({ id, cat, name, ranked }) => ({ id, cat, name, ranked }));
+  return PACKS.map(({ id, cat, name, ranked, artist }) => ({ id, cat, name, ranked, ...(artist ? { artist: true } : {}) }));
 }
 
 module.exports = { PACKS, RANKED, byId, publicPacks };

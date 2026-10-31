@@ -8,6 +8,8 @@
 
 const crypto = require('crypto');
 const packs = require('./packs');
+const ICONS = require('../public/icons.js');
+const cleanIcon = (i) => (ICONS.includes(i) ? i : '');
 
 const SESSION_DAYS = 60;
 const CODE_MINUTES = 15;
@@ -92,7 +94,27 @@ class Accounts {
 
   publicUser(u) {
     if (!u || !u.id) return null;
-    return { id: u.id, name: u.name, tag: tagFor(u.id), rating: int(u.rating), games: int(u.games) };
+    return { id: u.id, name: u.name, tag: tagFor(u.id), rating: int(u.rating), games: int(u.games), icon: cleanIcon(u.icon) };
+  }
+
+  // Your own account settings: icon (one of ICONS, or '' for your initial) and
+  // hidden (others can't see your stats, leaderboard name or account in rooms; friends still can).
+  async updateSettings(userId, { icon, hidden } = {}) {
+    const ops = [];
+    if (icon !== undefined) {
+      if (icon && !ICONS.includes(icon)) throw new AccountError('Pick one of the icons');
+      ops.push(['HSET', K.user(userId), 'icon', icon || '']);
+    }
+    if (hidden !== undefined) ops.push(['HSET', K.user(userId), 'hidden', hidden ? 1 : 0]);
+    if (ops.length) await this.store.pipeline(ops);
+    const u = await this.getUser(userId);
+    return { user: { ...this.publicUser(u), email: u.email, hidden: !!int(u.hidden) } };
+  }
+
+  async friendIds(userId) {
+    if (!userId) return new Set();
+    const fr = toObj(await this.store.cmd('HGETALL', K.fr(userId)));
+    return new Set(Object.keys(fr).filter((k) => fr[k] === 'friend'));
   }
 
   async getUser(id) {
@@ -122,7 +144,7 @@ class Accounts {
       'id', id, 'name', name, 'email', email, 'salt', salt, 'hash', hash, 'created', Date.now(), 'pv', 0,
       'games', 0, 'songs', 0, 'correct', 0, 'firstTry', 0, 'heard10', 0, 'points', 0, 'best', 0, 'bestPack', '', 'rating', 0);
     const token = await this.newSession(id, 0);
-    return { token, user: { ...this.publicUser({ id, name, rating: 0, games: 0 }), email } };
+    return { token, user: { ...this.publicUser({ id, name, rating: 0, games: 0 }), email, hidden: false } };
   }
 
   // Throttle: one code per email every RESEND_SECONDS.
@@ -225,7 +247,7 @@ class Accounts {
     const pv = int(u.pv) + 1;
     await this.store.pipeline([['HSET', K.user(id), 'salt', salt, 'hash', hash, 'pv', pv], ['DEL', K.reset(email)]]);
     const token = await this.newSession(id, pv);
-    return { token, user: { ...this.publicUser(u), email: u.email } };
+    return { token, user: { ...this.publicUser(u), email: u.email, hidden: !!int(u.hidden) } };
   }
 
   async login({ email, password } = {}) {
@@ -243,7 +265,7 @@ class Accounts {
       throw new AccountError('Wrong email or password');
     }
     const token = await this.newSession(u.id, int(u.pv));
-    return { token, user: { ...this.publicUser(u), email: u.email } };
+    return { token, user: { ...this.publicUser(u), email: u.email, hidden: !!int(u.hidden) } };
   }
 
   async session(token) {
@@ -254,7 +276,7 @@ class Accounts {
     const u = await this.getUser(id);
     if (!u) return null;
     if (int(pv) !== int(u.pv)) return null; // password changed since this login
-    return { ...this.publicUser(u), email: u.email };
+    return { ...this.publicUser(u), email: u.email, hidden: !!int(u.hidden) };
   }
 
   async logout(token) {
@@ -319,11 +341,17 @@ class Accounts {
     const flat = await this.store.cmd('ZREVRANGE', K.board(board), 0, TOP_N - 1, 'WITHSCORES');
     const rows = [];
     for (let i = 0; i < flat.length; i += 2) rows.push({ id: flat[i], value: Number(flat[i + 1]) });
-    const names = rows.length ? await this.store.pipeline(rows.map((r) => ['HMGET', K.user(r.id), 'name', 'rating'])) : [];
-    const entries = rows.map((r, i) => ({
-      rank: i + 1, id: r.id, name: (names[i] && names[i][0]) || 'Player', tag: tagFor(r.id),
-      value: r.value, pp: board === 'overall' ? r.value : ppFor(r.value), rating: int(names[i] && names[i][1]),
-    }));
+    const names = rows.length ? await this.store.pipeline(rows.map((r) => ['HMGET', K.user(r.id), 'name', 'rating', 'icon', 'hidden'])) : [];
+    const friends = await this.friendIds(meId);
+    const entries = rows.map((r, i) => {
+      const [name, rating, icon, hidden] = names[i] || [];
+      const masked = int(hidden) && r.id !== meId && !friends.has(r.id); // hidden account: no name, no link
+      return {
+        rank: i + 1, id: masked ? null : r.id, name: masked ? 'Hidden player' : name || 'Player', tag: masked ? '' : tagFor(r.id),
+        icon: masked ? '' : cleanIcon(icon), hidden: !!masked,
+        value: r.value, pp: board === 'overall' ? r.value : ppFor(r.value), rating: int(rating),
+      };
+    });
     let me = null;
     if (meId) {
       const [rank, value] = await this.store.pipeline([['ZREVRANK', K.board(board), meId], ['ZSCORE', K.board(board), meId]]);
@@ -334,9 +362,12 @@ class Accounts {
     return { board: info, entries, me, total, boards: this.boards() };
   }
 
-  async profile(id) {
+  async profile(id, viewerId = null) {
     const u = await this.getUser(id);
     if (!u) throw new AccountError('No player with that id');
+    if (int(u.hidden) && viewerId !== id && !(await this.areFriends(viewerId, id))) {
+      throw new AccountError(`${u.name} keeps their stats private`);
+    }
     const bests = toObj(await this.store.cmd('HGETALL', K.best(id)));
     const packIds = Object.keys(bests).filter((p) => packs.byId.has(p));
     const ranks = await this.store.pipeline([
@@ -354,7 +385,7 @@ class Accounts {
       .filter(Boolean).map((r) => ({ ...r, packName: (packs.byId.get(r.packId) || {}).name || r.packId }));
     const games = int(u.games), songs = int(u.songs), correct = int(u.correct);
     return {
-      id: u.id, name: u.name, tag: tagFor(u.id), created: int(u.created),
+      id: u.id, name: u.name, tag: tagFor(u.id), icon: cleanIcon(u.icon), hidden: !!int(u.hidden), created: int(u.created),
       rating: int(u.rating), globalRank: gRank === null ? null : int(gRank) + 1, players: int(gTotal),
       stats: {
         games, songs, correct,
@@ -460,8 +491,8 @@ class Accounts {
     const [frFlat, blkFlat] = await this.store.pipeline([['HGETALL', K.fr(me)], ['HGETALL', K.blk(me)]]);
     const fr = toObj(frFlat), blk = toObj(blkFlat);
     const ids = [...new Set([...Object.keys(fr), ...Object.keys(blk)])];
-    const info = ids.length ? await this.store.pipeline(ids.map((x) => ['HMGET', K.user(x), 'name', 'rating'])) : [];
-    const who = new Map(ids.map((x, i) => [x, { id: x, name: (info[i] && info[i][0]) || null, tag: tagFor(x), rating: int(info[i] && info[i][1]) }]));
+    const info = ids.length ? await this.store.pipeline(ids.map((x) => ['HMGET', K.user(x), 'name', 'rating', 'icon'])) : [];
+    const who = new Map(ids.map((x, i) => [x, { id: x, name: (info[i] && info[i][0]) || null, tag: tagFor(x), rating: int(info[i] && info[i][1]), icon: cleanIcon(info[i] && info[i][2]) }]));
     const pick = (state) => Object.keys(fr).filter((x) => fr[x] === state && who.get(x).name).map((x) => who.get(x));
     const friends = pick('friend').map((f) => ({ ...f, ...online(f.id) }))
       .sort((a, b) => (b.online - a.online) || a.name.localeCompare(b.name));
@@ -475,4 +506,4 @@ class Accounts {
   }
 }
 
-module.exports = { Accounts, AccountError, ppFor, ratingFrom, tagFor };
+module.exports = { Accounts, AccountError, ppFor, ratingFrom, tagFor, ICONS };

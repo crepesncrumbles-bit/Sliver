@@ -3,7 +3,7 @@
   const $ = (sel) => document.querySelector(sel);
   const MIN_LEN = 0.1, MAX_LEN = 30; // Songless: 0.1 s up to the whole 30 s clip
   const RATIO = MAX_LEN / MIN_LEN;   // the points curve always uses the full 30 s
-  let maxLen = MAX_LEN;              // longest clip this game allows (host setting: 15, 20 or 30 s)
+  let maxLen = 15;                   // longest clip you can play while guessing (fixed at 15 s)
 
   // Small WebSocket wrapper with acks + auto-reconnect (matches server/realtime.js).
   function createSocket() {
@@ -50,6 +50,8 @@
   let clockSkew = 0; // serverNow - Date.now()
   let lanBase = null;
   let friendsData = null; // { code, friends, incoming, outgoing, blocked } when logged in
+  // Artists: every song, or just their top 20. Remembered on this device.
+  let artistMode = (() => { try { return localStorage.getItem('sliver.artistMode') === 'top' ? 'top' : 'all'; } catch { return 'all'; } })();
 
   // ---------- helpers ----------
   function loadSession() {
@@ -79,6 +81,14 @@
   };
   const fmtPlays = (n) => n >= 1e9 ? `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n);
   const fmtLen = (l) => (l < 1 ? l.toFixed(1) : l < 10 ? l.toFixed(1) : Math.round(l)) + 's';
+
+  // ---------- player icons ----------
+  const ICONS = window.SliverIcons || [];
+  let myIcon = (() => { try { const i = localStorage.getItem('sliver.icon'); return ICONS.includes(i) ? i : ''; } catch { return ''; } })();
+  // An icon if they picked one, else the first letter of their name.
+  const avatar = (icon, name) => (icon && ICONS.includes(icon) ? esc(icon) : esc(String(name || '?').trim().charAt(0).toUpperCase() || '?'));
+  const avClass = (icon) => (icon && ICONS.includes(icon) ? ' emoji' : '');
+  const iconPrefix = (icon) => (icon && ICONS.includes(icon) ? `<span class="chip-icon" aria-hidden="true">${esc(icon)}</span>` : '');
 
   function toast(text, kind = 'info', ms = 3800) {
     const el = document.createElement('div');
@@ -112,7 +122,7 @@
 
   $('#btn-create').onclick = async () => {
     const name = getName(); if (!name) return;
-    const res = await emit('create', { name, auth: authToken() });
+    const res = await emit('create', { name, auth: authToken(), icon: myIcon });
     if (!res.ok) return toast(res.error, 'error');
     joined(res);
   };
@@ -121,7 +131,7 @@
     const name = getName(); if (!name) return;
     const code = $('#join-code').value.trim().toUpperCase();
     if (code.length !== 4) return toast('Room codes are 4 letters', 'error');
-    const res = await emit('join', { code, name, auth: authToken() });
+    const res = await emit('join', { code, name, auth: authToken(), icon: myIcon });
     if (!res.ok) return toast(res.error, 'error');
     joined(res);
   }
@@ -130,13 +140,36 @@
 
   function joined(res) {
     saveSession({ code: res.code, token: res.token });
-    history.replaceState(null, '', `/?room=${res.code}`);
+    syncUrl();
   }
+  // The room code is hidden until you tap the eye (handy when streaming). While hidden it's
+  // also kept out of the address bar; Copy invite link still works.
+  let showCode = (() => { try { return localStorage.getItem('sliver.showCode') === '1'; } catch { return false; } })();
+  function syncUrl() {
+    const code = session && session.code;
+    history.replaceState(null, '', code && showCode ? `/?room=${code}` : '/');
+  }
+  function renderCode() {
+    if (!state) return;
+    const el = $('#lobby-code');
+    el.textContent = showCode ? state.code : '••••';
+    el.classList.toggle('masked', !showCode);
+    const eye = $('#btn-code-eye');
+    eye.setAttribute('aria-pressed', String(showCode));
+    eye.setAttribute('aria-label', showCode ? 'Hide room code' : 'Show room code');
+    eye.title = showCode ? 'Hide room code' : 'Show room code';
+  }
+  $('#btn-code-eye').onclick = () => {
+    showCode = !showCode;
+    try { localStorage.setItem('sliver.showCode', showCode ? '1' : '0'); } catch {}
+    renderCode();
+    syncUrl();
+  };
 
   async function tryRejoin() {
     const want = (params.get('room') || '').toUpperCase();
     if (session && (!want || session.code === want)) {
-      const res = await emit('join', { code: session.code, token: session.token, name: savedName(), auth: authToken() });
+      const res = await emit('join', { code: session.code, token: session.token, name: savedName(), auth: authToken(), icon: myIcon });
       if (res.ok) return joined(res);
       saveSession(null);
       if (want) toast(res.error, 'error');
@@ -147,7 +180,7 @@
   socket.on('connect', () => {
     if (authToken()) emit('auth', { token: authToken() }).then(() => refreshFriends());
     if (!state) tryRejoin();
-    else if (session) emit('join', { code: session.code, token: session.token, name: savedName(), auth: authToken() });
+    else if (session) emit('join', { code: session.code, token: session.token, name: savedName(), auth: authToken(), icon: myIcon });
   });
   socket.on('disconnect', () => toast('Connection lost — reconnecting…', 'error', 2500));
   // Keep-alive: free hosts (Render) put the server to sleep after 15 minutes without messages,
@@ -197,7 +230,7 @@
     const el = document.createElement('div');
     el.className = 'pop-msg';
     el.style.background = POP_COLORS[popN++ % POP_COLORS.length];
-    el.innerHTML = `<span class="dot">${g.first ? '★' : '♪'}</span><span><b>${esc(g.name)}</b> got the song${g.first ? ' first' : ''}</span>${g.points ? `<span class="pts">+${fmt(g.points)}</span>` : ''}`;
+    el.innerHTML = `<span class="dot">${g.first ? '★' : '♪'}</span><span>${iconPrefix(g.icon)}<b>${esc(g.name)}</b> got the song${g.first ? ' first' : ''}</span>${g.points ? `<span class="pts">+${fmt(g.points)}</span>` : ''}`;
     const box = $('#gotit');
     box.appendChild(el);
     while (box.children.length > 3) box.firstChild.remove();
@@ -208,7 +241,9 @@
   function renderThemes() {
     const T = window.SliverThemes;
     const cur = T.current();
-    $('#theme-grid').innerHTML = T.available().map((t) => {
+    const custom = T.savedCustom();
+    const list = T.available().concat(custom ? [T.buildCustom(custom)] : []);
+    $('#theme-grid').innerHTML = list.map((t) => {
       const v = t.vars;
       return `<button class="theme${t.id === cur ? ' on' : ''}" data-theme-id="${t.id}" role="radio" aria-checked="${t.id === cur}">
         <span class="sw" style="background:${v['--page']}">
@@ -223,15 +258,91 @@
       </button>`;
     }).join('');
   }
-  function openSettings() { renderThemes(); applyVolume(); openSheet('settings'); $('#btn-settings-close').focus(); }
+  function openSettings(focusIcons) {
+    renderThemes(); renderIconGrid(); renderCustomTheme(); applyVolume();
+    $('#decor-toggle').checked = window.SliverDecor ? window.SliverDecor.enabled() : true;
+    openSheet('settings');
+    if (focusIcons === true) $('#icon-title').scrollIntoView({ block: 'start' });
+    else $('#btn-settings-close').focus();
+  }
   function closeSettings() { closeSheet('settings'); }
-  $('#btn-settings').onclick = openSettings;
+  $('#btn-settings').onclick = () => openSettings();
   $('#btn-settings-close').onclick = closeSettings;
   $('#btn-settings-done').onclick = closeSettings;
   $('#settings').addEventListener('click', (e) => {
     const t = e.target.closest('[data-theme-id]');
-    if (t) { window.SliverThemes.set(t.dataset.themeId); renderThemes(); }
+    if (t) { window.SliverThemes.set(t.dataset.themeId); renderThemes(); renderCustomTheme(); }
+    const ic = e.target.closest('[data-icon]');
+    if (ic) setMyIcon(ic.dataset.icon);
   });
+
+  // ---------- your icon ----------
+  function renderIconGrid() {
+    const name = ($('#name').value.trim() || (auth && auth.user && auth.user.name) || '?');
+    const opts = [''].concat(ICONS);
+    $('#icon-grid').innerHTML = opts.map((i) => `<button type="button" data-icon="${esc(i)}" role="radio" aria-checked="${i === myIcon}" aria-label="${i ? esc(i) : 'Your initial'}" class="${avClass(i).trim()}">${avatar(i, name)}</button>`).join('');
+  }
+  function renderMyIconButton() {
+    const b = $('#btn-my-icon');
+    b.innerHTML = avatar(myIcon, $('#name').value.trim() || (auth && auth.user && auth.user.name) || '?');
+    b.classList.toggle('emoji', !!myIcon);
+  }
+  async function setMyIcon(icon, { fromAccount = false } = {}) {
+    myIcon = ICONS.includes(icon) ? icon : '';
+    try { localStorage.setItem('sliver.icon', myIcon); } catch {}
+    renderIconGrid(); renderMyIconButton();
+    if (state && session) emit('setIcon', { icon: myIcon });
+    if (!fromAccount && auth && auth.user) {
+      const res = await api('/api/me/settings', { method: 'POST', body: { icon: myIcon } });
+      if (res.ok && res.user) saveAuth({ token: auth.token, user: res.user });
+    } else renderAccount();
+  }
+  $('#btn-my-icon').onclick = () => openSettings(true);
+  $('#name').addEventListener('input', () => { if (!myIcon) renderMyIconButton(); });
+
+  // ---------- holiday decorations ----------
+  $('#decor-toggle').onchange = (e) => window.SliverDecor && window.SliverDecor.setEnabled(e.target.checked);
+
+  // ---------- make your own theme ----------
+  const CT = { page: '#ct-page', card: '#ct-card', accent: '#ct-accent', pop: '#ct-pop' };
+  function customColors() {
+    const T = window.SliverThemes;
+    return T.savedCustom() || T.DEFAULT_CUSTOM;
+  }
+  function renderCustomTheme() {
+    const T = window.SliverThemes;
+    const c = customColors();
+    for (const [k, sel] of Object.entries(CT)) $(sel).value = c[k].toLowerCase();
+    $('#ct-code').textContent = T.encode(c);
+    // Gentle warning when text would be hard to read.
+    const warn = [];
+    if (T.contrast(c.card, c.page) < 1.25) warn.push('the cards blend into the background');
+    if (T.contrast(c.accent, c.card) < 1.5) warn.push('buttons are hard to see on the cards');
+    $('#ct-warn').hidden = !warn.length;
+    $('#ct-warn').textContent = warn.length ? `Heads up: ${warn.join(', and ')}.` : '';
+  }
+  for (const [k, sel] of Object.entries(CT)) {
+    $(sel).addEventListener('input', (e) => {
+      const c = { ...customColors(), [k]: e.target.value.toUpperCase() };
+      window.SliverThemes.setCustom(c); // live preview: switches to "My theme" as you pick
+      renderCustomTheme();
+      renderThemes();
+    });
+  }
+  $('#ct-copy').onclick = async () => {
+    const code = $('#ct-code').textContent;
+    try { await navigator.clipboard.writeText(code); toast('Theme code copied. Send it to a friend!', 'good'); }
+    catch { prompt('Copy this theme code:', code); }
+  };
+  $('#ct-import').onsubmit = (e) => {
+    e.preventDefault();
+    const c = window.SliverThemes.decode($('#ct-import-code').value);
+    if (!c) return toast('That theme code doesn\'t look right. Check for typos.', 'error');
+    window.SliverThemes.setCustom(c);
+    $('#ct-import-code').value = '';
+    renderCustomTheme(); renderThemes();
+    toast('Theme loaded. It\'s now "My theme".', 'good');
+  };
 
   // ---------- end game (host) ----------
   // Same two-tap confirm as Leave room. Sends everyone back to the lobby.
@@ -319,14 +430,14 @@
 
   function renderLobby() {
     show('lobby');
-    $('#lobby-code').textContent = state.code;
+    renderCode();
     const isHost = state.hostId === state.meId;
     const AV = ['#FFD43B', '#FF9EC7', '#8FF0CF', '#AFC0FF', '#FFC48A', '#D7B8FF'];
     $('#lobby-players').innerHTML = state.players.map((p, i) => {
       const canKick = isHost && p.id !== state.meId;
       const armed = armedKick === p.id;
       return `<li class="${p.connected ? '' : 'offline'}${armed ? ' arm' : ''}">
-        <span class="av" style="background:${AV[i % AV.length]}">${esc((p.name || '?')[0].toUpperCase())}</span>
+        <span class="av${avClass(p.icon)}" style="background:${AV[i % AV.length]}">${avatar(p.icon, p.name)}</span>
         ${armed ? `Remove ${esc(p.name)}?` : `${esc(p.name)}${p.id === state.meId ? ' (you)' : ''}`}
         ${p.id === state.hostId ? '<span class="host-tag">host</span>' : ''}
         ${state.settings.ranked && !p.loggedIn ? '<span class="guest-tag">not logged in</span>' : ''}
@@ -344,6 +455,11 @@
       </li>`;
     }).join('');
     $('#btn-clear').hidden = !isHost || state.sources.length < 2;
+    const lockedOut = !!state.settings.hostOnlySongs && !isHost;
+    $('#song-adding').hidden = lockedOut;
+    $('#host-picks').hidden = !lockedOut;
+    $('#host-only-songs').checked = !!state.settings.hostOnlySongs;
+    document.querySelectorAll('[data-amode]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.amode === artistMode)));
 
     // Built-in packs, grouped by category. Tap to add; tap again to remove.
     const added = new Map(state.sources.filter((x) => x.packId).map((x) => [x.packId, x]));
@@ -391,7 +507,7 @@
       el.setAttribute('aria-pressed', on);
     });
     $('#mods-title').textContent = ranked ? 'Mods' : 'Mode';
-    $('#mode-mult').textContent = st.hard && st.chaos ? 'Hard + Chaos together: 1.875× points'
+    $('#mode-mult').textContent = st.hard && st.chaos ? 'Hard + Chaos together: 2× points'
       : st.hard || st.chaos ? 'Tap Classic to turn it off, or add the other one too.' : 'Hard and Chaos can be on at the same time.';
     const modeName = st.hard && st.chaos ? 'Hard + Chaos' : st.hard ? 'Hard' : st.chaos ? 'Chaos' : 'Classic';
     const packName = (id) => ((state.packs || []).find((x) => x.id === id) || {}).name || 'no genre picked yet';
@@ -401,23 +517,17 @@
     const me = state.players.find((p) => p.id === state.meId);
     $('#guest-login').hidden = !(ranked && me && !me.loggedIn);
 
-    const rSel = $('#set-rounds'), tSel = $('#set-time'), gSel = $('#set-guesses'), mSel = $('#set-maxlen'), lSel = $('#set-listen');
+    const rSel = $('#set-rounds'), tSel = $('#set-time'), gSel = $('#set-guesses');
     if (!rSel.options.length) {
       [3, 5, 7, 10, 15, 20].forEach((n) => rSel.add(new Option(`${n} songs`, n)));
       tSel.add(new Option('No time limit', 0));
       [30, 45, 60, 90, 120, 180].forEach((n) => tSel.add(new Option(n < 120 ? `${n} seconds` : `${n / 60} minutes`, n)));
       gSel.add(new Option('Unlimited', 0));
       [1, 3, 5, 10].forEach((n) => gSel.add(new Option(`${n} guess${n === 1 ? '' : 'es'}`, n)));
-      [15, 20].forEach((n) => mSel.add(new Option(`${n} seconds`, n)));
-      mSel.add(new Option('30 seconds (whole clip)', 30));
-      [15, 20].forEach((n) => lSel.add(new Option(`${n} seconds`, n)));
-      lSel.add(new Option('30 seconds (whole clip)', 30));
     }
     rSel.value = st.rounds;
     tSel.value = st.roundTime;
     gSel.value = st.maxGuesses;
-    mSel.value = st.maxLen;
-    lSel.value = st.listenLen;
 
     const start = $('#btn-start');
     const warn = $('#ranked-warn');
@@ -465,14 +575,24 @@
     hideArtistSug();
     const btn = $('#btn-add');
     btn.disabled = true; btn.textContent = 'Loading…';
-    const res = await emit('addPlaylist', { input, artistId });
+    const res = await emit('addPlaylist', { input, artistId, artistMode });
     btn.disabled = false; btn.textContent = 'Add';
     if (!res.ok) return toast(res.error, 'error', 6000);
     $('#playlist-input').value = '';
     hideArtistSug();
     if (res.added === 0) toast('Those songs were already in the game', 'info');
+    else if (res.capped) toast(`Playlists add up to 500 songs. Added the first ${fmt(res.added)}.`, 'info', 6000);
     else if (res.truncated) toast('Spotify only shared the first 100 songs of that playlist. The Deezer version of it will load all of them.', 'info', 7000);
+    else if (res.short) toast(`Anghami only showed the first ${fmt(res.added)} songs of that playlist.`, 'info', 6000);
   }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-amode]');
+    if (!b) return;
+    artistMode = b.dataset.amode === 'top' ? 'top' : 'all';
+    try { localStorage.setItem('sliver.artistMode', artistMode); } catch {}
+    document.querySelectorAll('[data-amode]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.amode === artistMode)));
+  });
+  $('#host-only-songs').onchange = (e) => emit('settings', { hostOnlySongs: e.target.checked });
   $('#btn-clear').onclick = () => emit('clearPool');
   const busyPacks = new Set();
   const openCats = new Set();
@@ -500,7 +620,8 @@
         return;
       }
       busyPacks.add(id); pk.classList.add('busy');
-      const res = await emit('addPlaylist', { packId: id });
+      const isArtist = ((state.packs || []).find((x) => x.id === id) || {}).artist;
+      const res = await emit('addPlaylist', isArtist ? { packId: id, artistMode } : { packId: id });
       busyPacks.delete(id);
       if (!res.ok) toast(res.error, 'error', 6000);
       if (state.phase === 'lobby') renderLobby();
@@ -515,8 +636,6 @@
   $('#set-rounds').onchange = (e) => emit('settings', { rounds: e.target.value });
   $('#set-time').onchange = (e) => emit('settings', { roundTime: e.target.value });
   $('#set-guesses').onchange = (e) => emit('settings', { maxGuesses: e.target.value });
-  $('#set-maxlen').onchange = (e) => emit('settings', { maxLen: e.target.value });
-  $('#set-listen').onchange = (e) => emit('settings', { listenLen: e.target.value });
   $('#btn-start').onclick = async () => {
     unlockAudio();
     const res = await emit('start');
@@ -708,8 +827,8 @@
     startClip(r.clipUrl, override ? lenOverride : currentLen(), 'round');
   }
 
-  // How long the song plays after you've guessed (host setting: 15, 20 or 30 s).
-  const listenLen = () => (state && ((state.round && state.round.listenLen) || (state.reveal && state.reveal.listenLen) || (state.game && state.game.listenLen))) || 15;
+  // How long the song plays after you've guessed (fixed at 30 s).
+  const listenLen = () => (state && ((state.round && state.round.listenLen) || (state.reveal && state.reveal.listenLen) || (state.game && state.game.listenLen))) || 30;
   function toggleListen() {
     if (playing && playing.mode === 'listen') return stopAudio();
     startClip(clip.url, listenLen(), 'listen');
@@ -821,7 +940,7 @@
   const setLen = (l) => { selectedLen = Math.round(Math.max(MIN_LEN, Math.min(maxLen, l)) * 10) / 10; scrubber.value = sliderFromLen(selectedLen); };
 
   function buildTicks() {
-    const marks = [0.1, 0.5, 1, 3, 10, 30].filter((m) => m < maxLen).concat(maxLen); // Songless's labels
+    const marks = [0.1, 0.5, 1, 3, 10, 30].filter((m) => m < maxLen / 1.8).concat(maxLen); // Songless's labels (none crowding the end)
     $('#ticks').innerHTML = [...new Set(marks)].map((m) => `<span style="left:${(sliderFromLen(m) / 10).toFixed(2)}%">${m}s</span>`).join('');
   }
   buildTicks();
@@ -862,12 +981,15 @@
   scrubber.addEventListener('input', () => { if (playing) stopAudio(); selectedLen = lenFromSlider(Number(scrubber.value)); updateReadout(); });
   $('#btn-play').onclick = () => playClip();
   // +1s: one more second than the longest you've heard (or the slider, if that's further).
-  $('#btn-plus').onclick = () => {
+  // +1s / +0.1s: that much more than the longest you've heard (or the slider, if that's further).
+  function plus(step) {
     if (myHeard >= maxLen) return;
-    setLen(Math.max(currentLen(), myHeard) + 1);
+    setLen(Math.round((Math.max(currentLen(), myHeard) + step) * 10) / 10);
     updateReadout();
     playClip(selectedLen);
-  };
+  }
+  $('#btn-plus').onclick = () => plus(1);
+  $('#btn-plus-tenth').onclick = () => plus(0.1);
 
   function renderRound() {
     show('round');
@@ -935,7 +1057,7 @@
     const amHost = state.hostId === state.meId;
     $('#round-players').innerHTML = state.players.filter((p) => p.connected).map((p) => {
       const icon = { correct: '✓ ', out: '', 'gave-up': '', timeout: '' }[p.roundStatus] ?? '';
-      const inner = `${icon}${esc(p.name)}${p.id === state.hostId ? ' <small>host</small>' : ''}`;
+      const inner = `${icon}${iconPrefix(p.icon)}${esc(p.name)}${p.id === state.hostId ? ' <small>host</small>' : ''}`;
       return `<li class="${p.roundStatus || ''}">${amHost && p.id !== state.meId ? `<button data-player-menu="${esc(p.id)}">${inner}</button>` : inner}</li>`;
     }).join('');
 
@@ -989,7 +1111,9 @@
     const artistGroups = [...artists.values()]
       .sort((x, y) => (y.starts - x.starts) || (y.songs.length - x.songs.length) || x.name.localeCompare(y.name))
       .slice(0, 3);
-    for (const g of artistGroups) g.songs.sort((x, y) => x.title.localeCompare(y.title));
+    // Most popular first (pop = popularity 0–100; unknown sorts last), then A–Z.
+    const byPop = (x, y) => ((y.pop ?? -1) - (x.pop ?? -1)) || x.title.localeCompare(y.title);
+    for (const g of artistGroups) g.songs.sort(byPop);
     const inGroups = new Set(artistGroups.flatMap((g) => g.songs.map((s) => s.id)));
 
     // Title matches (every typed word appears somewhere, and at least one is in the title).
@@ -998,9 +1122,9 @@
       if (inGroups.has(s.id)) continue;
       const t = norm(s.title), hay = `${t} ${norm(s.artist)}`;
       if (!words.every((w) => hay.includes(w)) || !words.some((w) => t.includes(w))) continue;
-      scored.push([(t.startsWith(words[0]) ? 0 : 2) + (t.includes(qn) ? 0 : 1), s]);
+      scored.push([t === qn ? 0 : 1, s]); // a title typed in full stays on top
     }
-    scored.sort((x, y) => x[0] - y[0] || x[1].title.localeCompare(y[1].title));
+    scored.sort((x, y) => x[0] - y[0] || byPop(x[1], y[1]));
     const titles = scored.slice(0, artistGroups.length ? 6 : 30).map((x) => x[1]);
 
     sections = [];
@@ -1112,7 +1236,7 @@
         ? `Heard ${fmtLen(Math.max(0.1, r.heard))}${r.guesses > 1 ? `, ${r.guesses - 1} wrong` : ''}${r.bonus ? ', first to get it' : ''}`
         : label[r.status] || '';
       return `<li>
-        <div><div class="r-name">${esc(r.name)}</div><div class="r-sub">${how}. Total ${fmt(totals[r.id])}</div></div>
+        <div><div class="r-name">${iconPrefix(r.icon)}${esc(r.name)}</div><div class="r-sub">${how}. Total ${fmt(totals[r.id])}</div></div>
         <span class="r-pts ${r.points ? '' : 'zero'}">${r.bonus ? '<i class="first-tag">1st</i>' : ''}+${fmt(r.points)}</span>
       </li>`;
     }).join('');
@@ -1139,9 +1263,9 @@
     const ps = [...state.players].sort((a, b) => b.score - a.score);
     const top = ps[0];
     const tied = ps.filter((p) => p.score === top.score);
-    $('#winner').textContent = tied.length > 1 ? `${tied.map((p) => p.name).join(' & ')} tie` : top.name;
+    $('#winner').innerHTML = tied.length > 1 ? `${tied.map((p) => iconPrefix(p.icon) + esc(p.name)).join(' & ')} tie` : iconPrefix(top.icon) + esc(top.name);
     $('#final-board').innerHTML = ps.map((p) =>
-      `<li><span class="b-name">${esc(p.name)}</span><span class="b-score">${fmt(p.score)}</span></li>`).join('');
+      `<li><span class="b-name">${iconPrefix(p.icon)}${esc(p.name)}</span><span class="b-score">${fmt(p.score)}</span></li>`).join('');
     renderRankedResult();
   }
   $('#btn-again').onclick = () => { unlockAudio(); emit('start').then((r) => !r.ok && toast(r.error, 'error')); };
@@ -1231,7 +1355,7 @@
   async function refreshMe() {
     if (!authToken()) return renderAccount();
     const res = await api('/api/me');
-    if (res.ok && res.user) saveAuth({ token: auth.token, user: res.user });
+    if (res.ok && res.user) { saveAuth({ token: auth.token, user: res.user }); syncIconWithAccount(res.user); }
     else if (res.ok) { saveAuth(null); toast('You were logged out. Log in again for ranked.', 'info'); }
     else renderAccount();
   }
@@ -1242,7 +1366,7 @@
     const box = $('#account-box');
     if (u) {
       box.innerHTML = `<div class="acct-row">
-          <span class="acct-av">${esc(u.name[0].toUpperCase())}</span>
+          <span class="acct-av${avClass(myIcon)}">${avatar(myIcon, u.name)}</span>
           <div class="acct-main"><div class="acct-name">${esc(u.name)} <span class="tag-no">#${esc(u.tag)}</span></div>
           <div class="acct-sub">Rating <b>${fmt(u.rating)}</b> · ${fmt(u.games)} ranked game${u.games === 1 ? '' : 's'}</div></div>
         </div>
@@ -1262,10 +1386,13 @@
     }
     $('#settings-account').innerHTML = u
       ? `<p class="hint">Logged in as <b>${esc(u.name)}</b> #${esc(u.tag)} (${esc(u.email || '')})</p>
+         <label class="check privacy-row"><input type="checkbox" id="hide-account" ${u.hidden ? 'checked' : ''} />
+           <span>Hide my account<small>Other players won't see your stats, your name on leaderboards (you'll show as "Hidden player"), or your account in rooms. Friends still can.</small></span></label>
          <div class="acct-actions"><button class="btn small" data-open-profile="${esc(u.id)}">My stats</button><button class="btn ghost small" data-logout>Log out</button></div>`
       : `<p class="hint">Only needed for ranked games and leaderboards.</p>
          <div class="acct-actions"><button class="btn small" data-open-auth="signup">Sign up</button><button class="btn small" data-open-auth="login">Log in</button></div>`;
     if (u && !$('#name').value.trim()) $('#name').value = u.name;
+    renderMyIconButton();
     $('#btn-friends').hidden = !u;
     if (!u) { friendsData = null; updateFriendBadge(); }
     if (state && state.phase === 'lobby') renderLobby();
@@ -1326,10 +1453,42 @@
     if ($('#auth-code').value !== v) $('#auth-code').value = v;
     if (v.length === 6 && authMode === 'verify') $('#auth-form').requestSubmit();
   });
+  // Your icon follows your account: the account's icon wins; if it has none yet, it gets this device's.
+  function syncIconWithAccount(user) {
+    if (!user) return;
+    if (user.icon && user.icon !== myIcon) setMyIcon(user.icon, { fromAccount: true });
+    else if (!user.icon && myIcon) setMyIcon(myIcon);
+  }
+  document.addEventListener('change', async (e) => {
+    if (e.target.id !== 'hide-account' || !auth || !auth.user) return;
+    const hidden = e.target.checked;
+    const res = await api('/api/me/settings', { method: 'POST', body: { hidden } });
+    if (!res.ok) { e.target.checked = !hidden; return toast(res.error, 'error'); }
+    saveAuth({ token: auth.token, user: res.user });
+    toast(hidden ? 'Your account is hidden from other players' : 'Your account is visible again', 'good');
+  });
+  // Show / hide the password while typing it.
+  $('#btn-show-pw').onclick = () => {
+    const input = $('#auth-password');
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    const b = $('#btn-show-pw');
+    b.setAttribute('aria-pressed', String(show));
+    b.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+    b.title = show ? 'Hide password' : 'Show password';
+    input.focus();
+  };
+  function hidePassword() {
+    $('#auth-password').type = 'password';
+    $('#btn-show-pw').setAttribute('aria-pressed', 'false');
+    $('#btn-show-pw').setAttribute('aria-label', 'Show password');
+  }
   function loggedIn(res, msg) {
     $('#auth-password').value = '';
     $('#auth-code').value = '';
+    hidePassword();
     saveAuth({ token: res.token, user: res.user });
+    syncIconWithAccount(res.user);
     tellServerAboutLogin();
     refreshFriends();
     closeSheet('auth');
@@ -1393,7 +1552,8 @@
     $('#board-list').innerHTML = res.entries.length ? res.entries.map((e) => `
       <li class="${e.id === meId ? 'me' : ''}${e.rank <= 3 ? ' top' + e.rank : ''}">
         <span class="lb-rank">${e.rank}</span>
-        <button class="lb-name" data-open-profile="${esc(e.id)}">${esc(e.name)} <span class="tag-no">#${esc(e.tag)}</span></button>
+        ${e.id ? `<button class="lb-name" data-open-profile="${esc(e.id)}">${iconPrefix(e.icon)}${esc(e.name)} <span class="tag-no">#${esc(e.tag)}</span></button>`
+          : `<span class="lb-name hidden-player">${esc(e.name)}</span>`}
         <span class="lb-val">${overall ? `${fmt(e.value)}<small> rating</small>` : `${fmt(e.value)}<small> · ${fmt(e.pp)} pp</small>`}</span>
       </li>`).join('') : '<li class="lb-empty">No ranked games here yet. Be the first!</li>';
     if (res.me && res.me.rank > 25) {
@@ -1422,7 +1582,7 @@
     const res = await api(`/api/profile/${encodeURIComponent(id)}`);
     if (!res.ok) { $('#profile-body').innerHTML = `<p class="hint">${esc(res.error)}</p>`; return; }
     const p = res.profile, st = p.stats;
-    $('#profile-name').innerHTML = `${esc(p.name)} <span class="tag-no">#${esc(p.tag)}</span>`;
+    $('#profile-name').innerHTML = `${iconPrefix(p.icon)}${esc(p.name)} <span class="tag-no">#${esc(p.tag)}</span>`;
     const meU = auth && auth.user;
     const fs = meU && p.id !== meU.id ? friendState(p.id) : 'self';
     const frBtns = fs === 'self' ? '' : `<div class="acct-actions pf-friend">${
@@ -1517,7 +1677,7 @@
       const mine = p.id === state.meId;
       const arm = (act) => plArmed === `${act}:${p.id}`;
       return `<li class="${p.connected ? '' : 'offline'}">
-        <span class="acct-av">${esc((p.name || '?')[0].toUpperCase())}</span>
+        <span class="acct-av${avClass(p.icon)}">${avatar(p.icon, p.name)}</span>
         <div class="pl-main"><b>${esc(p.name)}${mine ? ' (you)' : ''}</b>
           <small>${p.id === state.hostId ? 'Host · ' : ''}${fmt(p.score)} points${p.connected ? '' : ' · offline'}${p.loggedIn ? ' · logged in' : ''}</small></div>
         ${!mine && p.userId && auth && auth.user && friendState(p.userId) === null ? `<button class="btn small" data-fr-request="${esc(p.userId)}">Add friend</button>` : ''}
@@ -1644,7 +1804,7 @@
     $('#fr-mycode').textContent = d.code;
     const inRoom = !!(state && session);
     const row = (f, actions, sub) => `<li>
-        <span class="acct-av">${esc((f.name || '?')[0].toUpperCase())}</span>
+        <span class="acct-av${avClass(f.icon)}">${avatar(f.icon, f.name)}</span>
         <div class="pl-main"><button class="lb-name" data-open-profile="${esc(f.id)}">${esc(f.name)} <span class="tag-no">#${esc(f.tag)}</span></button>
           <small class="fr-st">${sub}</small></div>
         <div class="pl-actions">${actions}</div></li>`;
@@ -1711,7 +1871,7 @@
     if (!name) { closeSheet('friends'); return getName(); }
     rememberName(name);
     if (state) { await emit('leave'); goHome(); }
-    const res = await emit('join', { code, name, auth: authToken() });
+    const res = await emit('join', { code, name, auth: authToken(), icon: myIcon });
     if (!res.ok) return toast(res.error, 'error');
     closeSheet('friends'); closeSheet('profile');
     joined(res);
@@ -1750,7 +1910,7 @@
   socket.on('invite', (inv) => {
     if (!inv || !inv.code || (state && session && session.code === inv.code)) return;
     const pop = $('#invite-pop');
-    pop.innerHTML = `<span class="acct-av">${esc((inv.from.name || '?')[0].toUpperCase())}</span>
+    pop.innerHTML = `<span class="acct-av${avClass(inv.from.icon)}">${avatar(inv.from.icon, inv.from.name)}</span>
       <div class="ip-text"><b>${esc(inv.from.name)}</b> invited you to play<small>Room ${esc(inv.code)}${state ? ' · you\'ll leave this room' : ''}</small></div>
       <div class="acct-actions"><button class="btn small primary-ish" data-ip-join>Join</button><button class="btn small ghost" data-ip-no>Not now</button></div>`;
     pop.hidden = false;

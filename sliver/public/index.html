@@ -11,6 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
   <script src="/themes.js"></script>
+  <script src="/icons.js"></script>
 </head>
 <body>
   <main id="app">
@@ -36,16 +37,19 @@
     <header class="brand">
       <div class="mark" aria-hidden="true"><i></i><i></i><i class="hot"></i><i></i><i></i></div>
       <h1>Sliver</h1>
-      <p class="tag">Name the song in a split second.</p>
+      <p class="tag">Elite Sliver Knowledge</p>
     </header>
 
     <!-- HOME -->
     <section id="screen-home" class="screen" hidden>
       <div class="card">
-        <label class="field">
-          <span>Your name</span>
-          <input id="name" maxlength="20" autocomplete="nickname" placeholder="What should we call you?" />
-        </label>
+        <div class="field">
+          <label for="name">Your name</label>
+          <div class="name-row">
+            <button type="button" id="btn-my-icon" class="icon-btn" aria-label="Pick your icon" title="Pick your icon"></button>
+            <input id="name" maxlength="20" autocomplete="nickname" placeholder="What should we call you?" />
+          </div>
+        </div>
         <button id="btn-create" class="btn primary big">Create a room</button>
         <div class="divider"><span>or join a friend</span></div>
         <div class="row">
@@ -60,7 +64,10 @@
     <section id="screen-lobby" class="screen" hidden>
       <div class="card room-card">
         <div class="label">Room code</div>
-        <div class="room-code" id="lobby-code">----</div>
+        <div class="code-row">
+          <div class="room-code" id="lobby-code">••••</div>
+          <button type="button" id="btn-code-eye" class="eye-btn" aria-pressed="false" aria-label="Show room code" title="Show room code"><svg class="eye-open" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5C6.5 5 2.7 9.2 1.5 12c1.2 2.8 5 7 10.5 7s9.3-4.2 10.5-7C21.3 9.2 17.5 5 12 5Zm0 11.2a4.2 4.2 0 1 1 0-8.4 4.2 4.2 0 0 1 0 8.4Zm0-2.2a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/></svg><svg class="eye-shut" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.3 2.3 2 3.6l3.4 3.4C3.5 8.4 2.2 10.3 1.5 12c1.2 2.8 5 7 10.5 7 1.9 0 3.6-.5 5-1.3l3.4 3.4 1.3-1.3L3.3 2.3Zm8.7 13.9a4.2 4.2 0 0 1-3.7-6.2l1.6 1.6a2 2 0 0 0 2.7 2.7l1.6 1.6c-.7.2-1.4.3-2.2.3ZM12 5c5.5 0 9.3 4.2 10.5 7-.6 1.4-1.7 3-3.2 4.4l-3-3a4.2 4.2 0 0 0-5.2-5.2L8.6 5.7C9.6 5.3 10.8 5 12 5Z"/></svg></button>
+        </div>
         <button id="btn-copy" class="btn small copy">Copy invite link</button>
         <ul id="lobby-players" class="avatars"></ul>
       </div>
@@ -71,15 +78,25 @@
           <span class="count" id="pool-count">0 songs</span>
         </div>
         <ul id="sources" class="sources"></ul>
+        <div id="song-adding">
         <form id="form-playlist" class="row add-row">
           <div class="artist-box">
-            <input id="playlist-input" placeholder="Playlist link or artist name" aria-label="Playlist link or artist" autocomplete="off" autocorrect="off" spellcheck="false" />
+            <input id="playlist-input" placeholder="Playlist link or artist name" aria-label="Playlist link (Spotify, Deezer or Anghami) or artist name" autocomplete="off" autocorrect="off" spellcheck="false" />
             <ul id="artist-sug" class="suggestions artist-sug" hidden></ul>
           </div>
           <button class="btn" id="btn-add">Add</button>
         </form>
-        <p class="hint">Public Spotify and Deezer playlists work, or tap a pack below. No internet? Type <b>demo</b>.</p>
+        <div class="songs-opts">
+          <div class="mini-seg" role="group" aria-label="Songs per artist">
+            <span class="mini-label">Artists</span>
+            <button type="button" class="mini-btn" data-amode="all" aria-pressed="true">All songs</button>
+            <button type="button" class="mini-btn" data-amode="top" aria-pressed="false">Top 20</button>
+          </div>
+          <label class="check host-only"><input type="checkbox" id="host-only-songs" /> <span>Only the host adds songs</span></label>
+        </div>
         <div id="packs" class="packs"></div>
+        </div>
+        <p class="hint" id="host-picks" hidden>The host is picking the songs for this room.</p>
         <button id="btn-clear" class="btn ghost small host-only">Remove all songs</button>
       </div>
 
@@ -108,12 +125,11 @@
         <p class="mode-mult" id="mode-mult"></p>
         <div class="settings">
           <label class="field casual-only"><span>Songs</span><select id="set-rounds"></select></label>
-          <label class="field"><span>Time per song</span><select id="set-time"></select></label>
+          <label class="field casual-only"><span>Time per song</span><select id="set-time"></select></label>
           <label class="field casual-only"><span>Guesses per song</span><select id="set-guesses"></select></label>
-          <label class="field casual-only"><span>Longest clip</span><select id="set-maxlen"></select></label>
-          <label class="field"><span>Song after you guess</span><select id="set-listen"></select></label>
         </div>
-        <p class="hint ranked-only" id="ranked-fixed" hidden>Ranked is always 5 songs, unlimited guesses, and the full 30 second clip.</p>
+        <p class="hint">Clips go up to 15 seconds while you guess. After you guess, the song plays for 30 seconds.</p>
+        <p class="hint ranked-only" id="ranked-fixed" hidden>Ranked is always 5 songs, 90 seconds per song, unlimited guesses.</p>
         <p class="warn" id="ranked-warn" hidden></p>
         <button id="btn-start" class="btn primary big">Start game</button>
       </div>
@@ -158,7 +174,10 @@
           <input id="scrubber" type="range" min="0" max="1000" value="0" step="1" aria-label="Clip length" />
           <div class="ticks" id="ticks"></div>
         </div>
-        <button id="btn-plus" class="btn small">+1 second</button>
+        <div class="plus-row">
+          <button id="btn-plus-tenth" class="btn small">+0.1 second</button>
+          <button id="btn-plus" class="btn small">+1 second</button>
+        </div>
         <p class="hint small" id="heard-note"></p>
       </div>
 
@@ -198,7 +217,7 @@
         </div>
       </div>
       <div class="card listen-card">
-        <button class="btn listen" data-listen>Play 15 seconds</button>
+        <button class="btn listen" data-listen>Play 30 seconds</button>
         <div class="listen-bar"><span></span></div>
       </div>
       <div class="card">
@@ -240,10 +259,29 @@
         <span id="volume-value" class="vol-value">80%</span>
       </div>
       <button id="btn-test-sound" class="btn small">Test sound</button>
-      <p class="hint">Only changes the volume on this device. Every song is already matched to the same loudness.</p>
+      <h3 id="icon-title">Your icon</h3>
+      <div id="icon-grid" class="icon-grid" role="radiogroup" aria-labelledby="icon-title"></div>
       <h3>Theme</h3>
-      <p class="hint">Only changes how Sliver looks on this device.</p>
       <div id="theme-grid" class="theme-grid" role="radiogroup" aria-label="Theme"></div>
+      <label class="check decor-toggle" id="decor-toggle-row"><input type="checkbox" id="decor-toggle" /> <span>Holiday decorations</span></label>
+      <div class="custom-theme" id="custom-theme">
+        <h4>Make your own theme</h4>
+        <div class="ct-colors">
+          <label class="ct-color"><input type="color" id="ct-page" /><span>Background</span></label>
+          <label class="ct-color"><input type="color" id="ct-card" /><span>Cards</span></label>
+          <label class="ct-color"><input type="color" id="ct-accent" /><span>Buttons</span></label>
+          <label class="ct-color"><input type="color" id="ct-pop" /><span>Highlights</span></label>
+        </div>
+        <p class="warn small" id="ct-warn" hidden></p>
+        <div class="ct-share">
+          <div class="ct-code-box"><div class="label">Share code</div><code id="ct-code">SLV-</code></div>
+          <button type="button" id="ct-copy" class="btn small">Copy code</button>
+        </div>
+        <form id="ct-import" class="row ct-import" autocomplete="off">
+          <input id="ct-import-code" placeholder="Paste a theme code" aria-label="Theme code" spellcheck="false" />
+          <button class="btn small" type="submit">Use code</button>
+        </form>
+      </div>
       <h3>Account</h3>
       <div id="settings-account" class="settings-account"></div>
       <button id="btn-settings-done" class="btn primary">Done</button>
@@ -270,7 +308,8 @@
         <label class="field" id="auth-code-field" hidden><span>6-digit code</span>
           <input id="auth-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="123456" class="code-box" /></label>
         <label class="field" id="auth-password-field"><span id="auth-password-label">Password</span>
-          <input id="auth-password" type="password" maxlength="200" autocomplete="current-password" placeholder="At least 6 characters" /></label>
+          <span class="pw-wrap"><input id="auth-password" type="password" maxlength="200" autocomplete="current-password" placeholder="At least 6 characters" />
+          <button type="button" id="btn-show-pw" class="eye-btn in-field" aria-pressed="false" aria-label="Show password" title="Show password"><svg class="eye-open" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5C6.5 5 2.7 9.2 1.5 12c1.2 2.8 5 7 10.5 7s9.3-4.2 10.5-7C21.3 9.2 17.5 5 12 5Zm0 11.2a4.2 4.2 0 1 1 0-8.4 4.2 4.2 0 0 1 0 8.4Zm0-2.2a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/></svg><svg class="eye-shut" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.3 2.3 2 3.6l3.4 3.4C3.5 8.4 2.2 10.3 1.5 12c1.2 2.8 5 7 10.5 7 1.9 0 3.6-.5 5-1.3l3.4 3.4 1.3-1.3L3.3 2.3Zm8.7 13.9a4.2 4.2 0 0 1-3.7-6.2l1.6 1.6a2 2 0 0 0 2.7 2.7l1.6 1.6c-.7.2-1.4.3-2.2.3ZM12 5c5.5 0 9.3 4.2 10.5 7-.6 1.4-1.7 3-3.2 4.4l-3-3a4.2 4.2 0 0 0-5.2-5.2L8.6 5.7C9.6 5.3 10.8 5 12 5Z"/></svg></button></span></label>
         <p class="form-error" id="auth-error" role="alert" hidden></p>
         <p class="form-ok" id="auth-ok" role="status" hidden></p>
         <button class="btn primary" id="auth-submit">Log in</button>
@@ -347,6 +386,7 @@
   <div id="toasts" class="toasts" aria-live="polite"></div>
   <div id="confetti" class="confetti" aria-hidden="true"></div>
 
+  <script src="/decor.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

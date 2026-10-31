@@ -5,22 +5,29 @@ const { demoTracks, renderDemoWav } = require('./demo');
 const { loadDeezerSource, fetchPreview, searchDeezer, loadDeezerPlaylistSearch, loadDeezerArtist } = require('./deezer');
 const packs = require('./packs');
 const { isSpotify, loadSpotifySource, fetchUrlPreview, fetchSpotifyCover } = require('./spotify');
+const { isAnghami, loadAnghamiSource } = require('./anghami');
+const { searchItunes } = require('./itunes');
+const popularity = require('./popularity');
+const ICONS = require('../public/icons.js');
 
 const MIN_LEN = 0.1;
-const MAX_LEN = 30; // the whole preview clip, like Songless (previews are 30 s long)
+const MAX_LEN = 30;   // points curve runs to 30 s, like Songless (previews are 30 s long)
+const GUESS_CLIP = 15; // longest clip you can play while guessing (fixed)
+const LISTEN_AFTER = 30; // how much of the song plays after you guess / at the reveal (fixed)
+const RANKED_ROUND_TIME = 90; // ranked: seconds per song (fixed)
 const WRONG_PENALTY = 500;
 const FIRST_BONUS = 500; // multiplayer: first person to get each song
 const RANKED_ROUNDS = 5;
 
-// Modifiers. They stack: Hard + Chaos = 1.5 × 1.25 = 1.875× points.
+// Modifiers. Hard 1.5×, Chaos 1.25×, both together 2×.
 const MODES = {
   classic: { mult: 1 },
   hard: { mult: 1.5 },   // starts somewhere random in the song + you type the title yourself
   chaos: { mult: 1.25 }, // every song gets a random twist
+  both: { mult: 2 },     // Hard + Chaos
 };
+const multFor = (hard, chaos) => (hard && chaos ? MODES.both.mult : hard ? MODES.hard.mult : chaos ? MODES.chaos.mult : 1);
 const TWISTS = ['reverse', 'chipmunk', 'slowmo', 'underwater', 'random-start'];
-const LISTEN_OPTIONS = [15, 20, 30]; // seconds of the song after you've guessed
-const CLIP_OPTIONS = [15, 20, 30];   // longest clip you can play while guessing
 const ROOM_IDLE_MS = 30 * 60 * 1000;
 const packCache = new Map(); // packId -> { at, promise } (only when opts.packCacheMs is set)
 
@@ -66,7 +73,8 @@ class Room {
     // roundTime 0 = no time limit; maxGuesses 0 = unlimited (Songless default)
     this.settings = {
       rounds: 5, roundTime: 0, maxGuesses: 0, hard: false, chaos: false,
-      listenLen: 15, maxLen: MAX_LEN, ranked: false, rankedPack: null,
+      listenLen: LISTEN_AFTER, maxLen: GUESS_CLIP, ranked: false, rankedPack: null,
+      hostOnlySongs: false,
     };
     this.game = null; // frozen copy of the settings while a game runs
     this.rankedPool = null; // { packId, tracks } songs for ranked play
@@ -86,11 +94,12 @@ class Room {
   }
 
   // ---------- players ----------
-  addPlayer(name, socket) {
+  addPlayer(name, socket, icon) {
     const p = {
       id: id(8),
       token: id(16),
       name: String(name || 'Player').trim().slice(0, 20) || 'Player',
+      icon: ICONS.includes(icon) ? icon : '',
       score: 0,
       socketId: socket.id,
       connected: true,
@@ -118,6 +127,14 @@ class Room {
     const p = this.players.get(playerId);
     if (!p) return;
     p.userId = user ? user.id : null;
+    p.hidden = !!(user && user.hidden); // hidden accounts: others don't see which account this is
+  }
+
+  setIcon(playerId, icon) {
+    const p = this.players.get(playerId);
+    if (!p) return;
+    p.icon = ICONS.includes(icon) ? icon : '';
+    this.broadcast();
   }
 
   // Host hands the host role to someone else (works mid-game too).
@@ -185,17 +202,19 @@ class Room {
   }
 
   // ---------- song pool ----------
-  // input: a Spotify/Deezer link, "demo", or an artist's name. packId: a built-in pack.
+  // input: a Spotify/Deezer/Anghami link, "demo", or an artist's name. packId: a built-in pack.
+  // artistMode: 'all' (every song) or 'top' (their 20 most popular) for artists.
   async addSource(what = {}, by = { name: 'Player', id: null }) {
     const { input, packId, artistId } = typeof what === 'string' ? { input: what } : what;
+    const artistMode = what.artistMode === 'top' ? 'top' : 'all';
     if (typeof by === 'string') by = { name: by, id: null };
-    let name, tracks, truncated = false;
+    let name, tracks, truncated = false, capped = false, short = false;
     if (packId) {
       const pack = packs.byId.get(packId);
       if (!pack) throw new Error('Unknown pack');
       if (this.sources.some((s) => s.packId === packId)) throw new Error(`${pack.name} is already in`);
-      ({ tracks } = await this.loadPackCached(pack));
-      name = pack.artist ? `${pack.name}: all songs` : pack.name;
+      ({ tracks } = await this.loadPackCached(pack, pack.artist ? artistMode : 'all'));
+      name = pack.artist ? `${pack.name}: ${artistMode === 'top' ? 'top 20' : 'all songs'}` : pack.name;
     } else {
       const text = String(input || '').trim();
       if (!text || /^demo$/i.test(text)) {
@@ -203,33 +222,48 @@ class Room {
         tracks = demoTracks();
       } else {
         if (this.opts.demoOnly) throw new Error('Demo-only mode: type "demo" to load the built-in songs.');
-        if (artistId) ({ name, tracks } = await loadDeezerArtist(text, artistId));
-        else if (isSpotify(text)) ({ name, tracks, truncated } = await loadSpotifySource(text));
-        else if (/deezer|^https?:\/\/|^\d+$/i.test(text)) ({ name, tracks } = await loadDeezerSource(text));
-        else ({ name, tracks } = await loadDeezerArtist(text)); // plain words = an artist's name
+        if (artistId) ({ name, tracks } = await loadDeezerArtist(text, artistId, { mode: artistMode }));
+        else if (isSpotify(text)) ({ name, tracks, truncated, capped } = await loadSpotifySource(text));
+        else if (isAnghami(text)) ({ name, tracks, short } = await loadAnghamiSource(text));
+        else if (/deezer|^https?:\/\/|^\d+$/i.test(text)) ({ name, tracks, capped } = await loadDeezerSource(text));
+        else ({ name, tracks } = await loadDeezerArtist(text, null, { mode: artistMode })); // plain words = an artist's name
       }
     }
     const src = { key: id(6), name, by: by.name, byId: by.id, packId: packId || null, tracks, count: 0 };
     this.sources.push(src);
     this.rebuildPool();
     this.touch();
-    return { key: src.key, name, added: src.count, total: this.pool.length, truncated: !!truncated };
+    this.findPopularity(tracks);
+    return { key: src.key, name, added: src.count, total: this.pool.length, truncated: !!truncated, capped: !!capped, short: !!short };
   }
 
-  loadPackCached(pack) {
+  // Look up popularity for songs whose source didn't include it (see popularity.js), then
+  // send everyone the updated song list so the guess list sorts by it.
+  findPopularity(tracks) {
+    if (!this.opts.popularity || this.opts.demoOnly) return; // on in the real server (index.js)
+    const push = () => {
+      if (!this.players.size) return;
+      this.poolVersion++;
+      this.io.to(this.code).emit('pool', { version: this.poolVersion, songs: this.poolList() });
+    };
+    popularity.enrich(tracks, { onProgress: push, onDone: push });
+  }
+
+  loadPackCached(pack, mode = 'all') {
     const ms = this.opts.packCacheMs;
-    if (!ms) return this.loadPack(pack);
-    const hit = packCache.get(pack.id);
+    if (!ms) return this.loadPack(pack, mode);
+    const key = `${pack.id}:${mode}`;
+    const hit = packCache.get(key);
     if (hit && Date.now() - hit.at < ms) return hit.promise;
-    const promise = this.loadPack(pack);
-    packCache.set(pack.id, { at: Date.now(), promise });
-    promise.catch(() => packCache.delete(pack.id));
+    const promise = this.loadPack(pack, mode);
+    packCache.set(key, { at: Date.now(), promise });
+    promise.catch(() => packCache.delete(key));
     return promise;
   }
 
-  async loadPack(pack) {
+  async loadPack(pack, mode = 'all') {
     if (this.opts.demoOnly) throw new Error('Demo-only mode: type "demo" to load the built-in songs.');
-    if (pack.artist) return loadDeezerArtist(pack.artist);
+    if (pack.artist) return loadDeezerArtist(pack.artist, null, { mode, arabic: !!pack.arabic });
     if (pack.spotify) {
       try {
         const res = await loadSpotifySource(`spotify:playlist:${pack.spotify}`);
@@ -251,7 +285,7 @@ class Room {
         const key = norm(t.title) + '|' + norm(t.artist);
         if (seen.has(key)) continue;
         seen.add(key);
-        this.pool.push({ ...t, poolId: this.pool.length, srcKey: src.key });
+        this.pool.push({ ...t, poolId: this.pool.length, srcKey: src.key, _src: t });
         src.count++;
       }
     }
@@ -282,8 +316,12 @@ class Room {
     return this.settings.ranked ? (this.rankedPool ? this.rankedPool.tracks : []) : this.pool;
   }
 
+  // pop: popularity 0–100 (Deezer's score), or null if not known yet. The guess list sorts by it.
   poolList() {
-    return this.gamePool.map((t) => ({ id: t.poolId, title: t.title, artist: t.artist }));
+    return this.gamePool.map((t) => {
+      const pop = t._src && t._src.pop !== undefined ? t._src.pop : t.pop;
+      return { id: t.poolId, title: t.title, artist: t.artist, pop: pop === undefined ? null : Math.round(Math.min(1000000, pop) / 10000) };
+    });
   }
 
   // ---------- settings ----------
@@ -296,8 +334,7 @@ class Room {
     if (s.rounds !== undefined && num(s.rounds) >= 1 && num(s.rounds) <= 20) st.rounds = num(s.rounds);
     if (s.roundTime !== undefined && (num(s.roundTime) === 0 || (num(s.roundTime) >= 15 && num(s.roundTime) <= 300))) st.roundTime = num(s.roundTime);
     if (s.maxGuesses !== undefined && num(s.maxGuesses) >= 0 && num(s.maxGuesses) <= 20) st.maxGuesses = num(s.maxGuesses);
-    if (LISTEN_OPTIONS.includes(num(s.listenLen))) st.listenLen = num(s.listenLen);
-    if (CLIP_OPTIONS.includes(num(s.maxLen))) st.maxLen = num(s.maxLen);
+    if (typeof s.hostOnlySongs === 'boolean') st.hostOnlySongs = s.hostOnlySongs;
     if (typeof s.hard === 'boolean') st.hard = s.hard;
     if (typeof s.chaos === 'boolean') st.chaos = s.chaos;
     if (s.mode !== undefined) { // older clients: one mode at a time
@@ -327,9 +364,10 @@ class Room {
         const key = norm(t.title) + '|' + norm(t.artist);
         if (seen.has(key)) continue;
         seen.add(key);
-        list.push({ ...t, poolId: list.length });
+        list.push({ ...t, poolId: list.length, _src: t });
       }
       this.rankedPool = { packId: pack.id, tracks: list };
+      this.findPopularity(tracks);
       this.usedTrackKeys.clear();
       this.poolVersion++;
       return this.rankedPool;
@@ -376,13 +414,14 @@ class Room {
       chaos: st.chaos,
       rounds: ranked ? RANKED_ROUNDS : st.rounds,
       maxGuesses: ranked ? 0 : st.maxGuesses,
-      maxLen: ranked ? MAX_LEN : st.maxLen,
-      listenLen: st.listenLen,
-      roundTime: st.roundTime,
+      maxLen: GUESS_CLIP,
+      listenLen: LISTEN_AFTER,
+      roundTime: ranked ? RANKED_ROUND_TIME : st.roundTime,
       entrants,
       history: [],
     };
     this.poolVersion++;
+    if (this.opts.onStat) { this.opts.onStat('games'); if (ranked) this.opts.onStat('ranked'); }
     await this.nextRound();
   }
 
@@ -422,6 +461,7 @@ class Room {
     }
 
     this.roundNum++;
+    if (this.opts.onStat) this.opts.onStat('songs');
     const roundTimeMs = game.roundTime * 1000;
     this.round = {
       num: this.roundNum,
@@ -451,7 +491,7 @@ class Room {
       twist = options[crypto.randomInt(options.length)];
       this.lastTwist = twist;
     }
-    const mult = Math.round((hard ? MODES.hard.mult : 1) * (chaos ? MODES.chaos.mult : 1) * 1000) / 1000;
+    const mult = multFor(hard, chaos);
     const mode = hard && chaos ? 'hard+chaos' : hard ? 'hard' : chaos ? 'chaos' : 'classic';
     // Classic: every clip plays from the start of the 30 s preview, like Songless.
     const offset = hard || twist === 'random-start' ? randomStart() : 0;
@@ -476,13 +516,19 @@ class Room {
     if (track.source === 'demo') {
       return { buffer: renderDemoWav(Number(track.sourceId)), contentType: 'audio/wav' };
     }
-    if (track.source === 'spotify') {
+    if (track.source === 'itunes') {
+      try { return await fetchUrlPreview(track.previewUrl); } catch { /* look for it on Deezer */ }
+      const match = await searchDeezer(track.title, track.artist, { strict: false });
+      return fetchPreview(match.sourceId);
+    }
+    if (track.source === 'spotify' || track.source === 'anghami') {
       // The song's own cover art from Spotify, fetched alongside the audio.
-      const coverP = track.exactCover ? null : fetchSpotifyCover(track.sourceId)
+      const coverP = track.exactCover || track.source !== 'spotify' ? null : fetchSpotifyCover(track.sourceId)
         .then((url) => { if (url) { track.cover = url; track.exactCover = true; } })
         .catch(() => {});
       // Prefer an exact Deezer match (128 kbps, better than Spotify's 96 kbps previews),
-      // then Spotify's own preview, then a looser Deezer search.
+      // then the song's own preview, then iTunes, then a looser Deezer search.
+      if (!track.deezerId && track._src && track._src.deezerId) track.deezerId = track._src.deezerId;
       const useDeezer = async (strict) => {
         if (!track.deezerId) {
           const match = await searchDeezer(track.title, track.artist, { strict });
@@ -496,6 +542,11 @@ class Room {
         if (track.previewUrl) {
           try { return await fetchUrlPreview(track.previewUrl); } catch { /* try the next source */ }
         }
+        try {
+          const it = await searchItunes(track.title, track.artist);
+          if (it.cover && !track.exactCover) { track.cover = it.cover; track.exactCover = true; }
+          return await fetchUrlPreview(it.previewUrl);
+        } catch { /* try the next source */ }
         return useDeezer(false);
       })();
       const result = await audio;
@@ -519,7 +570,7 @@ class Room {
     const r = this.resultFor(playerId);
     if (r.status !== 'playing') return;
     const s = Number(seconds);
-    if (Number.isFinite(s)) r.maxHeard = Math.max(r.maxHeard, Math.min(this.round.maxLen || MAX_LEN, Math.max(0, s)));
+    if (Number.isFinite(s)) r.maxHeard = Math.max(r.maxHeard, Math.min(this.round.maxLen || GUESS_CLIP, Math.max(0, s)));
   }
 
   guess(playerId, poolId) {
@@ -566,7 +617,7 @@ class Room {
       const p = this.players.get(playerId);
       if (p) {
         p.score += r.points;
-        this.io.to(this.code).emit('gotIt', { playerId, name: p.name, points: r.points, heard: r.maxHeard, first: !!r.bonus });
+        this.io.to(this.code).emit('gotIt', { playerId, name: p.name, icon: p.icon || '', points: r.points, heard: r.maxHeard, first: !!r.bonus });
       }
     } else if (max && r.guesses.length >= max) {
       r.status = 'out';
@@ -616,7 +667,7 @@ class Room {
       listenLen: game.listenLen,
       results: [...this.players.values()].map((p) => {
         const r = this.resultFor(p.id);
-        return { id: p.id, name: p.name, status: r.status, points: r.points, bonus: r.bonus || 0, guesses: r.guesses.length, heard: r.maxHeard };
+        return { id: p.id, name: p.name, icon: p.icon || '', status: r.status, points: r.points, bonus: r.bonus || 0, guesses: r.guesses.length, heard: r.maxHeard };
       }).sort((a, b) => b.points - a.points),
       autoNextAt: Date.now() + waitMs,
       last: this.roundNum >= game.rounds,
@@ -727,8 +778,9 @@ class Room {
           name: p.name,
           score: p.score,
           connected: p.connected,
+          icon: p.icon || '',
           loggedIn: !!p.userId,
-          userId: p.userId || null,
+          userId: p.hidden ? null : p.userId || null,
           roundStatus: this.round && this.phase === 'round' ? this.resultFor(p.id).status : null,
         })),
       round: null,
@@ -745,7 +797,7 @@ class Room {
         chaos: this.round.chaos,
         ranked: !!(g && g.ranked),
         maxLen: this.round.maxLen,
-        listenLen: g ? g.listenLen : 15,
+        listenLen: g ? g.listenLen : LISTEN_AFTER,
         twist: this.round.twist,
         typed: this.round.typed,
         mult: this.round.mult,
@@ -835,4 +887,4 @@ function titleMatches(guess, track) {
   return false;
 }
 
-module.exports = { RoomManager, pointsForLength, titleMatches, MODES, MIN_LEN, MAX_LEN, FIRST_BONUS, RANKED_ROUNDS, LISTEN_OPTIONS, CLIP_OPTIONS };
+module.exports = { RoomManager, pointsForLength, titleMatches, multFor, MODES, MIN_LEN, MAX_LEN, GUESS_CLIP, LISTEN_AFTER, RANKED_ROUND_TIME, FIRST_BONUS, RANKED_ROUNDS };

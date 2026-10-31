@@ -226,7 +226,7 @@ const mgr = () => new RoomManager({ to: () => ({ emit() {} }) });
       const p = room.addPlayer('C', { id: 'x' });
       await room.addSource('demo', 'C');
       room.settings.rounds = 1; await room.start();
-      check(room.round.offset === 0 && !room.round.twist && room.round.mult === 1 && Object.keys(MODES).length === 3, 'classic: from the start, no twist, ×1');
+      check(room.round.offset === 0 && !room.round.twist && room.round.mult === 1 && MODES.classic.mult === 1, 'classic: from the start, no twist, ×1');
       room.clearTimers();
     }
   } catch (err) {

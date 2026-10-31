@@ -152,7 +152,7 @@ const io = { to: (to) => ({ emit: (e, d) => events.push({ to, e, d }) }) };
       for (let i = 0; i < 6; i++) {
         const r = room.round;
         twists.push(r.twist);
-        check(r.mult === 1.875 && r.typed && r.offset >= 2 && r.twist && r.twist !== 'random-start', `song ${i + 1}: typed, mid-song start, twist "${r.twist}", 1.875×`);
+        check(r.mult === 2 && r.typed && r.offset >= 2 && r.twist && r.twist !== 'random-start', `song ${i + 1}: typed, mid-song start, twist "${r.twist}", 2×`);
         room.giveUp(p.id);
         await room.nextRound();
       }
@@ -203,18 +203,18 @@ const io = { to: (to) => ({ emit: (e, d) => events.push({ to, e, d }) }) };
       check(room.phase === 'reveal', 'and ends when everyone left is done');
     }
 
-    console.log('clip length and listen length');
+    console.log('clip length and listen length (fixed: 15 s to guess, 30 s after)');
     {
       const room = mgr().create();
       const p = room.addPlayer('Solo', { id: 's' });
       await room.addSource({ input: 'demo' });
-      room.updateSettings({ maxLen: 15, listenLen: 30 });
-      check(room.settings.maxLen === 15 && room.settings.listenLen === 30, 'settings saved');
-      room.updateSettings({ maxLen: 45, listenLen: 60 });
-      check(room.settings.maxLen === 15 && room.settings.listenLen === 30, 'lengths longer than the 30 s preview are refused');
+      check(room.settings.maxLen === 15 && room.settings.listenLen === 30, 'defaults: 15 s clips, 30 s after');
+      room.updateSettings({ maxLen: 30, listenLen: 15 });
+      check(room.settings.maxLen === 15 && room.settings.listenLen === 30, 'the lengths can\'t be changed any more');
       await room.start();
+      check(room.game.maxLen === 15 && room.game.listenLen === 30, 'every game uses 15 s / 30 s');
       room.reportListen(p.id, 29);
-      check(room.round.results.get(p.id).maxHeard === 15, 'can\'t hear past the longest-clip setting');
+      check(room.round.results.get(p.id).maxHeard === 15, 'can\'t hear past 15 s while guessing');
       check(/between games/.test(await tryErr(() => room.updateSettings({ rounds: 3 }))), 'settings locked during a game');
       room.giveUp(p.id);
       const wait = room.reveal.autoNextAt - Date.now();
@@ -240,8 +240,9 @@ const io = { to: (to) => ({ emit: (e, d) => events.push({ to, e, d }) }) };
       check(/twice/.test(await tryErr(() => room.start())), 'one device per account');
       room.setAccount(f.id, { id: 'U2' });
       await room.start();
-      check(room.game.rounds === 5 && room.game.maxGuesses === 0 && room.game.maxLen === 30, 'ranked is always 5 songs, unlimited guesses, full 30 s clips');
-      check(room.round.mult === 1.875, 'ranked keeps the Hard + Chaos multiplier');
+      check(room.game.rounds === 5 && room.game.maxGuesses === 0 && room.game.maxLen === 15, 'ranked is always 5 songs, unlimited guesses, 15 s clips');
+      check(room.game.roundTime === 90 && room.round.endsAt - room.round.startedAt === 90000, 'ranked: 90 seconds per song');
+      check(room.round.mult === 2, 'ranked keeps the Hard + Chaos multiplier (2×)');
       let total = 0;
       for (let i = 0; i < 5; i++) {
         room.reportListen(h.id, 1);
