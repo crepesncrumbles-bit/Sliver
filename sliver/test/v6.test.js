@@ -188,20 +188,33 @@ const dz = (id, title, artist, rank, extra = {}) => ({ id, title, title_short: t
       check(a.tracks[0].title === 'Chanel' && a.tracks[1].title === 'BLEACH' && a.tracks[2].artist === 'Mac Miller, Ariana Grande', 'strips the explicit "E" badge; keeps every artist');
       check(a.listed === 55 && a.tracks[0].link === 'https://play.anghami.com/song/61424477', 'notices the playlist has 55 songs; links each song');
 
-      // Page with Angular's escaped app state (all songs)
-      const songs = Array.from({ length: 60 }, (_, i) => ({ id: String(100 + i), title: `اغنية ${i}`, artist: 'عمرو دياب', artistID: '1', albumID: '9', type: 'song' }));
-      const state = JSON.stringify({ playlist: { title: 'Mix', sections: [{ data: songs }] } }).replace(/"/g, '&q;');
-      const statePage = `<html><head><meta property="og:title" content="Mix playlist | Play on Anghami"></head><body>
-        <script id="ng-state" type="application/json">${state}</script>
-        <a href="/song/100">اغنية 0</a><a href="/artist/1">عمرو دياب</a></body></html>`;
-      const b = anghami.parseAnghamiPage(statePage, 'playlist', '1');
-      check(b.tracks.length === 60 && b.tracks[59].title === 'اغنية 59' && b.tracks[0].artist === 'عمرو دياب', 'reads every song from the page\'s app state (Arabic titles intact)');
+      // The real page's shape (checked on play.anghami.com, Oct 2026): minified HTML with unquoted
+      // attributes, a schema.org MusicPlaylist block, and the app state (&q;-escaped) whose
+      // GETplaylistdata answer has a "song" section plus video/artist sections.
+      const songs = Array.from({ length: 50 }, (_, i) => ({ nofollow: false, id: String(1000 + i), title: i === 0 ? 'سوبريم' : `اغنية ${i}`, album: 'X', albumID: '9', artist: i === 0 ? 'عفروتو' : 'تامر حسني', artistID: '1', coverArt: String(500 + i), explicit: '0' }));
+      const videos = [{ id: 'v1', title: 'Video song', artist: 'Someone', artistID: '2', albumID: '3' }, { id: 'v2', title: 'Clip', artist: 'Other', artistID: '4', albumID: '5' }];
+      const stateObj = { 'G.https://coussa.anghami.com/gateway.php?buffered=1&playlistid=36571832&type=GETplaylistdata': { body: { title: 'Top Egyptian', count: 50, numsongs: 50, limit_number_songs: 5000, sections: [{ type: 'vibestags', data: [] }, { type: 'song', displaytype: 'list', data: songs }, { type: 'video', title: 'Music Videos', data: videos }, { type: 'artist', data: [{ id: '1', name: 'X' }] }] } }, NGRX_STATE: {} };
+      const ld = { '@context': 'http://schema.org/', '@type': 'MusicPlaylist', '@id': 'https://play.anghami.com/playlist/36571832', name: 'Top Egyptian', numtracks: 50,
+        track: songs.map((x) => ({ '@context': 'http://schema.org/', '@type': 'MusicRecording', name: x.title, byArtist: { '@type': 'MusicGroup', name: x.artist }, image: `https://artwork.anghcdn.co/?id=${x.coverArt}&size=120`, url: '' })) };
+      const realPage = `<!DOCTYPE html><html lang=en><head><meta charset=utf-8><title>Top Egyptian playlist | Play on Anghami</title><meta property=og:title content="Top Egyptian playlist | Play on Anghami"><meta property=og:type content=music.playlist>` +
+        `<script type=application/ld+json>{"@context":"http://schema.org","@type":"Organization","name":"Anghami"}</script><script crossorigin=anonymous src=/_fs-ch-1T1wmsGaOgGaSxcX/assets/script.js></script></head><body><app-root></app-root>` +
+        `<script type=application/ld+json>${JSON.stringify(ld)}</script><script id=anghami-web-v2-state type=application/json>${JSON.stringify(stateObj).replace(/"/g, '&q;').replace(/&(?!q;)/g, '&a;')}</script></body></html>`;
+      const b = anghami.parseAnghamiPage(realPage, 'playlist', '36571832');
+      check(b.name === 'Top Egyptian' && b.tracks.length === 50 && b.listed === 50, 'real page layout: all 50 songs from the app state, playlist name from og:title');
+      check(b.tracks[0].title === 'سوبريم' && b.tracks[0].artist === 'عفروتو' && !b.tracks.some((t) => /Video song|Clip/.test(t.title)), 'Arabic titles intact; music videos left out');
+      check(b.tracks[0].cover === 'https://artwork.anghcdn.co/?id=500&size=296' && b.tracks[0].link === 'https://play.anghami.com/song/1000', 'each song gets its own cover art and link');
+      const ldOnly = anghami.parseAnghamiPage(realPage.replace(/<script id=anghami-web-v2-state[\s\S]*?<\/script>/, ''), 'playlist', '1');
+      check(ldOnly.tracks.length === 50 && ldOnly.tracks[1].artist === 'تامر حسني' && /size=296/.test(ldOnly.tracks[1].cover), 'without the app state: all songs from the schema.org list');
+      const challenge = '<!doctype html><html lang="en"><head><link href="/_fs-ch-1T1wmsGaOgGaSxcX/assets/styles.css" rel="stylesheet" /><title>Client Challenge</title></head><body>Please enable JavaScript to proceed.</body></html>';
+      check(anghami.isChallenge(challenge) && !anghami.isChallenge(realPage), 'recognises Anghami\'s bot-check page');
 
       // Only a description: still gets a few songs
       const c = anghami.parseAnghamiPage('<meta property="og:description" content="Play and download Road - which includes songs like Tamally Maak by Amr Diab, Ah W Noss by Nancy Ajram, and Aal Bal by Elissa.">', 'playlist', '1');
       check(c.tracks.length === 3 && c.tracks[1].title === 'Ah W Noss' && c.tracks[2].artist === 'Elissa' && c.partial, 'falls back to the songs named in the page description');
 
       routes = [
+        ['play.anghami.com/playlist/36571832', html(realPage)],
+        ['play.anghami.com/playlist/777', html(challenge)],
         ['play.anghami.com/playlist/207754540', html(linksPage)],
         ['play.anghami.com/playlist/404', { ok: false, status: 404, text: async () => '' }],
         [/deezer\.com\/search\?q=artist%3A%22Frank%20Ocean/, json({ data: [] })],
@@ -216,6 +229,9 @@ const dz = (id, title, artist, rank, extra = {}) => ({ id, title, title_short: t
       const clip = await room.loadClip(room.pool[0]);
       check(clip.buffer.length === 4 && calls.findIndex((u) => u.includes('deezer.com/search')) < calls.findIndex((u) => u.includes('itunes.apple.com/search')), 'Anghami songs: audio from Deezer first, else iTunes');
       check(/doesn't exist/.test(await tryErr(() => room.addSource({ input: 'https://play.anghami.com/playlist/404' }))), 'missing/private playlist explained');
+      const full = await room.addSource({ input: 'https://play.anghami.com/playlist/36571832?refer=share' });
+      check(full.added === 50 && !full.short, 'a real-shaped Anghami playlist adds all its songs');
+      check(/robot/.test(await tryErr(() => room.addSource({ input: 'https://play.anghami.com/playlist/777' }))), 'bot check: tries again, then explains');
     }
 
     // ----------------------------------------------------------------
