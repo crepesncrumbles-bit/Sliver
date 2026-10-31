@@ -80,6 +80,18 @@ function parseJson(text) {
 
 const coverFor = (id) => (id && /^\d+$/.test(String(id)) ? `https://artwork.anghcdn.co/?id=${id}&size=296` : null);
 
+// A GETplaylistdata / GETalbumdata answer → its songs (the section with type "song").
+function songsFromBody(body) {
+  if (!body || !Array.isArray(body.sections)) return null;
+  const sec = body.sections.find((x) => x && x.type === 'song' && Array.isArray(x.data) && x.data.length);
+  const listed = Number(body.count || body.numsongs || body.PlaylistCount) || null;
+  if (!sec) return { songs: [], listed };
+  const songs = sec.data.filter((x) => x && typeof x.title === 'string' && x.title).map((x) => ({
+    id: String(x.id || ''), title: decodeHtml(x.title), artist: decodeHtml(x.artist || ''), cover: coverFor(x.coverArt || x.AlbumArt),
+  }));
+  return { songs, listed };
+}
+
 // 1) The app state: the "song" section of the playlist/album answer.
 function songsFromState(html) {
   for (const { text } of jsonScripts(html)) {
@@ -91,13 +103,8 @@ function songsFromState(html) {
       .map(([, v]) => v && (v.body || v))
       .filter((b) => b && Array.isArray(b.sections));
     for (const body of bodies) {
-      const sec = body.sections.find((x) => x && x.type === 'song' && Array.isArray(x.data) && x.data.length);
-      if (!sec) continue;
-      const songs = sec.data.filter((x) => x && typeof x.title === 'string' && x.title).map((x) => ({
-        id: String(x.id || ''), title: decodeHtml(x.title), artist: decodeHtml(x.artist || ''), cover: coverFor(x.coverArt || x.AlbumArt),
-      }));
-      const listed = Number(body.count || body.numsongs || body.PlaylistCount) || null;
-      if (songs.length) return { songs, listed };
+      const r = songsFromBody(body);
+      if (r && r.songs.length) return r;
     }
   }
   return null;
@@ -195,30 +202,86 @@ function parseAnghamiPage(html, kind, id) {
   return { name, tracks, listed, partial };
 }
 
-async function loadAnghamiSource(input) {
-  const { kind, id } = await parseAnghamiInput(input);
-  const get = () => fetch(`https://play.anghami.com/${kind}/${id}`, {
-    headers: { 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9', Accept: 'text/html,application/xhtml+xml', 'Upgrade-Insecure-Requests': '1' },
-  });
-  let res = await get();
-  if (res.status === 404) throw new Error('Anghami says that playlist doesn\'t exist (or it\'s private).');
-  if (!res.ok) throw new Error(`Anghami returned HTTP ${res.status}`);
-  let html = await res.text();
-  if (isChallenge(html)) { // their bot check: try once more after a moment
-    await new Promise((r) => setTimeout(r, 1500));
-    res = await get();
-    html = res.ok ? await res.text() : '';
-    if (!html || isChallenge(html)) {
-      throw new Error('Anghami asked for a "are you a robot?" check, so its playlist couldn\'t be read right now. Try again in a minute, or paste the same playlist from Spotify or Deezer.');
-    }
+// Turn a list of { id, title, artist, cover } into Sliver tracks (no repeats, up to 500).
+function toTracks(songs, kind, id) {
+  const seen = new Set();
+  const tracks = [];
+  for (const s of songs) {
+    const key = normText(s.title) + '|' + normText(s.artist);
+    if (!s.title || seen.has(key)) continue;
+    seen.add(key);
+    tracks.push({
+      source: 'anghami', sourceId: s.id || key, title: s.title, artist: s.artist || 'Unknown',
+      cover: s.cover || null, exactCover: !!s.cover,
+      link: s.id ? `https://play.anghami.com/song/${s.id}` : `https://play.anghami.com/${kind}/${id}`,
+    });
+    if (tracks.length >= MAX_TRACKS) break;
   }
-  const result = parseAnghamiPage(html, kind, id);
-  if (result.tracks.length < 2) {
-    throw new Error('Couldn\'t see that Anghami playlist\'s songs. Make sure it\'s public. You can also open it on Spotify or Deezer and paste that link.');
-  }
-  // Anghami's page may only list the first songs of a long playlist.
-  result.short = !!(result.listed && result.listed > result.tracks.length && result.tracks.length < MAX_TRACKS);
-  return result;
+  return tracks;
 }
 
-module.exports = { isAnghami, parseAnghamiInput, parseAnghamiPage, loadAnghamiSource, songsFromJson, songsFromState, songsFromLd, songsFromLinks, songsFromDescription, meta, isChallenge };
+// The same public JSON API Anghami's own web player calls (no login). Checked Oct 2026:
+// coussa.anghami.com/gateway.php?type=GETplaylistdata&playlistid=…&output=jsonhp → { title, count,
+// sections: [{ type: "song", data: [...] }, …] }. What it lists depends on the country asking
+// (licensing): from the US some playlists come back without songs, some albums are refused.
+async function loadFromApi(kind, id) {
+  const type = kind === 'album' ? 'GETalbumdata' : 'GETplaylistdata';
+  const key = kind === 'album' ? 'albumid' : 'playlistid';
+  const res = await fetch(`https://coussa.anghami.com/gateway.php?type=${type}&${key}=${id}&output=jsonhp&lang=en`, {
+    headers: { 'User-Agent': UA, Accept: 'application/json' },
+  });
+  if (!res.ok) throw new Error(`Anghami returned HTTP ${res.status}`);
+  const j = await res.json();
+  if (j && j.error) {
+    const msg = String(j.error.message || '');
+    throw new Error(/country|licen/i.test(msg)
+      ? `Anghami won't share this ${kind} with the game's server because of where it's hosted (licensing). Try the Spotify or Deezer version.`
+      : msg || `Anghami couldn't open that ${kind}`);
+  }
+  const r = songsFromBody(j) || { songs: [], listed: null };
+  return { name: decodeHtml(j.title || j.PlaylistName || j.name || '') || `Anghami ${kind}`, songs: r.songs, listed: r.listed };
+}
+
+// Page first (it lists every song), then Anghami's API if the page is blocked or unreadable.
+async function loadAnghamiSource(input) {
+  const { kind, id } = await parseAnghamiInput(input);
+  const problems = [];
+  let fromDescription = null; // the 3 songs the page description names, as a last resort
+  try {
+    const res = await fetch(`https://play.anghami.com/${kind}/${id}`, {
+      headers: { 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9', Accept: 'text/html,application/xhtml+xml' },
+    });
+    if (res.status === 404) throw Object.assign(new Error('Anghami says that playlist doesn\'t exist (or it\'s private).'), { final: true });
+    if (!res.ok) throw new Error(`page HTTP ${res.status}`);
+    const html = await res.text();
+    if (isChallenge(html)) throw new Error('page bot check');
+    const result = parseAnghamiPage(html, kind, id);
+    if (result.tracks.length >= 2 && !result.partial) {
+      result.short = !!(result.listed && result.listed > result.tracks.length && result.tracks.length < MAX_TRACKS);
+      return result;
+    }
+    if (result.tracks.length >= 2) fromDescription = result;
+    problems.push('page had no song list');
+  } catch (err) {
+    if (err.final) throw err;
+    problems.push(err.message);
+  }
+  let api;
+  try { api = await loadFromApi(kind, id); } catch (err) {
+    if (fromDescription) return { ...fromDescription, short: true };
+    if (/licensing|couldn't open/i.test(err.message)) throw err;
+    console.warn(`  Anghami ${kind} ${id}: ${problems.join('; ')}; API: ${err.message}`);
+    throw new Error('Anghami didn\'t let the game read that playlist right now. Try again in a minute, or paste the same playlist from Spotify or Deezer.');
+  }
+  const tracks = toTracks(api.songs, kind, id);
+  if (tracks.length < 2 && fromDescription) return { ...fromDescription, short: true };
+  if (tracks.length < 2) {
+    console.warn(`  Anghami ${kind} ${id}: ${problems.join('; ')}; API listed ${api.songs.length} of ${api.listed || '?'} songs`);
+    throw new Error(api.listed
+      ? `Anghami won't share this ${kind}'s songs with the game's server (usually licensing in the server's country). Try the Spotify or Deezer version.`
+      : 'Couldn\'t see that Anghami playlist\'s songs. Make sure it\'s public, or paste the same playlist from Spotify or Deezer.');
+  }
+  return { name: api.name, tracks, listed: api.listed, partial: false, short: !!(api.listed && api.listed > tracks.length && tracks.length < MAX_TRACKS) };
+}
+
+module.exports = { isAnghami, parseAnghamiInput, parseAnghamiPage, loadAnghamiSource, loadFromApi, songsFromBody, songsFromJson, songsFromState, songsFromLd, songsFromLinks, songsFromDescription, meta, isChallenge };

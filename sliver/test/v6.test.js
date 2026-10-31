@@ -209,7 +209,8 @@ const dz = (id, title, artist, rank, extra = {}) => ({ id, title, title_short: t
       check(anghami.isChallenge(challenge) && !anghami.isChallenge(realPage), 'recognises Anghami\'s bot-check page');
 
       // Only a description: still gets a few songs
-      const c = anghami.parseAnghamiPage('<meta property="og:description" content="Play and download Road - which includes songs like Tamally Maak by Amr Diab, Ah W Noss by Nancy Ajram, and Aal Bal by Elissa.">', 'playlist', '1');
+      const c0 = '<meta property="og:title" content="Road playlist | Play on Anghami"><meta property="og:description" content="Play and download Road - which includes songs like Tamally Maak by Amr Diab, Ah W Noss by Nancy Ajram, and Aal Bal by Elissa.">';
+      const c = anghami.parseAnghamiPage(c0, 'playlist', '1');
       check(c.tracks.length === 3 && c.tracks[1].title === 'Ah W Noss' && c.tracks[2].artist === 'Elissa' && c.partial, 'falls back to the songs named in the page description');
 
       routes = [
@@ -231,7 +232,28 @@ const dz = (id, title, artist, rank, extra = {}) => ({ id, title, title_short: t
       check(/doesn't exist/.test(await tryErr(() => room.addSource({ input: 'https://play.anghami.com/playlist/404' }))), 'missing/private playlist explained');
       const full = await room.addSource({ input: 'https://play.anghami.com/playlist/36571832?refer=share' });
       check(full.added === 50 && !full.short, 'a real-shaped Anghami playlist adds all its songs');
-      check(/robot/.test(await tryErr(() => room.addSource({ input: 'https://play.anghami.com/playlist/777' }))), 'bot check: tries again, then explains');
+      check(/didn't let the game read/.test(await tryErr(() => room.addSource({ input: 'https://play.anghami.com/playlist/777' }))), 'bot check and no API answer: explains');
+
+      // Page blocked (406 / bot check) → Anghami's own JSON API (what its web player calls)
+      const apiBody = (id, n, extra = {}) => json({ status: 'ok', id, title: `List ${id}`, count: n, sections: [{ type: 'vibestags', data: [] }, { type: 'song', data: songs.slice(0, n) }, { type: 'video', data: videos }], ...extra });
+      routes = [
+        ['play.anghami.com/playlist/406', { ok: false, status: 406, text: async () => '' }],
+        ['play.anghami.com/playlist/777', html(challenge)],
+        ['play.anghami.com/playlist/888', { ok: false, status: 406, text: async () => '' }],
+        ['play.anghami.com/album/999', { ok: false, status: 406, text: async () => '' }],
+        ['play.anghami.com/playlist/555', html(c0)],
+        [/coussa\.anghami\.com\/gateway\.php\?type=GETplaylistdata&playlistid=406&output=jsonhp/, apiBody('406', 50)],
+        [/coussa\.anghami\.com\/gateway\.php\?type=GETplaylistdata&playlistid=777&/, apiBody('777', 12)],
+        [/coussa\.anghami\.com\/gateway\.php\?type=GETplaylistdata&playlistid=888&/, json({ status: 'ok', title: 'Mine', count: 55, sections: [{ type: 'song', data: [] }] })],
+        [/coussa\.anghami\.com\/gateway\.php\?type=GETalbumdata&albumid=999&/, json({ error: { code: 404, message: 'We’re sorry but you cannot play this album in the country you’re in because of license rights.' } })],
+      ];
+      const viaApi = await anghami.loadAnghamiSource('https://play.anghami.com/playlist/406');
+      check(viaApi.tracks.length === 50 && viaApi.name === 'List 406' && !viaApi.tracks.some((t) => /Video song/.test(t.title)) && /size=296/.test(viaApi.tracks[0].cover), 'page refused (HTTP 406) → reads all songs from Anghami\'s API');
+      check((await anghami.loadAnghamiSource('https://play.anghami.com/playlist/777')).tracks.length === 12, 'bot-check page → API too');
+      check(/won't share this playlist's songs/.test(await tryErr(() => anghami.loadAnghamiSource('https://play.anghami.com/playlist/888'))), 'API lists no songs (licensing in the server\'s country) → explained');
+      check(/licensing/.test(await tryErr(() => anghami.loadAnghamiSource('https://play.anghami.com/album/999'))), 'album blocked in the server\'s country → explained');
+      const desc = await anghami.loadAnghamiSource('https://play.anghami.com/playlist/555');
+      check(desc.tracks.length === 3 && desc.short, 'only the page description and no API: keeps those 3 songs and says it\'s partial');
     }
 
     // ----------------------------------------------------------------
