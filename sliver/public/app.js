@@ -95,6 +95,26 @@
     : icon && ICONS.includes(icon) ? `<span class="chip-icon" aria-hidden="true">${esc(icon)}</span>` : '');
   let myAvatar = (() => { try { const a = localStorage.getItem('sliver.avatar'); return okPic(a) ? a : ''; } catch { return ''; } })();
 
+  // "Hide interface": on animated themes, tuck the whole page away so the background mini-game
+  // gets the full screen. A small button (bigger on phones) brings it back.
+  const uiBtn = document.createElement('button');
+  uiBtn.id = 'ui-toggle'; uiBtn.type = 'button';
+  document.body.appendChild(uiBtn);
+  function syncUiToggle() {
+    const fx = document.documentElement.dataset.fx;
+    const on = !!fx;
+    uiBtn.hidden = !on;
+    if (!on && document.body.classList.contains('ui-hidden')) document.body.classList.remove('ui-hidden');
+    const hidden = document.body.classList.contains('ui-hidden');
+    uiBtn.innerHTML = hidden ? '<span aria-hidden="true">👁</span><b>Show game</b>' : '<span aria-hidden="true">🙈</span><b>Hide interface</b>';
+    uiBtn.title = hidden ? 'Show the game again' : 'Hide the interface to play with the background';
+    uiBtn.setAttribute('aria-pressed', String(hidden));
+  }
+  uiBtn.onclick = () => { document.body.classList.toggle('ui-hidden'); syncUiToggle(); };
+  window.addEventListener('sliver:theme', () => setTimeout(syncUiToggle, 0));
+  new MutationObserver(syncUiToggle).observe(document.documentElement, { attributes: true, attributeFilter: ['data-fx'] });
+  syncUiToggle();
+
   function toast(text, kind = 'info', ms = 3800) {
     const el = document.createElement('div');
     el.className = `toast ${kind}`;
@@ -2087,7 +2107,7 @@
             <div><div class="label">Overall rank</div><div class="pf-rank">${p.globalRank ? `#${fmt(p.globalRank)}` : 'Unranked'}<small>${p.globalRank ? ` of ${fmt(p.players)}` : ''}</small></div></div>
           </div>
         </div>
-        <div class="pf-big acct-av${avClass(p.icon, p.avatar)}">${avatar(p.icon, p.name, p.avatar)}</div>
+        <div class="pf-bigwrap"><div class="pf-big acct-av${avClass(p.icon, p.avatar)}">${avatar(p.icon, p.name, p.avatar)}</div></div>
       </div>
       <div class="tiles">
         <div class="tile"><b>${fmt(st.games)}</b><span>Ranked games</span></div>
