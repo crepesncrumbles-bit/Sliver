@@ -1415,6 +1415,9 @@
 
   function afterGuess(res) {
     if (!res.ok) return toast(res.error, 'error');
+    // Confetti right away for a first (or solo) correct guess, even if the screen moves on to the answer.
+    const solo = state && state.players.filter((p) => p.connected).length < 2;
+    if (res.correct && (res.bonus || solo) && !celebrated) { celebrated = true; setTimeout(() => confetti(), 60); }
     if (!res.correct) {
       $('#guess-card').classList.add('shake');
       setTimeout(() => $('#guess-card').classList.remove('shake'), 400);
@@ -1437,9 +1440,10 @@
   function confetti(target) {
     if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const box = $('#confetti');
-    const el = target || $('#done-card');
-    const r = el && !el.hidden ? el.getBoundingClientRect() : null;
-    if (!r || !r.width) return;
+    // Around the box you're looking at: the "Got it" card, or the answer card if the song already ended.
+    const visible = (x) => x && x.offsetParent !== null && x.getBoundingClientRect().width > 0;
+    const el = [target, $('#done-card'), document.querySelector('.reveal-card'), document.querySelector('.screen:not([hidden]) .card')].find(visible);
+    const r = el ? el.getBoundingClientRect() : { left: innerWidth / 2 - 120, right: innerWidth / 2 + 120, top: innerHeight / 2 - 80, bottom: innerHeight / 2 + 80, width: 240, height: 160 };
     const css = getComputedStyle(document.documentElement);
     const theme = document.documentElement.dataset.theme || '';
     let colors = ['--accent', '--pop', '--brand', '--mint', '--accent-hover', '--pop-soft']
@@ -1448,7 +1452,7 @@
     if (theme === 'mono') colors = ['#111', '#fff', '#888'];
     const kinds = CONFETTI_STYLE[theme] || ['rect', 'rect', 'dot'];
     const pieces = [];
-    const N = 46;
+    const N = 110;
     for (let i = 0; i < N; i++) {
       // Start on the box's border, fly outward a little, then drift down and fade.
       const side = i % 4, t = Math.random();
@@ -1456,13 +1460,13 @@
       const y = side === 0 ? r.top : side === 1 ? r.top + t * r.height : side === 2 ? r.bottom : r.top + t * r.height;
       const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
       const len = Math.hypot(x - cx, y - cy) || 1;
-      const dist = 26 + Math.random() * 46;
+      const dist = 70 + Math.random() * 130;
       const dx = ((x - cx) / len) * dist + (Math.random() - 0.5) * 20;
       const dy = ((y - cy) / len) * dist + (Math.random() - 0.5) * 20;
       const p = document.createElement('i');
       const color = colors[i % colors.length];
       const kind = kinds[Math.floor(Math.random() * kinds.length)];
-      const sz = 5 + Math.random() * 5;
+      const sz = 10 + Math.random() * 8;
       let st = `left:${x}px;top:${y}px;`;
       if (kind === 'rect') st += `width:${sz}px;height:${sz * 1.6}px;background:${color};border-radius:2px`;
       else if (kind === 'dot') st += `width:${sz}px;height:${sz}px;background:${color};border-radius:50%`;
@@ -1470,8 +1474,8 @@
       else if (kind === 'egg') st += `width:${sz * 1.1}px;height:${sz * 1.45}px;background:${color};border-radius:50% 50% 50% 50% / 60% 60% 40% 40%`;
       else if (kind === 'bubble') st += `width:${sz * 1.5}px;height:${sz * 1.5}px;border:2px solid ${color};border-radius:50%;background:rgba(255,255,255,.15)`;
       else if (kind === 'spark') st += `width:${sz * 0.7}px;height:${sz * 0.7}px;background:${color};border-radius:50%;box-shadow:0 0 ${sz}px ${sz * 0.4}px ${color}`;
-      else if (kind === 'bar') st += `width:3px;height:${sz * 2.4}px;background:${color};border-radius:2px;box-shadow:0 0 6px ${color}`;
-      else { p.className = 'g'; p.textContent = kind; st += `font-size:${12 + Math.random() * 8}px;color:${color}`; }
+      else if (kind === 'bar') st += `width:5px;height:${sz * 2.4}px;background:${color};border-radius:2px;box-shadow:0 0 6px ${color}`;
+      else { p.className = 'g'; p.textContent = kind; st += `font-size:${22 + Math.random() * 14}px;color:${color}`; }
       p.style.cssText = st;
       box.appendChild(p);
       pieces.push(p);
@@ -1479,8 +1483,8 @@
       p.animate([
         { transform: 'translate(-50%,-50%) scale(.4) rotate(0deg)', opacity: 1 },
         { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(1) rotate(${rot / 2}deg)`, opacity: 1, offset: 0.45 },
-        { transform: `translate(calc(-50% + ${dx * 1.15}px), calc(-50% + ${dy * 1.15 + 34}px)) scale(.95) rotate(${rot * 0.8}deg)`, opacity: 1, offset: 0.75 },
-        { transform: `translate(calc(-50% + ${dx * 1.25}px), calc(-50% + ${dy * 1.25 + (kind === 'bubble' ? -40 : 70)}px)) scale(.85) rotate(${rot}deg)`, opacity: 0 },
+        { transform: `translate(calc(-50% + ${dx * 1.15}px), calc(-50% + ${dy * 1.15 + 60}px)) scale(.95) rotate(${rot * 0.8}deg)`, opacity: 1, offset: 0.75 },
+        { transform: `translate(calc(-50% + ${dx * 1.25}px), calc(-50% + ${dy * 1.25 + (kind === 'bubble' ? -70 : 140)}px)) scale(.85) rotate(${rot}deg)`, opacity: 0 },
       ], { duration: 2400 + Math.random() * 900, delay: Math.random() * 250, easing: 'cubic-bezier(.15,.7,.3,1)', fill: 'forwards' });
     }
     setTimeout(() => pieces.forEach((p) => p.remove()), 3800);
