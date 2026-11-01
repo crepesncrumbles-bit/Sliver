@@ -1835,8 +1835,20 @@
   // ---------- accounts ----------
   let auth = (() => { try { return JSON.parse(localStorage.getItem('sliver.auth')) || null; } catch { return null; } })();
   function authToken() { return auth && auth.token ? auth.token : null; }
+  // Switching accounts (log out, or log in as someone else) starts you fresh on the home screen:
+  // you leave any room you were in, and your name goes back to the new account's username.
+  async function resetToHome() {
+    for (const id of ['settings', 'profile', 'friends', 'players', 'boards']) { try { closeSheet(id); } catch {} }
+    if (state) { try { await emit('leave'); } catch {} }
+    goHome();
+    nameEdited = false;
+    $('#name').value = auth && auth.user ? auth.user.name : '';
+    renderAccount();
+  }
   function saveAuth(a) {
+    const before = auth && auth.user ? auth.user.id : null, after = a && a.user ? a.user.id : null;
     auth = a;
+    if (before && before !== after) setTimeout(resetToHome, 0); // logged out, or a different account
     try { a ? localStorage.setItem('sliver.auth', JSON.stringify(a)) : localStorage.removeItem('sliver.auth'); } catch {}
     window.SliverThemes.setOwned(a && a.user ? a.user.themes || [] : []);
     renderAccount();
@@ -2059,7 +2071,7 @@
   };
   async function logout() {
     await api('/api/logout', { method: 'POST' });
-    saveAuth(null);
+    saveAuth(null); // also takes you back to the home screen
     tellServerAboutLogin();
     toast('Logged out', 'info');
   }
