@@ -780,3 +780,7 @@ body.in-game #decor-front { display: none; }
 /* A card you're typing in (or with a dropdown open) always sits above the cards after it,
    even in themes whose cards blur/animate (which would otherwise cover the dropdown). */
 .card:focus-within, .card:has(.suggestions:not([hidden])) { position: relative; z-index: 30; }
+
+/* While drawing on the background (Sakura), don't select text or scroll. */
+.fx-drawing, .fx-drawing body { user-select: none; -webkit-user-select: none; }
+.fx-drawing body { touch-action: none; }

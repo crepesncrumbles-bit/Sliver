@@ -40,8 +40,16 @@
     if (light && last && now - last < 31) { if (!reduce && !document.hidden) raf = requestAnimationFrame(frame); return; }
     const dt = Math.min(0.05, (now - (last || now)) / 1000);
     last = now;
-    scene.draw(dt, (now - t0) / 1000);
-    drawParts(dt);
+    try {
+      scene.draw(dt, (now - t0) / 1000);
+      drawParts(dt);
+    } catch (err) {
+      // A drawing error must never leave the canvas tilted or stuck: wipe the drawing state.
+      if (!frame.warned) { frame.warned = true; console.warn('fx:', err); }
+      if (ctx.reset) ctx.reset(); else { canvas.width = canvas.width; }
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      parts = [];
+    }
     if (!reduce && !document.hidden) raf = requestAnimationFrame(frame);
   }
   function startLoop() { if (!raf && scene) { last = 0; raf = requestAnimationFrame(frame); } }
@@ -160,10 +168,78 @@
         }
         ctx.restore();
       }
+      // Swipe to draw: the swipe becomes a branch (thick where you started, thin at the end) that
+      // sprouts twigs and blossoms as you go, drops a few petals, and fades after a while.
+      let trees = [], drawing = null, now = 0;
+      const BRANCH = '#5A2E3A';
+      function addBlossom(tr, x, y, big) { tr.flowers.push({ x, y, r: big ? rand(7, 10) : rand(5, 8), at: now, rot: rand(0, TAU), col: pick(['#FFE4EC', '#FFC7D9', '#FFB3CB', '#FFFFFF']) }); }
+      function addTwig(tr, x, y, ang) {
+        const a = ang + (Math.random() < 0.5 ? -1 : 1) * rand(0.6, 1.1), len = rand(18, 42);
+        const ex = x + Math.cos(a) * len, ey = y + Math.sin(a) * len;
+        tr.twigs.push({ x, y, ex, ey, w: rand(1.5, 3), at: now });
+        addBlossom(tr, ex, ey, true);
+        if (Math.random() < 0.6) addBlossom(tr, (x + ex) / 2 + rand(-4, 4), (y + ey) / 2 + rand(-4, 4), false);
+      }
+      function blossom(f, k) {
+        const r = f.r * k;
+        if (r < 0.5) return;
+        for (let i = 0; i < 5; i++) {
+          const a = f.rot + (i / 5) * TAU;
+          ctx.fillStyle = i % 2 ? f.col : '#FFD6E2';
+          ctx.beginPath(); ctx.ellipse(f.x + Math.cos(a) * r * 0.75, f.y + Math.sin(a) * r * 0.75, r * 0.72, r * 0.48, a, 0, TAU); ctx.fill();
+        }
+        ctx.fillStyle = '#E86A92'; ctx.beginPath(); ctx.arc(f.x, f.y, r * 0.3, 0, TAU); ctx.fill();
+        ctx.fillStyle = '#FFE27A'; ctx.beginPath(); ctx.arc(f.x, f.y, r * 0.14, 0, TAU); ctx.fill();
+      }
+      function drawTrees() {
+        for (const tr of trees) {
+          const age = now - (tr.done || now);
+          const fade = tr.done ? Math.max(0, 1 - Math.max(0, age - 22) / 3) : 1; // lasts ~25 s after you finish
+          if (fade <= 0) continue;
+          ctx.globalAlpha = fade;
+          ctx.strokeStyle = BRANCH; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+          const n = tr.pts.length;
+          for (let i = 1; i < n; i++) {
+            ctx.lineWidth = Math.max(1.6, 11 * (1 - i / (n + 12)));
+            ctx.beginPath(); ctx.moveTo(tr.pts[i - 1][0], tr.pts[i - 1][1]); ctx.lineTo(tr.pts[i][0], tr.pts[i][1]); ctx.stroke();
+          }
+          for (const w of tr.twigs) {
+            const k = Math.min(1, (now - w.at) / 0.25);
+            ctx.lineWidth = w.w; ctx.beginPath(); ctx.moveTo(w.x, w.y); ctx.lineTo(w.x + (w.ex - w.x) * k, w.y + (w.ey - w.y) * k); ctx.stroke();
+          }
+          for (const f of tr.flowers) {
+            const k = Math.min(1, Math.max(0, (now - f.at - 0.1) / 0.35));
+            blossom(f, k < 1 ? k * (1.25 - 0.25 * k) : 1);
+            if (tr.done && Math.random() < 0.0015) emit({ kind: 'petal', x: f.x, y: f.y, vx: rand(-20, 20), vy: rand(30, 60), g: 20, s: rand(5, 8), rot: rand(0, TAU), vr: rand(-3, 3), decay: 0.25, c: f.col });
+          }
+          ctx.globalAlpha = 1;
+        }
+        trees = trees.filter((tr) => !tr.done || now - tr.done < 25);
+      }
       reset();
       return {
         resize: reset,
         hover: () => true,
+        dragStart(x, y) {
+          if (trees.length >= 6) trees.shift();
+          drawing = { pts: [[x, y]], twigs: [], flowers: [], done: 0, len: 0, nextTwig: rand(28, 50), nextFlower: rand(14, 26) };
+          trees.push(drawing);
+        },
+        dragMove(x, y) {
+          const tr = drawing; if (!tr) return;
+          const [lx, ly] = tr.pts[tr.pts.length - 1], d = Math.hypot(x - lx, y - ly);
+          if (d < 6 || tr.pts.length > 260) return;
+          tr.pts.push([x, y]); tr.len += d;
+          const ang = Math.atan2(y - ly, x - lx);
+          if (tr.len > tr.nextTwig) { addTwig(tr, x, y, ang); tr.nextTwig = tr.len + rand(30, 60); }
+          if (tr.len > tr.nextFlower) { addBlossom(tr, x + rand(-6, 6), y + rand(-6, 6), false); tr.nextFlower = tr.len + rand(16, 30); }
+        },
+        dragEnd() {
+          const tr = drawing; drawing = null; if (!tr) return;
+          const [x, y] = tr.pts[tr.pts.length - 1];
+          for (let i = 0; i < 3; i++) addBlossom(tr, x + rand(-8, 8), y + rand(-8, 8), true);
+          tr.done = now;
+        },
         // Tap: a gust of blossoms bursts out and flutters down.
         tap(x, y) {
           burst(x, y, 24, (i, a) => { const v = rand(120, 340); return { kind: 'petal', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 80, g: 160, drag: 1.6, s: rand(6, 12), rot: rand(0, TAU), vr: rand(-6, 6), decay: rand(0.35, 0.55), c: pick(['#FFE4EC', '#FFC7D9', '#FFB3CB', '#FFFFFF', '#FF9EBB']) }; });
@@ -175,6 +251,8 @@
           ctx.fillRect(0, 0, W, H);
           for (const b of bokeh) { b.y -= b.v * dt; if (b.y < -b.r) b.y = H + b.r; glowDot(b.x + Math.sin(t * 0.3 + b.p) * 20, b.y, b.r, '#FFFFFF', b.a); }
           if (W > 700) branch();
+          now = t;
+          drawTrees();
           for (const q of petals) {
             q.y += q.vy * dt; q.x += Math.sin(t * 0.9 + q.p) * q.sway * dt + 12 * dt; q.rot += q.spin * dt;
             if (q.y > H + 30) Object.assign(q, newPetal(false));
@@ -184,75 +262,223 @@
       };
     },
 
-    // Pastel sky: puffy clouds drifting at different depths, hearts floating up, twinkles.
+    // Pastel sky: crisp cartoon clouds, hearts floating up, twinkles. Tap the sky to set a little
+    // bird flying; tap a bird and it does a loop; tap a cloud and it boings and rains hearts.
     cottoncandy() {
-      let clouds = [], hearts = [], stars = [], cloudsNow = [];
-      const hitCloud = (x, y) => cloudsNow.slice().reverse().find((c) => c.puffs.some(([dx, dy, r]) => Math.hypot(x - (c.x + dx * c.s), y - (c.y + dy * c.s)) < r * c.s * 1.1));
-      const cloud = (any) => ({ x: any ? rand(-200, W) : -320, y: rand(20, H * 0.85), s: rand(0.5, 1.5), v: rand(8, 26), puffs: Array.from({ length: 6 }, (_, i) => [i * 34 - 85 + rand(-8, 8), rand(-24, 6), rand(26, 48)]) });
-      const heart = (any) => ({ x: rand(0, W), y: any ? rand(0, H) : H + 30, s: rand(8, 18), v: rand(18, 40), p: rand(0, TAU), col: pick(['#FF8FC8', '#FFB6D9', '#FFFFFF', '#F472B6', '#C4B5FD']) });
+      let clouds = [], hearts = [], stars = [], birds = [];
+      const BIRD_COLS = [['#FF9EC7', '#FF6FAE'], ['#9FD8FF', '#5FB8F5'], ['#FFE07A', '#F6C443'], ['#C9B6FF', '#A58BFF'], ['#9EF0C8', '#5FD9A2']];
+      // Each cloud is drawn once into a sprite (sharp, at double resolution) and reused.
+      function cloudSprite() {
+        const w = 280, h = 140, c = document.createElement('canvas');
+        c.width = w * 2; c.height = h * 2;
+        const g = c.getContext('2d'); g.scale(2, 2);
+        const n = 6 + Math.floor(Math.random() * 3);
+        const puffs = Array.from({ length: n }, (_, i) => {
+          const k = i / (n - 1);
+          return [40 + k * 200 + rand(-10, 10), 82 - Math.sin(k * Math.PI) * 32 + rand(-6, 6), 30 + Math.sin(k * Math.PI) * 26 + rand(-4, 4)];
+        });
+        puffs.push([140, 96, 40], [90, 98, 30], [190, 98, 30]);
+        g.fillStyle = 'rgba(214,180,240,.55)'; // soft lilac underside
+        for (const [x, y, r] of puffs) { g.beginPath(); g.arc(x, y + 7, r, 0, TAU); g.fill(); }
+        const body = g.createLinearGradient(0, 20, 0, 130);
+        body.addColorStop(0, '#FFFFFF'); body.addColorStop(0.75, '#FFF6FB'); body.addColorStop(1, '#F7E6FA');
+        g.fillStyle = body;
+        for (const [x, y, r] of puffs) { g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill(); }
+        g.fillStyle = 'rgba(255,255,255,.95)'; // top highlights
+        for (const [x, y, r] of puffs.slice(0, n)) { g.beginPath(); g.arc(x - r * 0.25, y - r * 0.3, r * 0.45, 0, TAU); g.fill(); }
+        return { c, w, h };
+      }
+      const cloud = (any) => ({ x: any ? rand(-200, W) : -320, y: rand(30, H * 0.85), s: rand(0.45, 1.15), v: rand(8, 22), sp: cloudSprite(), boing: 0 });
+      const heart = (any) => ({ x: rand(0, W), y: any ? rand(0, H) : H + 30, s: rand(8, 16), v: rand(18, 40), p: rand(0, TAU), col: pick(['#FF8FC8', '#FFB6D9', '#FFFFFF', '#F472B6', '#C4B5FD']) });
       const reset = () => {
-        clouds = Array.from({ length: Math.round(9 * density()) }, () => cloud(true)).sort((a, b) => a.s - b.s);
-        hearts = Array.from({ length: Math.round(18 * density()) }, () => heart(true));
-        stars = Array.from({ length: Math.round(40 * density()) }, () => ({ x: rand(0, W), y: rand(0, H), s: rand(3, 7), p: rand(0, TAU), v: rand(1.5, 3.5) }));
+        clouds = Array.from({ length: Math.round(8 * density()) }, () => cloud(true)).sort((a, b) => a.s - b.s);
+        hearts = Array.from({ length: Math.round(16 * density()) }, () => heart(true));
+        stars = Array.from({ length: Math.round(36 * density()) }, () => ({ x: rand(0, W), y: rand(0, H), s: rand(3, 7), p: rand(0, TAU), v: rand(1.5, 3.5) }));
       };
+      const cloudBox = (c) => ({ x: c.x - (c.sp.w * c.s) / 2, y: c.y - (c.sp.h * c.s) / 2, w: c.sp.w * c.s, h: c.sp.h * c.s });
+      const hitCloud = (x, y) => clouds.slice().reverse().find((c) => { const b = cloudBox(c); return x > b.x + b.w * 0.1 && x < b.x + b.w * 0.9 && y > b.y + b.h * 0.2 && y < b.y + b.h * 0.85; });
+      const hitBird = (x, y) => birds.find((b) => Math.hypot(x - b.x, y - b.y) < 26 * b.s);
+      function bird(b, t) {
+        const flap = Math.sin(t * 14 + b.p);
+        ctx.save(); ctx.translate(b.x, b.y); ctx.scale(b.dir * b.s, b.s); ctx.rotate(b.tilt || 0);
+        ctx.fillStyle = b.col[1]; // back wing
+        ctx.beginPath(); ctx.ellipse(-2, -4, 11, Math.max(1, 5 + flap * 4), -0.5 - flap * 0.5, 0, TAU); ctx.fill();
+        ctx.fillStyle = b.col[0]; // body
+        ctx.beginPath(); ctx.ellipse(0, 0, 15, 11, 0, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(-12, -2); ctx.lineTo(-22, -7); ctx.lineTo(-20, 3); ctx.closePath(); ctx.fill(); // tail
+        ctx.fillStyle = '#FFFFFF'; ctx.beginPath(); ctx.ellipse(3, 4, 8, 5, 0, 0, TAU); ctx.fill(); // tummy
+        ctx.fillStyle = b.col[1]; // front wing
+        ctx.beginPath(); ctx.ellipse(-3, -2, 10, Math.max(1, 4 + flap * 5), -0.3 - flap * 0.6, 0, TAU); ctx.fill();
+        ctx.fillStyle = '#2B1B2E'; ctx.beginPath(); ctx.arc(8, -3, 2, 0, TAU); ctx.fill();
+        ctx.fillStyle = '#FFFFFF'; ctx.beginPath(); ctx.arc(8.6, -3.6, 0.7, 0, TAU); ctx.fill();
+        ctx.fillStyle = 'rgba(255,120,160,.55)'; ctx.beginPath(); ctx.ellipse(7, 2, 2.5, 1.5, 0, 0, TAU); ctx.fill();
+        ctx.fillStyle = '#FFB347'; ctx.beginPath(); ctx.moveTo(14, -3); ctx.lineTo(20, -1); ctx.lineTo(14, 1); ctx.closePath(); ctx.fill();
+        ctx.restore();
+      }
       reset();
       return {
         resize: reset,
         hover: () => true,
-        // Tap a cloud: it boings and rains hearts. Anywhere else: a pop of hearts and twinkles.
         tap(x, y) {
+          const b = hitBird(x, y);
+          if (b) { if (!b.loop) { b.loop = 1; b.cx = b.x; b.cy = b.y - 34 * b.s; } burst(b.x, b.y, 6, (i, a) => ({ kind: 'heart', x: b.x, y: b.y, vx: Math.cos(a) * 80, vy: Math.sin(a) * 80 - 40, drag: 2, s: rand(5, 8), decay: 0.9, c: pick(['#FF8FC8', '#F472B6', '#FFFFFF']) })); return true; }
           const c = hitCloud(x, y);
           if (c) { c.boing = 1; return true; }
-          burst(x, y, 12, (i, a) => { const v = rand(90, 220); return { kind: 'heart', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 40, drag: 2, g: -20, s: rand(6, 12), decay: 0.8, c: pick(['#FF8FC8', '#FFB6D9', '#FFFFFF', '#F472B6', '#C4B5FD']) }; });
-          burst(x, y, 6, () => ({ kind: 'star', x: x + rand(-40, 40), y: y + rand(-40, 40), s: rand(4, 8), decay: 1.4, c: '#FFFFFF' }));
+          if (birds.length >= 10) birds.shift();
+          const dir = x < W / 2 ? 1 : -1;
+          birds.push({ x, y, dir, s: rand(0.9, 1.3), v: rand(90, 140), p: rand(0, TAU), col: pick(BIRD_COLS), loop: 0, born: 0 });
+          burst(x, y, 6, () => ({ kind: 'star', x: x + rand(-20, 20), y: y + rand(-20, 20), s: rand(3, 6), decay: 1.6, c: '#FFFFFF' }));
           return true;
         },
         draw(dt, t) {
           const shift = (Math.sin(t * 0.08) + 1) / 2;
-          cloudsNow = clouds;
           ctx.fillStyle = grad(0, H, [[0, `hsl(${330 - shift * 20},90%,84%)`], [0.5, `hsl(${265 + shift * 10},85%,82%)`], [1, `hsl(${200 + shift * 15},90%,80%)`]]);
           ctx.fillRect(0, 0, W, H);
           for (const s of stars) sparkle(s.x, s.y, s.s, '#FFFFFF', 0.25 + 0.75 * Math.abs(Math.sin(t * s.v + s.p)));
           for (const c of clouds) {
-            c.x += c.v * c.s * dt; if (c.x > W + 260) Object.assign(c, cloud(false));
-            c.boing = Math.max(0, (c.boing || 0) - dt * 1.6);
-            const sq = c.boing ? Math.sin(c.boing * 18) * c.boing * 0.18 : 0; // wobbly squash after a tap
-            if (c.boing && Math.random() < dt * 14) emit({ kind: 'heart', x: c.x + rand(-80, 80) * c.s, y: c.y + 20 * c.s, vy: rand(60, 120), vx: rand(-15, 15), s: rand(5, 9), decay: 0.7, c: pick(['#FF8FC8', '#F472B6', '#C4B5FD']) });
-            for (const [dx0, dy0, r] of c.puffs) {
-              const dx = dx0 * (1 + sq), dy = dy0 * (1 - sq);
-              const g = ctx.createRadialGradient(c.x + dx * c.s, c.y + dy * c.s, 0, c.x + dx * c.s, c.y + dy * c.s, r * c.s * 1.6);
-              g.addColorStop(0, 'rgba(255,255,255,.95)'); g.addColorStop(0.6, 'rgba(255,255,255,.7)'); g.addColorStop(1, 'rgba(255,255,255,0)');
-              ctx.fillStyle = g; ctx.beginPath(); ctx.arc(c.x + dx * c.s, c.y + dy * c.s, r * c.s * 1.6, 0, TAU); ctx.fill();
-            }
+            c.x += c.v * c.s * dt; if (c.x > W + 200) Object.assign(c, cloud(false));
+            c.boing = Math.max(0, c.boing - dt * 1.4);
+            const sq = c.boing ? Math.sin(c.boing * 16) * c.boing * 0.16 : 0;
+            if (c.boing && Math.random() < dt * 16) emit({ kind: 'heart', x: c.x + rand(-90, 90) * c.s, y: c.y + 30 * c.s, vy: rand(70, 130), vx: rand(-15, 15), s: rand(5, 9), decay: 0.7, c: pick(['#FF8FC8', '#F472B6', '#C4B5FD']) });
+            const w = c.sp.w * c.s * (1 + sq), h = c.sp.h * c.s * (1 - sq);
+            ctx.drawImage(c.sp.c, c.x - w / 2, c.y - h / 2 + (c.sp.h * c.s - h) / 2, w, h);
           }
           for (const h of hearts) {
             h.y -= h.v * dt; if (h.y < -30) Object.assign(h, heart(false));
-            ctx.globalAlpha = 0.75; ctx.fillStyle = h.col;
+            ctx.globalAlpha = 0.8; ctx.fillStyle = h.col;
             heartPath(h.x + Math.sin(t * 1.2 + h.p) * 18, h.y, h.s * (1 + 0.08 * Math.sin(t * 4 + h.p))); ctx.fill();
             ctx.globalAlpha = 1;
           }
+          for (const b of birds) {
+            if (b.loop) { // a loop-the-loop, then carry on
+              b.loop += dt * 1.4;
+              const a = (b.loop - 1) * TAU;
+              b.x = b.cx + Math.sin(a) * 34 * b.s * b.dir; b.y = b.cy + Math.cos(a) * 34 * b.s; b.tilt = -a;
+              if (b.loop >= 2) { b.loop = 0; b.tilt = 0; b.x = b.cx; b.y = b.cy + 34 * b.s; }
+            } else {
+              b.x += b.dir * b.v * dt; b.y += Math.sin(t * 2.4 + b.p) * 26 * dt;
+              b.tilt = Math.sin(t * 2.4 + b.p) * 0.12;
+            }
+            bird(b, t);
+          }
+          birds = birds.filter((b) => b.x > -60 && b.x < W + 60);
         },
       };
     },
 
-    // Underwater: swaying light rays, bubbles, little fish and glittering scales.
+    // Underwater: swaying light rays, bubbles and glittering scales. Every tap brings in a new sea
+    // creature (fish, jellyfish, turtle, seahorse, puffer, octopus, whale, ray) that swims back and
+    // forth across the screen. Tap a creature and it does a happy little spin.
     lagoon() {
-      let bubbles = [], fish = [], glints = [];
+      let bubbles = [], glints = [], pals = [], nextKind = 0;
+      const KINDS = ['fish', 'jelly', 'turtle', 'seahorse', 'puffer', 'octopus', 'whale', 'ray', 'clown'];
       const bubble = (any) => ({ x: rand(0, W), y: any ? rand(0, H) : H + 20, r: rand(2, 9), v: rand(25, 70), p: rand(0, TAU) });
-      const newFish = () => ({ x: Math.random() < 0.5 ? -60 : W + 60, y: rand(H * 0.25, H * 0.9), s: rand(0.6, 1.3), v: rand(30, 60), col: pick(['#5EEAD4', '#A78BFA', '#F0ABFC', '#FDE68A']), p: rand(0, TAU) });
       const reset = () => {
-        bubbles = Array.from({ length: Math.round(45 * density()) }, () => bubble(true));
-        fish = Array.from({ length: Math.round(5 * density()) }, newFish).map((f) => ({ ...f, x: rand(0, W) }));
-        glints = Array.from({ length: Math.round(30 * density()) }, () => ({ x: rand(0, W), y: rand(0, H), p: rand(0, TAU), v: rand(2, 5) }));
+        bubbles = Array.from({ length: Math.round(40 * density()) }, () => bubble(true));
+        glints = Array.from({ length: Math.round(28 * density()) }, () => ({ x: rand(0, W), y: rand(0, H), p: rand(0, TAU), v: rand(2, 5) }));
+        for (const c of pals) { c.x = Math.min(W - 40, c.x); c.y = Math.min(H - 40, c.y); }
       };
-      const hitBubble = (x, y) => bubbles.find((b) => Math.hypot(x - b.x, y - b.y) < Math.max(14, b.r + 8));
-      const hitFish = (x, y) => fish.find((f) => Math.abs(x - f.x) < 34 * f.s && Math.abs(y - f.y) < 18 * f.s);
+      const hitPal = (x, y) => pals.slice().reverse().find((c) => Math.abs(x - c.x) < 40 * c.s && Math.abs(y - c.y) < 32 * c.s);
+      const hitBubble = (x, y) => bubbles.find((b) => Math.hypot(x - b.x, y - b.y) < b.r + 5);
+      function eye(x, y, r) { ctx.fillStyle = '#1B1030'; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill(); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x + r * 0.35, y - r * 0.35, r * 0.35, 0, TAU); ctx.fill(); }
+      function blush(x, y, r) { ctx.fillStyle = 'rgba(255,120,170,.5)'; ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.6, 0, 0, TAU); ctx.fill(); }
+      function creature(c, t) {
+        const sw = Math.sin(t * 6 + c.p);
+        ctx.save(); ctx.translate(c.x, c.y); ctx.scale(c.face * c.s, c.s); ctx.rotate(c.spin || 0);
+        switch (c.kind) {
+          case 'fish': {
+            ctx.fillStyle = c.col; ctx.beginPath(); ctx.ellipse(0, 0, 24, 14, 0, 0, TAU); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(-20, 0); ctx.lineTo(-38, -12 + sw * 4); ctx.lineTo(-38, 12 + sw * 4); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.beginPath(); ctx.ellipse(-4, 0, 4, 12, 0, 0, TAU); ctx.fill();
+            eye(13, -3, 3.5); blush(12, 5, 3); break;
+          }
+          case 'clown': {
+            ctx.fillStyle = '#FF8A3D'; ctx.beginPath(); ctx.ellipse(0, 0, 22, 13, 0, 0, TAU); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(-18, 0); ctx.lineTo(-32, -10 + sw * 4); ctx.lineTo(-32, 10 + sw * 4); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = '#FFFFFF'; for (const sx of [8, -6]) { ctx.beginPath(); ctx.ellipse(sx, 0, 3.5, 12, 0, 0, TAU); ctx.fill(); }
+            eye(14, -3, 3); break;
+          }
+          case 'jelly': {
+            const pulse = 1 + Math.sin(t * 3 + c.p) * 0.12;
+            ctx.strokeStyle = 'rgba(255,200,240,.8)'; ctx.lineWidth = 2;
+            for (let k = -3; k <= 3; k++) { ctx.beginPath(); ctx.moveTo(k * 5, 4); for (let j = 1; j < 6; j++) ctx.lineTo(k * 5 + Math.sin(t * 4 + j + k) * 4, 4 + j * 7); ctx.stroke(); }
+            ctx.fillStyle = 'rgba(244,170,255,.85)'; ctx.beginPath(); ctx.ellipse(0, 0, 22 * pulse, 18 / pulse, 0, Math.PI, TAU); ctx.fill();
+            ctx.fillStyle = 'rgba(255,255,255,.4)'; ctx.beginPath(); ctx.ellipse(-7, -9, 5, 4, -0.4, 0, TAU); ctx.fill();
+            eye(-6, -5, 2.4); eye(6, -5, 2.4); break;
+          }
+          case 'turtle': {
+            const pad = Math.sin(t * 4 + c.p);
+            ctx.fillStyle = '#7FD8A6';
+            ctx.beginPath(); ctx.ellipse(10, 14, 10, 4, 0.6 + pad * 0.5, 0, TAU); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(-12, 14, 9, 4, -0.6 - pad * 0.5, 0, TAU); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(26, -2, 9, 8, 0, 0, TAU); ctx.fill();
+            ctx.fillStyle = '#3E9E6E'; ctx.beginPath(); ctx.ellipse(0, 0, 24, 16, 0, Math.PI, TAU); ctx.lineTo(24, 4); ctx.lineTo(-24, 4); ctx.fill();
+            ctx.fillStyle = '#5CC48D'; for (const [hx, hy] of [[-10, -6], [2, -10], [12, -5], [0, -2]]) { ctx.beginPath(); ctx.arc(hx, hy, 4.5, 0, TAU); ctx.fill(); }
+            eye(29, -4, 2.2); blush(27, 2, 2.5); break;
+          }
+          case 'seahorse': {
+            ctx.fillStyle = '#FFD86B';
+            ctx.beginPath(); ctx.ellipse(0, -12, 10, 9, 0, 0, TAU); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(10, -14, 9, 4, 0.2, 0, TAU); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(-2, 4, 9, 13, 0.1, 0, TAU); ctx.fill();
+            ctx.strokeStyle = '#FFD86B'; ctx.lineWidth = 6; ctx.lineCap = 'round';
+            ctx.beginPath(); ctx.moveTo(-4, 14); ctx.quadraticCurveTo(-10, 28, 2, 28); ctx.quadraticCurveTo(8, 26, 4, 22); ctx.stroke();
+            ctx.fillStyle = '#FFB347'; ctx.beginPath(); ctx.ellipse(-10, 0, 5, 8 + sw * 2, 0, 0, TAU); ctx.fill();
+            eye(3, -14, 2.4); blush(4, -8, 2.5); break;
+          }
+          case 'puffer': {
+            const big = 1 + (c.puff || 0) * 0.6;
+            ctx.scale(big, big);
+            ctx.strokeStyle = '#E8A93A'; ctx.lineWidth = 2;
+            for (let k = 0; k < 14; k++) { const a = (k / 14) * TAU; ctx.beginPath(); ctx.moveTo(Math.cos(a) * 16, Math.sin(a) * 15); ctx.lineTo(Math.cos(a) * 22, Math.sin(a) * 20); ctx.stroke(); }
+            ctx.fillStyle = '#FFE27A'; ctx.beginPath(); ctx.ellipse(0, 0, 18, 16, 0, 0, TAU); ctx.fill();
+            ctx.fillStyle = '#FFF6D5'; ctx.beginPath(); ctx.ellipse(2, 6, 12, 7, 0, 0, TAU); ctx.fill();
+            ctx.fillStyle = '#FFC24A'; ctx.beginPath(); ctx.moveTo(-16, 0); ctx.lineTo(-26, -7 + sw * 3); ctx.lineTo(-26, 7 + sw * 3); ctx.fill();
+            eye(9, -4, 3); blush(8, 4, 3); break;
+          }
+          case 'octopus': {
+            ctx.strokeStyle = '#FF8FB8'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+            for (let k = 0; k < 5; k++) { const bx = -12 + k * 6; ctx.beginPath(); ctx.moveTo(bx, 6); ctx.quadraticCurveTo(bx + Math.sin(t * 3 + k) * 8, 20, bx - 4 + Math.sin(t * 3 + k + 1) * 6, 28); ctx.stroke(); }
+            ctx.fillStyle = '#FF9EC7'; ctx.beginPath(); ctx.ellipse(0, -4, 18, 17, 0, 0, TAU); ctx.fill();
+            ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.beginPath(); ctx.ellipse(-6, -12, 5, 4, -0.4, 0, TAU); ctx.fill();
+            eye(-6, -2, 2.6); eye(6, -2, 2.6); blush(-10, 5, 2.5); blush(10, 5, 2.5); break;
+          }
+          case 'whale': {
+            ctx.fillStyle = '#7FA8F5';
+            ctx.beginPath(); ctx.ellipse(0, 0, 34, 20, 0, 0, TAU); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(-28, -2); ctx.quadraticCurveTo(-42, -4, -50, -16 + sw * 4); ctx.quadraticCurveTo(-44, -2, -50, 10 + sw * 4); ctx.quadraticCurveTo(-40, 4, -28, 4); ctx.fill();
+            ctx.fillStyle = '#DCE8FF'; ctx.beginPath(); ctx.ellipse(6, 9, 24, 9, 0, 0, Math.PI); ctx.fill();
+            ctx.fillStyle = '#6B93E6'; ctx.beginPath(); ctx.ellipse(0, 10, 9, 4, 0.5 + sw * 0.3, 0, TAU); ctx.fill();
+            eye(20, -4, 3); blush(18, 4, 3.5);
+            if (Math.random() < 0.02) emit({ kind: 'bubble', x: c.x + c.face * 10 * c.s, y: c.y - 20 * c.s, vy: -rand(40, 80), vx: rand(-10, 10), s: rand(2, 4), vr: 5, decay: 0.7, c: 'rgba(224,255,251,.8)' });
+            break;
+          }
+          case 'ray': {
+            const w = Math.sin(t * 3 + c.p) * 8;
+            ctx.fillStyle = '#B39DFF';
+            ctx.beginPath(); ctx.moveTo(26, 0); ctx.quadraticCurveTo(0, -30 - w, -16, -4); ctx.lineTo(-16, 4); ctx.quadraticCurveTo(0, 30 + w, 26, 0); ctx.fill();
+            ctx.strokeStyle = '#B39DFF'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(-14, 0); ctx.quadraticCurveTo(-30, sw * 4, -42, 0); ctx.stroke();
+            ctx.fillStyle = 'rgba(255,255,255,.3)'; ctx.beginPath(); ctx.ellipse(6, -6, 8, 3, -0.3, 0, TAU); ctx.fill();
+            eye(16, -4, 2.2); eye(16, 4, 2.2); break;
+          }
+        }
+        ctx.restore();
+      }
+      function addPal(x, y) {
+        if (pals.length >= 10) pals.shift();
+        const kind = KINDS[nextKind++ % KINDS.length];
+        const dir = Math.random() < 0.5 ? -1 : 1;
+        pals.push({ kind, x, y, dir, face: dir, s: rand(0.95, 1.3), v: kind === 'jelly' || kind === 'seahorse' ? rand(25, 40) : rand(45, 85), vy: rand(-14, 14), p: rand(0, TAU), col: pick(['#5EEAD4', '#F0ABFC', '#FDE68A', '#93C5FD', '#FCA5A5']), spin: 0, happy: 0, puff: 0, grow: 0 });
+        ring(x, y, 'rgba(224,255,251,.9)', { grow: 160, decay: 2.5, w: 2 });
+        burst(x, y, 8, () => ({ kind: 'bubble', x: x + rand(-12, 12), y, vx: rand(-25, 25), vy: -rand(60, 140), s: rand(2, 6), vr: rand(3, 7), decay: 0.6, c: 'rgba(224,255,251,.8)' }));
+      }
       reset();
       return {
         resize: reset,
         hover: () => true,
-        // Tap a bubble to pop it, tap a fish and it darts off, anywhere else blows a stream of bubbles.
         tap(x, y) {
+          const c = hitPal(x, y);
+          if (c) { c.happy = 1; if (c.kind === 'puffer') c.puff = 1; burst(c.x, c.y, 6, (i, a) => ({ kind: 'heart', x: c.x, y: c.y - 20, vx: Math.cos(a) * 60, vy: -rand(50, 110), drag: 1.5, s: rand(5, 8), decay: 0.8, c: pick(['#FF9EC7', '#FFFFFF', '#F0ABFC']) })); return true; }
           const b = hitBubble(x, y);
           if (b) {
             ring(b.x, b.y, 'rgba(224,255,251,.9)', { s: b.r, grow: 120, decay: 3, w: 1.5 });
@@ -260,16 +486,14 @@
             Object.assign(b, bubble(false));
             return true;
           }
-          const f = hitFish(x, y);
-          if (f) { f.v = 420; f.dash = 1; burst(f.x, f.y, 6, () => ({ kind: 'bubble', x: f.x, y: f.y, vx: rand(-30, 30), vy: -rand(40, 90), s: rand(2, 4), vr: 6, decay: 0.8, c: 'rgba(224,255,251,.8)' })); return true; }
-          burst(x, y, 14, () => ({ kind: 'bubble', x: x + rand(-14, 14), y: y + rand(-6, 6), vx: rand(-25, 25), vy: -rand(70, 170), s: rand(3, 10), vr: rand(3, 7), decay: rand(0.35, 0.6), c: 'rgba(224,255,251,.8)' }));
+          addPal(x, y);
           return true;
         },
         draw(dt, t) {
           ctx.fillStyle = grad(0, H, [[0, '#22B8C9'], [0.45, '#0E7490'], [1, '#083344']]);
           ctx.fillRect(0, 0, W, H);
           ctx.globalCompositeOperation = 'lighter';
-          for (let i = 0; i < 7; i++) { // light rays from the surface
+          for (let i = 0; i < 7; i++) {
             const x = (i + 0.5) * (W / 7) + Math.sin(t * 0.4 + i) * 60, w = 40 + 30 * Math.sin(t * 0.7 + i * 2);
             const g = ctx.createLinearGradient(0, 0, 0, H * 0.9);
             g.addColorStop(0, 'rgba(200,255,250,.16)'); g.addColorStop(1, 'rgba(200,255,250,0)');
@@ -278,16 +502,22 @@
           }
           ctx.globalCompositeOperation = 'source-over';
           for (const g of glints) sparkle(g.x, g.y, 3, '#E0FFFB', 0.6 * Math.max(0, Math.sin(t * g.v + g.p)));
-          for (const f of fish) {
-            const dir = f.vx || (f.x < 0 ? 1 : -1); f.vx = dir;
-            f.x += dir * f.v * dt; f.y += Math.sin(t * 1.5 + f.p) * 6 * dt;
-            if (f.dash) { f.dash = Math.max(0, f.dash - dt); if (!f.dash) f.v = rand(30, 60); }
-            if (f.x < -80 || f.x > W + 80) Object.assign(f, newFish(), { vx: 0 });
-            ctx.save(); ctx.translate(f.x, f.y); ctx.scale(dir * f.s, f.s); ctx.globalAlpha = 0.55; ctx.fillStyle = f.col;
-            ctx.beginPath(); ctx.ellipse(0, 0, 18, 8, 0, 0, TAU); ctx.fill();
-            const wag = Math.sin(t * 8 + f.p) * 4;
-            ctx.beginPath(); ctx.moveTo(-14, 0); ctx.lineTo(-28, -8 + wag); ctx.lineTo(-28, 8 + wag); ctx.fill();
-            ctx.restore(); ctx.globalAlpha = 1;
+          // sand
+          ctx.fillStyle = '#E9D8A6'; ctx.beginPath(); ctx.moveTo(0, H);
+          for (let x = 0; x <= W + 40; x += 40) ctx.lineTo(x, H - 22 - Math.sin(x * 0.01) * 8);
+          ctx.lineTo(W, H); ctx.fill();
+          for (const c of pals) {
+            c.grow = Math.min(1, c.grow + dt * 3);
+            // swim back and forth, turning around smoothly at the edges
+            c.x += c.dir * c.v * dt * (c.happy ? 0.3 : 1); c.y += c.vy * dt + Math.sin(t * 1.6 + c.p) * 10 * dt;
+            const m = 46 * c.s;
+            if (c.x < m) c.dir = 1; if (c.x > W - m) c.dir = -1;
+            if (c.y < H * 0.12) c.vy = Math.abs(c.vy) + 4; if (c.y > H - 60) c.vy = -Math.abs(c.vy) - 4;
+            c.face += (c.dir - c.face) * Math.min(1, dt * 5);
+            if (Math.abs(c.face) < 0.08) c.face = c.dir * 0.08;
+            if (c.happy) { c.happy = Math.max(0, c.happy - dt * 0.9); c.spin = (1 - c.happy) * TAU * (c.kind === 'puffer' ? 0 : 1); if (!c.happy) c.spin = 0; }
+            if (c.puff) c.puff = Math.max(0, c.puff - dt * 0.5);
+            const s0 = c.s; c.s = s0 * c.grow; creature(c, t); c.s = s0;
           }
           for (const b of bubbles) {
             b.y -= b.v * dt; b.x += Math.sin(t * 2 + b.p) * 10 * dt; if (b.y < -20) Object.assign(b, bubble(false));
@@ -309,13 +539,13 @@
         { hue: 175, y: 0.36, amp: 55, f: 0.006, s: -0.18, h: 130 },
         { hue: 275, y: 0.22, amp: 80, f: 0.003, s: 0.12, h: 120 },
       ];
-      let surge = 0, surgeX = 0, low = null, lctx = null;
+      let surge = 0, surgeX = 0, low = null, lctx = null, redraw = false;
       // Each band's colour fade is drawn once into a tiny sprite and stretched per column
       // (much cheaper than building a gradient for every column every frame).
       for (const b of bands) {
         const c = document.createElement('canvas'); c.width = 1; c.height = 128;
         const g = c.getContext('2d'), lg = g.createLinearGradient(0, 0, 0, 128);
-        lg.addColorStop(0, `hsla(${b.hue + 40},90%,65%,0)`); lg.addColorStop(0.7 * (108 / 128), `hsla(${b.hue},90%,60%,.10)`); lg.addColorStop(1, `hsla(${b.hue - 10},95%,70%,.22)`);
+        lg.addColorStop(0, `hsla(${b.hue + 40},90%,65%,0)`); lg.addColorStop(0.55, `hsla(${b.hue},90%,60%,.10)`); lg.addColorStop(0.86, `hsla(${b.hue - 10},95%,70%,.24)`); lg.addColorStop(1, `hsla(${b.hue - 10},95%,70%,0)`);
         g.fillStyle = lg; g.fillRect(0, 0, 1, 128); b.sprite = c;
       }
       return {
@@ -334,18 +564,21 @@
           for (const s of stars) { ctx.globalAlpha = 0.35 + 0.65 * Math.abs(Math.sin(t * s.v + s.p)); ctx.fillStyle = '#E0F2FE'; ctx.fillRect(s.x, s.y, s.r, s.r); }
           ctx.globalAlpha = 1;
           // The lights are soft anyway, so they're drawn at quarter size and scaled up (much lighter).
-          const Q = 4;
+          const Q = 3;
           if (!low || low.width !== Math.ceil(W / Q) || low.height !== Math.ceil(H / Q)) { low = document.createElement('canvas'); low.width = Math.ceil(W / Q); low.height = Math.ceil(H / Q); lctx = low.getContext('2d'); }
+          redraw = !redraw || surge > 0; // the lights move slowly: redraw them every other frame
+          if (redraw) {
           lctx.setTransform(1, 0, 0, 1, 0, 0); lctx.clearRect(0, 0, low.width, low.height);
           lctx.globalCompositeOperation = 'lighter'; lctx.setTransform(1 / Q, 0, 0, 1 / Q, 0, 0);
           for (const b of bands) {
-            for (let x = -10; x < W + 10; x += 8) {
+            for (let x = -10; x < W + 10; x += 3) {
               const y = H * b.y + Math.sin(x * b.f + t * b.s * 2) * b.amp + Math.sin(x * b.f * 2.7 - t * b.s * 3) * b.amp * 0.35;
               const boost = surge ? 1 + surge * 1.4 * Math.exp(-(((x - surgeX) / (W * 0.25)) ** 2)) : 1;
               const h = b.h * (0.6 + 0.4 * Math.sin(x * 0.01 + t * 0.8 + b.hue)) * boost;
               lctx.globalAlpha = Math.min(1, boost);
-              lctx.drawImage(b.sprite, x, y - h, 8, h + 20);
+              lctx.drawImage(b.sprite, x, y - h, 4, h + 34);
             }
+          }
           }
           ctx.globalCompositeOperation = 'lighter';
           ctx.drawImage(low, 0, 0, W, H);
@@ -359,28 +592,37 @@
       };
     },
 
-    // Deep space: three layers of stars drifting, glowing nebulae, shooting stars.
+    // Deep space: three layers of stars drifting, glowing nebulae, shooting stars. Tap to open a
+    // black hole: it swirls nearby stars in and swallows them, then blows up in a supernova that
+    // flings them back out across the screen.
     nebula() {
-      let layers = [], clouds = [], shoot = null, nextShot = 2, warp = 0;
+      let layers = [], clouds = [], shoot = null, nextShot = 2, holes = [];
       const reset = () => {
-        layers = [0.25, 0.6, 1.2].map((speed, i) => ({ speed, stars: Array.from({ length: Math.round([160, 80, 30][i] * density()) }, () => ({ x: rand(0, W), y: rand(0, H), r: [0.7, 1.2, 2][i] * rand(0.6, 1.2), p: rand(0, TAU) })) }));
+        layers = [0.25, 0.6, 1.2].map((speed, i) => ({ speed, stars: Array.from({ length: Math.round([150, 80, 30][i] * density()) }, () => ({ x: rand(0, W), y: rand(0, H), r: [0.7, 1.2, 2][i] * rand(0.6, 1.2), p: rand(0, TAU), vx: 0, vy: 0, eaten: null })) }));
         clouds = Array.from({ length: 5 }, (_, i) => ({ x: rand(0, W), y: rand(0, H), r: rand(180, 380), hue: pick([320, 280, 210, 190, 340]), p: i }));
+        holes = [];
       };
+      const R = () => Math.min(260, Math.max(160, Math.min(W, H) * 0.28));
+      function explode(h) {
+        ring(h.x, h.y, 'rgba(255,255,255,.95)', { s: 10, grow: 520, decay: 1.4, w: 3, add: true });
+        ring(h.x, h.y, 'rgba(244,114,182,.85)', { s: 6, grow: 330, decay: 1.1, w: 7, add: true });
+        burst(h.x, h.y, 30, (i, a) => { const v = rand(120, 460); return { kind: 'glow', x: h.x, y: h.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, drag: 1.2, s: rand(1, 2.6), decay: rand(0.5, 0.9), add: true, c: pick(['#FFFFFF', '#F9A8D4', '#93C5FD', '#FDE68A']) }; });
+        for (const L of layers) for (const s of L.stars) if (s.eaten === h) {
+          const a = rand(0, TAU), v = rand(250, 700);
+          s.x = h.x; s.y = h.y; s.vx = Math.cos(a) * v; s.vy = Math.sin(a) * v; s.eaten = null;
+        }
+      }
       reset();
       return {
         resize: reset,
         hover: () => true,
-        // Tap: a supernova where you tapped, and the stars jump to warp speed for a moment.
         tap(x, y) {
-          warp = 1;
-          ring(x, y, 'rgba(255,255,255,.9)', { grow: 420, decay: 1.6, w: 3, add: true });
-          ring(x, y, 'rgba(244,114,182,.8)', { grow: 260, decay: 1.2, w: 6, add: true });
-          burst(x, y, 26, (i, a) => { const v = rand(80, 380); return { kind: 'glow', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, drag: 1.4, s: rand(1, 2.4), decay: rand(0.5, 0.9), add: true, c: pick(['#FFFFFF', '#F9A8D4', '#93C5FD', '#C4B5FD']) }; });
+          if (holes.length >= 3) { explode(holes[0]); holes.shift(); }
+          holes.push({ x, y, age: 0, life: 3.2, eaten: 0, spin: rand(0, TAU) });
+          ring(x, y, 'rgba(167,139,250,.8)', { s: R(), grow: -R() * 1.4, decay: 1.6, w: 1.5, add: true });
           return true;
         },
         draw(dt, t) {
-          warp = Math.max(0, warp - dt * 0.7);
-          const wf = 1 + warp * warp * 30;
           ctx.fillStyle = '#05031A'; ctx.fillRect(0, 0, W, H);
           ctx.globalCompositeOperation = 'lighter';
           for (const c of clouds) {
@@ -390,16 +632,53 @@
             ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, c.r, 0, TAU); ctx.fill();
           }
           ctx.globalCompositeOperation = 'source-over';
+          const rad = R();
+          for (const h of holes) h.age += dt;
           for (const L of layers) {
             for (const s of L.stars) {
-              s.x -= L.speed * 12 * wf * dt; if (s.x < -2) { s.x = W + 2; s.y = rand(0, H); }
+              if (s.eaten) continue;
+              let pulled = false;
+              for (const h of holes) {
+                const dx = s.x - h.x, dy = s.y - h.y, d = Math.hypot(dx, dy);
+                if (d > rad || h.age > h.life) continue;
+                pulled = true;
+                const k = Math.min(1, h.age / 0.6) * (1 - d / rad);
+                const a = Math.atan2(dy, dx) + (2.6 * k + 0.4) * dt * 3;   // swirl around…
+                const nd = Math.max(0, d - (40 + 220 * k) * dt);        // …and fall in
+                s.x = h.x + Math.cos(a) * nd; s.y = h.y + Math.sin(a) * nd;
+                if (nd < 6) { s.eaten = h; h.eaten++; }
+                break;
+              }
+              if (!pulled) {
+                s.x += (s.vx - L.speed * 12) * dt; s.y += s.vy * dt;
+                s.vx *= Math.max(0, 1 - dt * 1.4); s.vy *= Math.max(0, 1 - dt * 1.4);
+                if (s.x < -2) { s.x = W + 2; s.y = rand(0, H); } else if (s.x > W + 2) s.x = -2;
+                if (s.y < -2) s.y = H + 2; else if (s.y > H + 2) s.y = -2;
+              }
+              const fast = Math.abs(s.vx) + Math.abs(s.vy) > 120;
               ctx.globalAlpha = 0.5 + 0.5 * Math.sin(t * 2 + s.p);
               ctx.fillStyle = '#F8FAFF';
-              if (wf > 3) ctx.fillRect(s.x, s.y - s.r / 2, Math.min(80, L.speed * wf * 1.4), s.r); // stretched into streaks
+              if (fast) { ctx.strokeStyle = '#F8FAFF'; ctx.lineWidth = s.r; ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(s.x - s.vx * 0.03, s.y - s.vy * 0.03); ctx.stroke(); }
               else { ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, TAU); ctx.fill(); }
             }
           }
           ctx.globalAlpha = 1;
+          // the black holes
+          for (const h of holes) {
+            const grow = Math.min(1, h.age / 0.5), r = (12 + Math.min(14, h.eaten * 0.25)) * grow;
+            h.spin += dt * 3;
+            ctx.globalCompositeOperation = 'lighter';
+            const g = ctx.createRadialGradient(h.x, h.y, r, h.x, h.y, r * 4);
+            g.addColorStop(0, 'rgba(255,170,90,.75)'); g.addColorStop(0.35, 'rgba(244,114,182,.35)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = g; ctx.beginPath(); ctx.arc(h.x, h.y, r * 4, 0, TAU); ctx.fill();
+            ctx.strokeStyle = 'rgba(255,220,180,.8)'; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.ellipse(h.x, h.y, r * 2.6, r * 0.8, h.spin * 0.15, 0, TAU); ctx.stroke();
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(h.x, h.y, r, 0, TAU); ctx.fill();
+            ctx.strokeStyle = 'rgba(255,240,220,.9)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(h.x, h.y, r + 1, 0, TAU); ctx.stroke();
+          }
+          for (const h of holes) if (h.age > h.life) explode(h);
+          holes = holes.filter((h) => h.age <= h.life);
           nextShot -= dt;
           if (!shoot && nextShot <= 0) { shoot = { x: rand(W * 0.3, W), y: rand(0, H * 0.4), vx: -rand(500, 800), vy: rand(200, 320), life: 1 }; nextShot = rand(3, 7); }
           if (shoot) {
@@ -413,26 +692,53 @@
       };
     },
 
-    // Retro neon: striped sun, mountains and a grid racing toward you.
+    // Retro neon: striped sun, mountains and a grid racing toward you. It's a drive: a dashboard in
+    // the corner counts how far you've gone. Tap for a turbo boost (stack taps to go faster); every
+    // kilometre pops up, and your longest drive is remembered.
     synthwave() {
-      let turbo = 0, pos = 0, sunPulse = 0;
+      const CRUISE = 120, MAX = 480;
+      let speed = CRUISE, trip = 0, pos = 0, sunPulse = 0, nextKm = 1, flash = 0, best = 0, odo = 0, saveT = 0;
+      try { best = Number(localStorage.getItem('sliver.synth.best')) || 0; odo = Number(localStorage.getItem('sliver.synth.odo')) || 0; } catch {}
+      const save = () => { try { localStorage.setItem('sliver.synth.best', String(best)); localStorage.setItem('sliver.synth.odo', String(odo)); } catch {} };
+      let pops = []; // "1 KM!" style pop-ups
+      function hud() {
+        const pad = 18, w = 210, h = 92, x = pad, y = H - h - pad;
+        ctx.fillStyle = 'rgba(10,0,30,.62)'; ctx.strokeStyle = 'rgba(255,46,151,.85)'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, 12) : ctx.rect(x, y, w, h); ctx.fill(); ctx.stroke();
+        ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+        ctx.fillStyle = '#22D3EE'; ctx.font = '700 11px ui-monospace, Menlo, monospace'; ctx.fillText('TRIP', x + 14, y + 22);
+        ctx.fillStyle = '#FFE4F3'; ctx.font = '800 28px ui-monospace, Menlo, monospace'; ctx.fillText(`${trip.toFixed(2)} km`, x + 14, y + 50);
+        // speed bar
+        const k = (speed - CRUISE) / (MAX - CRUISE);
+        ctx.fillStyle = 'rgba(255,255,255,.12)'; ctx.fillRect(x + 14, y + 60, w - 28, 6);
+        ctx.fillStyle = k > 0.6 ? '#FDE047' : '#FF2E97'; ctx.fillRect(x + 14, y + 60, (w - 28) * Math.max(0.04, k), 6);
+        ctx.fillStyle = '#C4B5FD'; ctx.font = '700 11px ui-monospace, Menlo, monospace';
+        ctx.fillText(`${Math.round(speed)} km/h`, x + 14, y + 82);
+        ctx.textAlign = 'right'; ctx.fillText(`BEST ${best.toFixed(1)} km`, x + w - 14, y + 82);
+        ctx.textAlign = 'left';
+      }
       return {
         hover: () => true,
-        // Tap: turbo! The grid rushes toward you, the sun pulses, and a neon ring shoots out.
         tap(x, y) {
-          turbo = 1; sunPulse = 1;
+          speed = Math.min(MAX, speed + 70); sunPulse = 1;
           ring(x, y, '#FF2E97', { grow: 520, decay: 1.5, w: 3, add: true });
           ring(x, y, '#22D3EE', { grow: 340, decay: 1.5, w: 2, add: true });
-          burst(x, y, 16, (i, a) => { const v = rand(200, 460); return { kind: 'streak', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, drag: 2, s: 2, decay: 1.6, add: true, c: pick(['#FF2E97', '#22D3EE', '#FDE047']) }; });
+          burst(x, y, 12, (i, a) => { const v = rand(200, 460); return { kind: 'streak', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, drag: 2, s: 2, decay: 1.6, add: true, c: pick(['#FF2E97', '#22D3EE', '#FDE047']) }; });
           return true;
         },
         draw(dt, t) {
-          turbo = Math.max(0, turbo - dt * 0.5); sunPulse = Math.max(0, sunPulse - dt * 2);
-          pos += dt * 0.6 * (1 + turbo * turbo * 7);
+          // turbo wears off slowly back to cruising speed
+          speed += (CRUISE - speed) * Math.min(1, dt * 0.35);
+          const km = (speed * dt) / 3600 * 3; // a sped-up world (3x), so the numbers move visibly
+          trip += km; odo += km;
+          if (trip > best) best = trip;
+          if (trip >= nextKm) { pops.push({ text: `${nextKm} KM!`, life: 1 }); nextKm++; flash = 1; }
+          saveT += dt; if (saveT > 3) { saveT = 0; save(); }
+          sunPulse = Math.max(0, sunPulse - dt * 2); flash = Math.max(0, flash - dt * 2);
+          pos += dt * 0.6 * (speed / CRUISE);
           const horizon = H * 0.58;
           ctx.fillStyle = grad(0, horizon, [[0, '#0B0024'], [0.6, '#3B0764'], [1, '#9D174D']]);
           ctx.fillRect(0, 0, W, horizon);
-          // sun with stripes sliding down
           const r = Math.min(W, H) * 0.22 * (1 + sunPulse * 0.08), cx = W / 2, cy = horizon - r * 0.35;
           ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.clip();
           ctx.fillStyle = grad(cy - r, cy + r, [[0, '#FDE047'], [0.5, '#FB7185'], [1, '#C026D3']]);
@@ -445,29 +751,42 @@
           }
           ctx.restore();
           glowDot(cx, cy, r * 1.8, 'rgba(251,113,133,.35)');
-          // mountains
           ctx.fillStyle = '#1E0638'; ctx.strokeStyle = '#FF2E97'; ctx.lineWidth = 1.5;
           ctx.beginPath(); ctx.moveTo(0, horizon);
           const peaks = [[0, 0.3], [0.08, 0.55], [0.17, 0.25], [0.27, 0.62], [0.36, 0.2], [0.64, 0.25], [0.72, 0.6], [0.82, 0.3], [0.9, 0.5], [1, 0.25]];
           for (const [px, ph] of peaks) ctx.lineTo(px * W, horizon - ph * H * 0.16);
           ctx.lineTo(W, horizon); ctx.closePath(); ctx.fill(); ctx.stroke();
-          // floor + grid
           ctx.fillStyle = grad(horizon, H, [[0, '#1A0033'], [1, '#05000F']]);
           ctx.fillRect(0, horizon, W, H - horizon);
-          ctx.strokeStyle = 'rgba(34,211,238,.75)'; ctx.lineWidth = 1.4;
-          const speed = pos % 1;
+          const fast = (speed - CRUISE) / (MAX - CRUISE);
+          ctx.strokeStyle = fast > 0.5 ? 'rgba(253,224,71,.8)' : 'rgba(34,211,238,.75)'; ctx.lineWidth = 1.4;
+          const sp = pos % 1;
           for (let i = 0; i < 18; i++) {
-            const z = (i + 1 - speed) / 18; // 0 far .. 1 near
+            const z = (i + 1 - sp) / 18;
             const y = horizon + Math.pow(z, 2.2) * (H - horizon);
             ctx.globalAlpha = Math.min(1, z * 1.6);
             ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
           }
           ctx.globalAlpha = 1;
-          for (let i = -16; i <= 16; i++) {
-            ctx.beginPath(); ctx.moveTo(cx + i * (W / 60), horizon); ctx.lineTo(cx + i * (W / 6), H); ctx.stroke();
-          }
+          for (let i = -16; i <= 16; i++) { ctx.beginPath(); ctx.moveTo(cx + i * (W / 60), horizon); ctx.lineTo(cx + i * (W / 6), H); ctx.stroke(); }
           ctx.fillStyle = grad(horizon - 2, horizon + 30, [[0, 'rgba(255,46,151,.55)'], [1, 'rgba(255,46,151,0)']]);
           ctx.fillRect(0, horizon - 2, W, 32);
+          // speed lines at high speed
+          if (fast > 0.2) {
+            ctx.strokeStyle = `rgba(255,255,255,${fast * 0.35})`; ctx.lineWidth = 1; ctx.beginPath();
+            for (let i = 0; i < 14; i++) { const a = (i / 14) * TAU + t * 0.3, r1 = Math.max(W, H) * (0.35 + ((t * 2 + i * 0.37) % 1) * 0.4); ctx.moveTo(cx + Math.cos(a) * r1, horizon + Math.sin(a) * r1 * 0.6); ctx.lineTo(cx + Math.cos(a) * (r1 + 60 * fast), horizon + Math.sin(a) * (r1 + 60 * fast) * 0.6); }
+            ctx.stroke();
+          }
+          if (flash) { ctx.fillStyle = `rgba(255,46,151,${flash * 0.12})`; ctx.fillRect(0, 0, W, H); }
+          for (const p of pops) {
+            p.life -= dt * 0.6;
+            ctx.globalAlpha = Math.max(0, Math.min(1, p.life * 2));
+            ctx.textAlign = 'center'; ctx.font = `900 ${Math.round(30 + (1 - p.life) * 12)}px ui-monospace, Menlo, monospace`;
+            ctx.fillStyle = '#FDE047'; ctx.fillText(p.text, 18 + 105, H - 92 - 34 - (1 - p.life) * 50); // just above the dashboard
+            ctx.globalAlpha = 1; ctx.textAlign = 'left';
+          }
+          pops = pops.filter((p) => p.life > 0);
+          hud();
         },
       };
     },
@@ -1102,14 +1421,35 @@
   // themes that can be played with (pop balloons, tap piano keys).
   const UI = '.card, button, a, input, select, textarea, label, .sheet-backdrop, .sheet, [role="dialog"], .toast, .pop-msg, .coffee-btn, .brand, ul, li, h1, h2, h3, p';
   const onBackground = (e) => !(e.target && e.target.closest && e.target.closest(UI));
+  let drag = null;
   window.addEventListener('pointerdown', (e) => {
     if (!scene || !scene.tap || reduce || !onBackground(e)) return;
+    if (scene.dragStart && e.button === 0) { // decide on release: tap, or a swipe that draws
+      drag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, len: 0, lx: e.clientX, ly: e.clientY, on: false, scene };
+      document.documentElement.classList.add('fx-drawing');
+      return;
+    }
     const n = performance.now();
     if (n - lastTapAt < 70) return; // mashing can't pile up effects
     lastTapAt = n;
     scene.tap(e.clientX, e.clientY);
   }, { passive: true });
   let hoverOn = false, lastTapAt = 0;
+  window.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.id || drag.scene !== scene) return;
+    drag.len += Math.hypot(e.clientX - drag.lx, e.clientY - drag.ly); drag.lx = e.clientX; drag.ly = e.clientY;
+    if (!drag.on && drag.len > 12) { drag.on = true; scene.dragStart(drag.x0, drag.y0); }
+    if (drag.on) scene.dragMove(e.clientX, e.clientY);
+  }, { passive: true });
+  const endDrag = (e) => {
+    if (!drag || (e && e.pointerId !== drag.id)) return;
+    const d = drag; drag = null;
+    document.documentElement.classList.remove('fx-drawing');
+    if (d.scene !== scene) return;
+    if (d.on) scene.dragEnd(); else if (e && e.type === 'pointerup') scene.tap(d.x0, d.y0);
+  };
+  window.addEventListener('pointerup', endDrag);
+  window.addEventListener('pointercancel', endDrag);
   window.addEventListener('pointermove', (e) => {
     if (e.pointerType !== 'mouse') return;
     const on = !!(scene && scene.hover && !reduce && onBackground(e) && scene.hover(e.clientX, e.clientY));
