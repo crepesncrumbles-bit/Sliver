@@ -1905,6 +1905,12 @@
         paintTrees();
       };
       function say(text, c) { label = { text, c, life: 1 }; }
+      let lanterns = [];
+      const zoomNow = () => (lanes() ? Math.min(1.35, lanes() / 260) : 1);
+      function inFire(x, y) {
+        const F = fire(), z = zoomNow();
+        return Math.abs(x - F.x) < 175 * z && y > F.y - 200 * z && y < F.y + 45 * z;
+      }
       function perfect() {
         roasting = false; hits = 0; toast = 0;
         smores++; streak++; best = Math.max(best, streak); save(); cheer = 1;
@@ -1961,8 +1967,17 @@
       reset();
       return {
         resize: reset,
-        hover: () => true,
-        tap() { tapFire(); return true; },
+        // Only the campfire (the fire, the crew and the bar above it) plays the roasting game.
+        hover: (x, y) => inFire(x, y),
+        tap(x, y) {
+          if (inFire(x, y)) { tapFire(); return true; }
+          // anywhere else: a paper lantern floats up, and fireflies gather round
+          lanterns.push({ x, y, vx: rand(-12, 12), life: 1, s: rand(0.8, 1.2), p: rand(0, TAU), col: pick(['#FFB347', '#FF8A5C', '#FFD27A', '#FF9EC7']) });
+          if (lanterns.length > 14) lanterns.shift();
+          for (const f of flies) if (Math.hypot(f.x - x, f.y - y) < 260) { f.tx = x + rand(-40, 40); f.ty = y + rand(-40, 40); f.pull = 2.5; }
+          burst(x, y, 8, () => ({ kind: 'glow', x, y, vx: rand(-60, 60), vy: rand(-60, 20), drag: 2, s: rand(1, 2), decay: 1.2, add: true, c: '#D2FF8C' }));
+          return true;
+        },
         info: () => ({ roasting, hits, needle, zoneC, zoneW, burning: !!burning, smores }),
         draw(dt, t) {
           now = t;
@@ -1980,10 +1995,22 @@
           if (shoot) { shoot.x -= 520 * dt; shoot.y += 180 * dt; shoot.life -= dt * 1.4; ctx.strokeStyle = `rgba(255,255,255,${Math.max(0, shoot.life)})`; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(shoot.x, shoot.y); ctx.lineTo(shoot.x + 70, shoot.y - 24); ctx.stroke(); if (shoot.life <= 0) shoot = null; }
           ctx.drawImage(trees, 0, 0, W, H);
           ctx.globalCompositeOperation = 'lighter';
-          for (const f of flies) { f.x += Math.sin(t * 0.7 * f.v + f.p) * 14 * dt; f.y += Math.cos(t * 0.9 * f.v + f.p) * 10 * dt; const a = Math.max(0, Math.sin(t * 2 * f.v + f.p)); glowDot(f.x, f.y, 8, 'rgba(210,255,140,.8)', a * 0.8); }
+          for (const f of flies) {
+            if (f.pull) { f.pull = Math.max(0, f.pull - dt); f.x += (f.tx - f.x) * Math.min(1, dt * 2); f.y += (f.ty - f.y) * Math.min(1, dt * 2); }
+            f.x += Math.sin(t * 0.7 * f.v + f.p) * 14 * dt; f.y += Math.cos(t * 0.9 * f.v + f.p) * 10 * dt; const a = Math.max(0, Math.sin(t * 2 * f.v + f.p)); glowDot(f.x, f.y, 8, 'rgba(210,255,140,.8)', a * 0.8); }
           ctx.globalCompositeOperation = 'source-over';
           // ---- the campfire, the crew and the marshmallow (front layer) ----
           toFront();
+          for (const l of lanterns) { // paper lanterns drifting up into the night
+            l.life -= dt * 0.12; l.y -= 34 * dt; l.x += (l.vx + Math.sin(t + l.p) * 8) * dt;
+            const a = Math.max(0, Math.min(1, l.life * 3));
+            ctx.globalCompositeOperation = 'lighter'; glowDot(l.x, l.y, 34 * l.s, 'rgba(255,170,80,.45)', a * (0.8 + 0.2 * Math.sin(t * 6 + l.p))); ctx.globalCompositeOperation = 'source-over';
+            ctx.globalAlpha = a; ctx.fillStyle = l.col;
+            ctx.beginPath(); ctx.moveTo(l.x - 9 * l.s, l.y - 11 * l.s); ctx.lineTo(l.x + 9 * l.s, l.y - 11 * l.s); ctx.lineTo(l.x + 7 * l.s, l.y + 11 * l.s); ctx.lineTo(l.x - 7 * l.s, l.y + 11 * l.s); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = 'rgba(255,240,200,.85)'; ctx.fillRect(l.x - 4 * l.s, l.y + 6 * l.s, 8 * l.s, 4 * l.s);
+            ctx.globalAlpha = 1;
+          }
+          lanterns = lanterns.filter((l) => l.life > 0 && l.y > -40);
           const F = fire();
           const zoom = lanes() ? Math.min(1.35, lanes() / 260) : 1; // bigger on wide screens
           ctx.save(); ctx.translate(F.x, F.y); ctx.scale(zoom, zoom); ctx.translate(-F.x, -F.y);

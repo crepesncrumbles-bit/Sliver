@@ -881,3 +881,18 @@ html:has(body.ui-hidden), body.ui-hidden { touch-action: none; overflow: hidden;
 .ref-pips span { margin-left: 4px; }
 .ref-link { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .ref-link code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; padding: 8px 10px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); }
+
+/* Invite card (home + results): stands out without shouting */
+.invite-card { border: 2px solid transparent; background: linear-gradient(var(--paper), var(--paper)) padding-box, linear-gradient(120deg, #FF8A3D, #FFD27A, #FF9EC7) border-box; }
+.invite-card .invite-box { margin: 10px 0 0; background: transparent; border: 0; padding: 0; }
+.invite-card .invite-box h4 { display: none; }
+.invite-hero { display: flex; align-items: center; gap: 12px; }
+.invite-hero > div { flex: 1; min-width: 0; }
+.invite-hero b { display: block; font-family: var(--display); font-size: 17px; }
+.invite-hero small { display: block; color: var(--ink-2); font-size: 13px; line-height: 1.35; margin-top: 2px; }
+.ih-fire { font-size: 30px; line-height: 1; animation: ih-flicker 1.6s ease-in-out infinite; }
+@keyframes ih-flicker { 0%, 100% { transform: scale(1) rotate(-3deg); } 50% { transform: scale(1.12) rotate(3deg); } }
+.invite-card.done .invite-hero b::after { content: " ✓"; color: var(--accent-strong); }
+@media (prefers-reduced-motion: reduce) { .ih-fire { animation: none; } }
+.invite-card .invite-box > .hint { display: none; }
+.invite-card .invite-box .ref-pips + .ref-link, .invite-card .invite-box .ref-pips { margin-top: 0; }

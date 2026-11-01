@@ -486,6 +486,18 @@
     }).join('');
     renderShopDetail();
   }
+  // The invite card on the home and results screens: front and centre, so people know about it.
+  function renderInviteCards() {
+    const u = auth && auth.user;
+    const need = SHOP.REFERRALS_NEEDED || 5;
+    const html = u
+      ? `<div class="invite-hero"><span class="ih-fire" aria-hidden="true">🔥</span><div><b>Unlock Campfire Crew for free</b><small>A theme you can't buy. Invite ${need} friends who sign up and play a game.</small></div><button type="button" class="btn ghost small" data-shop-preview="campfire">Preview</button></div>
+         <div class="invite-box" data-invite-box><p class="hint">Loading your invite link…</p></div>`
+      : `<div class="invite-hero"><span class="ih-fire" aria-hidden="true">🔥</span><div><b>Get a free theme</b><small>Invite ${need} friends to unlock Campfire Crew, a theme you can't buy. Sign up to get your invite link.</small></div></div>
+         <div class="acct-actions"><button class="btn small primary-ish" data-open-auth="signup">Sign up</button><button class="btn ghost small" data-shop-preview="campfire">Preview the theme</button></div>`;
+    for (const id of ['#invite-home', '#invite-results']) { const el = $(id); if (el) el.innerHTML = html; }
+  }
+
   // ---- invite friends (referrals): 5 friends sign up with your link and play a game ----
   let inviteInfo = null;
   async function renderInvites() {
@@ -496,6 +508,7 @@
     inviteInfo = res;
     const link = `${location.origin}/?ref=${res.code}`;
     const pips = Array.from({ length: res.needed }, (_, i) => `<i class="${i < res.played ? 'on' : i < res.joined ? 'half' : ''}"></i>`).join('');
+    document.querySelectorAll('.invite-card').forEach((c) => c.classList.toggle('done', !!res.unlocked));
     const html = `<h4>🔥 Invite friends${res.unlocked ? ' <span class="hid-tag">unlocked</span>' : ''}</h4>
       <p class="hint">${res.unlocked ? 'You unlocked <b>Campfire Crew</b>! Thanks for bringing your friends.' : `When <b>${res.needed} friends</b> sign up with your link and finish a game, you unlock <b>Campfire Crew</b>, a theme you can't buy.`}</p>
       <div class="ref-pips" aria-label="${res.played} of ${res.needed} friends have played">${pips}<span>${res.played}/${res.needed} played${res.joined > res.played ? ` · ${res.joined - res.played} signed up, waiting for their first game` : ''}</span></div>
@@ -1750,6 +1763,7 @@
       $('#sr-songs').innerHTML = `<h3>⚡ The songs</h3><ol>${lg.songs.map((x) => `<li>${esc(x.title)} <small>${esc(x.artist)}</small></li>`).join('')}</ol>`;
     }
     renderRankedResult();
+    renderInviteCards(); if (auth && auth.user) renderInvites();
   }
   $('#btn-again').onclick = () => { unlockAudio(); emit('start').then((r) => !r.ok && toast(r.error, 'error')); };
   $('#btn-lobby').onclick = () => emit('lobby');
@@ -1890,6 +1904,7 @@
          <div class="acct-actions"><button class="btn small" data-open-auth="signup">Sign up</button><button class="btn small" data-open-auth="login">Log in</button></div>`;
     if (u && (!nameEdited || !$('#name').value.trim())) $('#name').value = u.name;
     $('#admin-panel').hidden = !(u && u.admin);
+    renderInviteCards();
     if (u) renderInvites();
     renderMyIconButton();
     $('#btn-friends').hidden = !u;
