@@ -1,3 +1,13 @@
+// Arriving from the old address: restore the login/settings it handed over (never overwrites what's here).
+(function () {
+  var m = location.hash.match(/^#carry=(.+)$/);
+  if (!m) return;
+  try {
+    var o = JSON.parse(decodeURIComponent(m[1]));
+    for (var k in o) if (k.indexOf('sliver.') === 0 && localStorage.getItem(k) === null) localStorage.setItem(k, o[k]);
+  } catch (e) {}
+  history.replaceState(null, '', location.pathname + location.search);
+})();
 /* Animations setting. Many computers (Windows: Settings > Accessibility > Visual effects >
  * "Animation effects" off) ask websites to reduce motion; we follow that by default, which freezes
  * the animated backgrounds. Players can override it: "auto" (follow the device), "on" or "off". */

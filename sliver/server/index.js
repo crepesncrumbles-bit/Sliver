@@ -411,9 +411,22 @@ async function handleFriends(req, res, p) {
 
 const API_PATHS = /^\/api\/(signup|signup\/verify|signup\/resend|reset\/start|reset\/finish|login|logout|me|leaderboard|profile\/[\w-]+|artists|me\/(settings|avatar|name|delete)|avatar\/guest|leaderboard\/friends|admin\/(stats|user|users|announce)|referrals|bmc\/webhook|friends(\/(request|accept|remove|block|unblock))?)$/;
 
+const PUBLIC_HOST = (process.env.PUBLIC_HOST || (process.env.RENDER ? 'sliver.one' : '')).toLowerCase();
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = decodeURIComponent(url.pathname);
+
+  // Old address (sliver-k7f5.onrender.com) → send people to the real domain, carrying their
+  // saved login and settings along (browsers keep those per address, so they wouldn't follow otherwise).
+  const host = String(req.headers.host || '').toLowerCase().split(':')[0];
+  if (PUBLIC_HOST && host.endsWith('.onrender.com') && req.method === 'GET' && !p.startsWith('/api/') && p !== '/ws') {
+    const dest = 'https://' + PUBLIC_HOST + url.pathname + url.search;
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    return res.end('<!doctype html><meta charset="utf-8"><title>Sliver</title><script>(function(){var d=' + JSON.stringify(dest) +
+      ',o={};try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k.indexOf("sliver.")===0)o[k]=localStorage.getItem(k);}}catch(e){}' +
+      'location.replace(d+(Object.keys(o).length?"#carry="+encodeURIComponent(JSON.stringify(o)):""));})();</script>' +
+      '<noscript><a href="' + dest + '">Sliver has moved to ' + PUBLIC_HOST + '</a></noscript>');
+  }
 
   if (p === '/healthz') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
   if (API_PATHS.test(p)) return handleApi(req, res, p, url);
