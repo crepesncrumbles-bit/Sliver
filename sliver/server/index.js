@@ -176,6 +176,17 @@ async function handleApi(req, res, p, url) {
       if (!me) return sendJson(res, 401, { ok: false, error: 'Log in first' });
       return sendJson(res, 200, { ok: true, ...(await accounts.referralInfo(me.id)) });
     }
+    if (p === '/api/admin/announce') { // admin: a message that pops up for everyone online right now
+      if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'Use POST' });
+      const me = await accounts.session(bearer(req));
+      if (!me || !me.admin) return sendJson(res, 403, { ok: false, error: 'Admins only' });
+      const body = await readBody(req);
+      const text = String(body.text || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+      if (!text) return sendJson(res, 400, { ok: false, error: 'Type a message first' });
+      const reached = io.emitAll('announce', { text, from: me.name, at: Date.now() });
+      console.log(`announcement by ${me.email}: ${text}`);
+      return sendJson(res, 200, { ok: true, reached });
+    }
     if (p === '/api/admin/user') return await handleAdminUser(req, res);
     if (p === '/api/admin/users') {
       const me = await accounts.session(bearer(req));
@@ -398,7 +409,7 @@ async function handleFriends(req, res, p) {
   return sendJson(res, 200, { ok: true, ...out, ...(await accounts.friends(me.id, presence)) });
 }
 
-const API_PATHS = /^\/api\/(signup|signup\/verify|signup\/resend|reset\/start|reset\/finish|login|logout|me|leaderboard|profile\/[\w-]+|artists|me\/(settings|avatar|name|delete)|avatar\/guest|leaderboard\/friends|admin\/(stats|user|users)|referrals|bmc\/webhook|friends(\/(request|accept|remove|block|unblock))?)$/;
+const API_PATHS = /^\/api\/(signup|signup\/verify|signup\/resend|reset\/start|reset\/finish|login|logout|me|leaderboard|profile\/[\w-]+|artists|me\/(settings|avatar|name|delete)|avatar\/guest|leaderboard\/friends|admin\/(stats|user|users|announce)|referrals|bmc\/webhook|friends(\/(request|accept|remove|block|unblock))?)$/;
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');

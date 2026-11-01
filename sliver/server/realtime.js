@@ -176,6 +176,13 @@ class Realtime extends EventEmitter {
     return api;
   }
 
+  // Every connected player (admin announcements). Returns how many got it.
+  emitAll(evt, data) {
+    const msg = { e: evt, d: data };
+    for (const c of this.conns.values()) c.send(msg);
+    return this.conns.size;
+  }
+
   to(target) {
     return {
       emit: (evt, data) => {

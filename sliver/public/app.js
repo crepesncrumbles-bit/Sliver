@@ -229,6 +229,15 @@
 
   // ---------- server events ----------
   socket.on('toast', (t) => toast(t.text, t.kind === 'error' ? 'error' : 'info'));
+  // Announcements from an admin: a banner at the top until it's closed.
+  socket.on('announce', (m) => {
+    if (!m || !m.text) return;
+    let bar = document.getElementById('announce-bar');
+    if (!bar) { bar = document.createElement('div'); bar.id = 'announce-bar'; bar.setAttribute('role', 'status'); document.body.appendChild(bar); }
+    bar.innerHTML = `<span class="ab-icon" aria-hidden="true">📣</span><div><b>Message from Sliver</b><span>${esc(m.text)}</span></div><button type="button" class="ab-x" aria-label="Close">×</button>`;
+    bar.hidden = false; bar.classList.remove('in'); void bar.offsetWidth; bar.classList.add('in');
+    bar.querySelector('.ab-x').onclick = () => { bar.hidden = true; };
+  });
   socket.on('pool', (p) => { pool = p; });
   socket.on('state', (s) => {
     if (!session) return; // left the room; ignore any late updates
@@ -324,7 +333,7 @@
   function renderThemes() {
     const T = window.SliverThemes;
     const cur = T.current();
-    renderShop();
+    renderShop(); renderMotion();
     const all = myThemes();
     const favs = all.filter((t) => themeFavs.has(t.id)), rest = all.filter((t) => !themeFavs.has(t.id));
     $('#settings').classList.toggle('arranging', arranging);
@@ -339,6 +348,26 @@
     document.querySelectorAll('[data-th-panel]').forEach((p) => { p.hidden = p.dataset.thPanel !== thTab; });
   }
   document.querySelectorAll('[data-th-tab]').forEach((b) => { b.onclick = () => { thTab = b.dataset.thTab; arranging = false; renderThemes(); }; });
+  // Animations: Auto follows the computer's "reduce motion" setting; On / Off override it.
+  function renderMotion() {
+    const M = window.SliverMotion; if (!M) return;
+    document.querySelectorAll('[data-motion-pref]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.motionPref === M.pref())));
+    $('#motion-note').textContent = M.pref() === 'auto'
+      ? (M.deviceReduced() ? 'Your computer asks apps to reduce motion, so animated backgrounds are frozen. Pick On to play them.' : 'Animated backgrounds and effects are on.')
+      : M.pref() === 'on' ? 'Animations always on.' : 'Animations off: backgrounds stay still.';
+  }
+  document.querySelectorAll('[data-motion-pref]').forEach((b) => { b.onclick = () => { window.SliverMotion.set(b.dataset.motionPref); renderMotion(); }; });
+  renderMotion();
+  // If an animated theme is frozen because of the device setting, say so once (with the fix).
+  let motionHinted = false;
+  function hintFrozen() {
+    const M = window.SliverMotion;
+    if (motionHinted || !M || M.pref() !== 'auto' || !M.deviceReduced() || !document.documentElement.dataset.fx) return;
+    motionHinted = true;
+    setTimeout(() => toast('This theme is animated, but your computer is set to reduce motion so it\'s frozen. Turn animations on in Settings → Themes.', 'info', 9000), 1500);
+  }
+  window.addEventListener('sliver:theme', () => setTimeout(hintFrozen, 0));
+  setTimeout(hintFrozen, 0);
   $('#th-arrange').onclick = () => { arranging = !arranging; renderThemes(); };
   // Drag and drop to reorder (mouse); the ‹ › buttons do the same on phones.
   let dragId = null;
@@ -1231,10 +1260,10 @@
   const vctx = viz.getContext('2d');
   const BARS_N = 60;
   const levels = new Float32Array(BARS_N);
-  const reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduceMotionNow = () => !!(window.SliverMotion && window.SliverMotion.reduced());
   let vizRaf = 0, vizColors = null;
   function startViz() {
-    if (reduceMotion) return;
+    if (reduceMotionNow()) return;
     const cs = getComputedStyle(document.documentElement);
     vizColors = [cs.getPropertyValue('--accent').trim() || '#FF4F9A', cs.getPropertyValue('--pop').trim() || '#FFD43B'];
     if (!vizRaf) vizRaf = requestAnimationFrame(drawViz);
@@ -1647,7 +1676,7 @@
   };
   // A burst of confetti from the edges of a box, in the current theme's colors and shapes.
   function confetti(target) {
-    if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (window.SliverMotion && window.SliverMotion.reduced()) return;
     const box = $('#confetti');
     // Around the box you're looking at: the "Got it" card, or the answer card if the song already ended.
     const visible = (x) => x && x.offsetParent !== null && x.getBoundingClientRect().width > 0;
@@ -2268,6 +2297,19 @@
     $('#admin-result').innerHTML = u ? adminUserHtml(u) : '';
     adminUsers = null; // refresh next time (bans etc.)
   });
+  // Admin announcement: tap Send twice to confirm (it goes to everyone online).
+  let announceArmed = null;
+  $('#admin-announce').onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = $('#announce-send'), text = $('#announce-text').value.trim();
+    if (!text) return toast('Type a message first', 'error');
+    if (!announceArmed) { btn.textContent = 'Tap again to send'; announceArmed = setTimeout(() => { announceArmed = null; btn.textContent = 'Send to everyone'; }, 3000); return; }
+    clearTimeout(announceArmed); announceArmed = null; btn.textContent = 'Send to everyone';
+    const res = await api('/api/admin/announce', { method: 'POST', body: { text } });
+    if (!res.ok) return toast(res.error, 'error');
+    $('#announce-text').value = '';
+    toast(`Sent to ${res.reached} player${res.reached === 1 ? '' : 's'} online`, 'good');
+  };
   $('#admin-find').onsubmit = async (e) => {
     e.preventDefault();
     const u = await adminAction({ action: 'view', query: $('#admin-query').value });

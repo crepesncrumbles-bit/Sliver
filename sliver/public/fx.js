@@ -3,7 +3,8 @@
  * here from scratch (no images). Pauses when the tab is hidden; with "reduce motion" turned on
  * it draws one still frame. */
 (function () {
-  const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const motionReduced = () => (window.SliverMotion ? window.SliverMotion.reduced() : !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches));
+  let reduce = motionReduced();
   const TAU = Math.PI * 2;
   const rand = (a, b) => a + Math.random() * (b - a);
   const pick = (list) => list[Math.floor(Math.random() * list.length)];
@@ -2351,6 +2352,12 @@
   }, { passive: true });
 
   window.addEventListener('sliver:theme', (e) => use(e.detail && e.detail.fx));
+  // The Animations setting changed: start (or freeze) the background right away.
+  window.addEventListener('sliver:motion', () => {
+    reduce = motionReduced();
+    stopLoop();
+    if (scene) { if (reduce) frame(performance.now()); else startLoop(); }
+  });
   window.SliverFx = { scenes: Object.keys(SCENES), use, scene: () => scene };
   const start = () => use(document.documentElement.dataset.fx || null);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();

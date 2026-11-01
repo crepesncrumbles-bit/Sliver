@@ -5,7 +5,8 @@
  * All shapes are drawn here as SVG. */
 (function () {
   const KEY = 'sliver.decor';
-  const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const motionReduced = () => (window.SliverMotion ? window.SliverMotion.reduced() : !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches));
+  let reduce = motionReduced();
   const enabled = () => { try { return localStorage.getItem(KEY) !== 'off'; } catch { return true; } };
   let seed = 7;
   const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
@@ -273,6 +274,7 @@
 
   const currentDecor = () => document.documentElement.dataset.decor || '';
   window.addEventListener('sliver:theme', (e) => render(e.detail && e.detail.decor));
+  window.addEventListener('sliver:motion', () => { reduce = motionReduced(); render(currentDecor()); });
   window.SliverDecor = {
     enabled,
     setEnabled(on) { try { localStorage.setItem(KEY, on ? 'on' : 'off'); } catch {} render(currentDecor()); },

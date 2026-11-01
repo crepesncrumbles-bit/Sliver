@@ -10,6 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
+  <script src="/motion.js"></script>
   <script src="/shop.js"></script>
   <script src="/themes.js"></script>
   <script src="/icons.js"></script>
@@ -306,6 +307,15 @@
         </div>
         <div id="theme-grid" class="theme-grid" role="radiogroup" aria-label="Theme"></div>
         <label class="check decor-toggle" id="decor-toggle-row"><input type="checkbox" id="decor-toggle" /> <span>Holiday decorations</span></label>
+        <div class="motion-row">
+          <div class="mini-seg" role="group" aria-label="Animations">
+            <span class="mini-label">Animations</span>
+            <button type="button" class="mini-btn" data-motion-pref="auto">Auto</button>
+            <button type="button" class="mini-btn" data-motion-pref="on">On</button>
+            <button type="button" class="mini-btn" data-motion-pref="off">Off</button>
+          </div>
+          <p class="hint small-left" id="motion-note"></p>
+        </div>
       </div>
       <div data-th-panel="shop" hidden>
       <div class="shop" id="shop">
@@ -350,6 +360,11 @@
           <button class="btn small" type="submit">Find</button>
         </form>
         <div id="admin-result"></div>
+        <form id="admin-announce" class="admin-announce" autocomplete="off">
+          <label for="announce-text"><b>📣 Message everyone online</b><small>Pops up on the screen of every player who's on Sliver right now.</small></label>
+          <textarea id="announce-text" maxlength="300" rows="2" placeholder="e.g. New theme just dropped! Check the shop 🔥"></textarea>
+          <button class="btn small primary-ish" type="submit" id="announce-send">Send to everyone</button>
+        </form>
       </div>
       <a class="coffee-btn in-settings" id="coffee-settings" target="_blank" rel="noopener" hidden>
         <span class="cup" aria-hidden="true">☕</span><span><b>Buy me a coffee</b><small>$2 or more unlocks a random premium theme</small></span>
