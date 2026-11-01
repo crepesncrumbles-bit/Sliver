@@ -858,3 +858,6 @@ body.ui-hidden #ui-toggle b { display: inline; }
   #ui-toggle b { display: inline; }
 }
 body.ui-hidden #app > *:not(#fx-front), body.ui-hidden .coffee-btn, body.ui-hidden #decor-front, body.ui-hidden .gotit, body.ui-hidden .invite-pop { visibility: hidden !important; }
+
+/* Interface hidden: the screen is all game, so it never scrolls (free drawing / holding on phones). */
+html:has(body.ui-hidden), body.ui-hidden { touch-action: none; overflow: hidden; overscroll-behavior: none; }

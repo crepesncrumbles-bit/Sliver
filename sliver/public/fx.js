@@ -2089,13 +2089,33 @@
     scene.tap(e.clientX, e.clientY);
   }, { passive: true });
   let hoverOn = false, lastTapAt = 0;
+  // Phones: a swipe on the background would scroll the page, and the browser then cancels the
+  // touch (that's what cut Sakura's drawings short). For themes you draw on or hold, a touch that
+  // starts on the empty background doesn't scroll; touches on the cards scroll as usual.
+  document.addEventListener('touchstart', (e) => {
+    if (!scene || reduce || !(scene.dragStart || scene.press)) return;
+    if (e.touches.length !== 1 || !onBackground(e)) return;
+    e.preventDefault();
+  }, { passive: false });
+  // If the phone still takes the swipe over (scrolling), the browser cancels the pointer; keep
+  // following the finger through touch events instead, until it lifts.
+  document.addEventListener('touchmove', (e) => {
+    if (!drag) return;
+    if (e.cancelable) e.preventDefault();
+    if (drag.cancelled && e.touches[0]) moveDrag(e.touches[0].clientX, e.touches[0].clientY);
+  }, { passive: false });
+  document.addEventListener('touchend', () => { if (drag && drag.cancelled) { drag.cancelled = false; endDrag({ pointerId: drag.id, type: 'pointerup' }); } });
   document.addEventListener('mouseout', (e) => { if (!e.relatedTarget && scene && scene.pointer) scene.pointer(-99, -99, false); });
-  window.addEventListener('pointermove', (e) => {
-    if (!drag || e.pointerId !== drag.id || drag.scene !== scene) return;
-    if (drag.press) { scene.pressMove(e.clientX, e.clientY); return; }
-    drag.len += Math.hypot(e.clientX - drag.lx, e.clientY - drag.ly); drag.lx = e.clientX; drag.ly = e.clientY;
+  function moveDrag(x, y) {
+    if (!drag || drag.scene !== scene) return;
+    if (drag.press) { scene.pressMove(x, y); return; }
+    drag.len += Math.hypot(x - drag.lx, y - drag.ly); drag.lx = x; drag.ly = y;
     if (!drag.on && drag.len > 12) { drag.on = true; scene.dragStart(drag.x0, drag.y0); }
-    if (drag.on) scene.dragMove(e.clientX, e.clientY);
+    if (drag.on) scene.dragMove(x, y);
+  }
+  window.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    moveDrag(e.clientX, e.clientY);
   }, { passive: true });
   const endDrag = (e) => {
     if (!drag || (e && e.pointerId !== drag.id)) return;
@@ -2106,7 +2126,10 @@
     if (d.on) scene.dragEnd(); else if (e && e.type === 'pointerup') scene.tap(d.x0, d.y0);
   };
   window.addEventListener('pointerup', endDrag);
-  window.addEventListener('pointercancel', endDrag);
+  window.addEventListener('pointercancel', (e) => {
+    if (drag && e.pointerId === drag.id && e.pointerType === 'touch') { drag.cancelled = true; return; } // touch events take over
+    endDrag(e);
+  });
   window.addEventListener('pointermove', (e) => {
     if (scene && scene.pointer && e.pointerType === 'mouse') scene.pointer(e.clientX, e.clientY, onBackground(e));
     if (e.pointerType !== 'mouse') return;
