@@ -1873,6 +1873,15 @@
     campfire() {
       let stars = [], flies = [], trees = null, shoot = null, nextShot = 4, now = 0;
       let toast = 0, roasting = false, burning = 0, label = null, cheer = 0, smores = 0, streak = 0, best = 0, treats = [];
+      // Timing game: a needle sweeps across the bar; tap while it's in the gold. 5 hits = perfect.
+      // Each hit makes the gold smaller and the needle faster; a miss sets the marshmallow on fire.
+      const HITS = 5;
+      let hits = 0, needle = 0, ndir = 1, zoneC = 0.5, zoneW = 0.26, speed = 0.75, flashZone = 0;
+      function newZone() {
+        zoneW = 0.26 * Math.pow(0.76, hits);              // smaller gold each time
+        speed = 0.75 * Math.pow(1.28, hits);              // faster needle each time
+        zoneC = rand(zoneW / 2 + 0.04, 1 - zoneW / 2 - 0.04);
+      }
       try { smores = Number(localStorage.getItem('sliver.camp.smores')) || 0; best = Number(localStorage.getItem('sliver.camp.best')) || 0; } catch {}
       const save = () => { try { localStorage.setItem('sliver.camp.smores', String(smores)); localStorage.setItem('sliver.camp.best', String(best)); } catch {} };
       const CREW = [
@@ -1896,19 +1905,33 @@
         paintTrees();
       };
       function say(text, c) { label = { text, c, life: 1 }; }
-      function finish() {
-        roasting = false;
-        if (toast < 0.08 || burning) return;
-        const t = toast;
-        if (t >= 0.55 && t <= 0.8) {
-          smores++; streak++; best = Math.max(best, streak); save(); cheer = 1;
-          say(streak > 1 ? `PERFECT S'MORE! ×${streak}` : "PERFECT S'MORE!", '#FFD27A');
-          const F = fire();
-          treats.push({ x: F.x + 40, y: F.y - 80, life: 1 });
-          burst(F.x, F.y - 120, 18, (i, a) => ({ kind: i % 3 ? 'star' : 'heart', x: F.x, y: F.y - 120, vx: Math.cos(a) * rand(90, 200), vy: Math.sin(a) * rand(90, 200) - 40, drag: 1.6, s: rand(4, 8), decay: 0.9, c: pick(['#FFD27A', '#FF9EC7', '#FFFFFF', '#FF8A3D']) }));
-        } else if (t < 0.55) { streak = 0; say(t < 0.3 ? 'Still raw…' : 'A bit pale', '#FFF1D6'); }
-        else { streak = 0; say('Pretty toasty!', '#E8A15C'); }
-        toast = 0;
+      function perfect() {
+        roasting = false; hits = 0; toast = 0;
+        smores++; streak++; best = Math.max(best, streak); save(); cheer = 1;
+        say(streak > 1 ? `PERFECT S'MORE! ×${streak}` : "PERFECT S'MORE!", '#FFD27A');
+        const F = fire();
+        treats.push({ x: F.x + 40, y: F.y - 80, life: 1 });
+        burst(F.x, F.y - 120, 18, (i, a) => ({ kind: i % 3 ? 'star' : 'heart', x: F.x, y: F.y - 120, vx: Math.cos(a) * rand(90, 200), vy: Math.sin(a) * rand(90, 200) - 40, drag: 1.6, s: rand(4, 8), decay: 0.9, c: pick(['#FFD27A', '#FF9EC7', '#FFFFFF', '#FF8A3D']) }));
+      }
+      function tapFire() {
+        if (burning) return;
+        if (!roasting) { // first tap: into the fire it goes
+          roasting = true; hits = 0; toast = 0.05; needle = 0; ndir = 1; newZone();
+          say('Tap in the gold!', '#FFF1D6');
+          return;
+        }
+        const inGold = Math.abs(needle - zoneC) <= zoneW / 2;
+        if (!inGold) { // a miss burns it
+          roasting = false; burning = 1; toast = 1.05; streak = 0; hits = 0;
+          say('Missed! It caught fire', '#FF8A5C');
+          return;
+        }
+        hits++; flashZone = 1;
+        toast = 0.08 + (hits / HITS) * 0.6;
+        const F = fire();
+        burst(F.x + 18, F.y - 60, 6, () => ({ kind: 'glow', x: F.x + 18, y: F.y - 60, vx: rand(-60, 60), vy: -rand(40, 120), s: rand(1, 2), decay: 1.6, add: true, c: '#FFD27A' }));
+        if (hits >= HITS) perfect();
+        else { say(['', 'Nice!', 'Good!', 'Great!', 'One more!'][hits] || 'Nice!', '#FFD27A'); newZone(); }
       }
       function friend(c, x, y, t, i) {
         const jump = cheer ? Math.abs(Math.sin((1 - cheer) * Math.PI * 3 + i)) * 14 * cheer : 0;
@@ -1939,10 +1962,8 @@
       return {
         resize: reset,
         hover: () => true,
-        press() { if (!burning) roasting = true; },
-        pressMove() {},
-        pressEnd() { finish(); },
-        tap() { roasting = true; finish(); return true; },
+        tap() { tapFire(); return true; },
+        info: () => ({ roasting, hits, needle, zoneC, zoneW, burning: !!burning, smores }),
         draw(dt, t) {
           now = t;
           cheer = Math.max(0, cheer - dt * 0.7);
@@ -1977,8 +1998,8 @@
           if (Math.random() < dt * 9) emit({ kind: 'glow', x: F.x + rand(-14, 14), y: F.y - 40, vx: rand(-20, 20), vy: -rand(60, 130), s: rand(1, 2), decay: 1.2, add: true, c: pick(['#FFD27A', '#FF9F43']) });
           for (let i = 2; i < 4; i++) friend(CREW[i], F.x + CREW[i].dx, F.y + CREW[i].dy, t, i); // front row
           // roasting
-          if (roasting) toast += dt * 0.33;
-          if (toast > 1.0 && !burning) { burning = 1; roasting = false; streak = 0; say('Oops, it caught fire!', '#FF8A5C'); }
+          if (roasting) { needle += ndir * speed * dt; if (needle > 1) { needle = 2 - needle; ndir = -1; } if (needle < 0) { needle = -needle; ndir = 1; } }
+          flashZone = Math.max(0, flashZone - dt * 4);
           if (burning) { burning += dt; toast = Math.min(1.3, toast + dt * 0.2); if (burning > 2.2) { burning = 0; toast = 0; say('Fresh marshmallow!', '#FFF1D6'); } }
           const target = roasting || burning ? 1 : 0;
           const tip = { x: F.x + 18 + (1 - target) * 52, y: F.y - 58 - (1 - target) * 26 };
@@ -1990,12 +2011,18 @@
           if (burning) flame(tip.x, tip.y - 8, 0.35, t * 1.3);
           // the toast meter (gold zone = perfect)
           const bx = F.x - 70, by = F.y - 150, bw = 140;
-          ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(bx - 2, by - 2, bw + 4, 12);
-          const zone = (a, b, col) => { ctx.fillStyle = col; ctx.fillRect(bx + bw * a, by, bw * (b - a), 8); };
-          zone(0, 0.55, '#FFF1D6'); zone(0.55, 0.8, '#FFD27A'); zone(0.8, 1, '#B0703A');
-          ctx.fillStyle = '#FFFFFF'; ctx.fillRect(bx + bw * Math.min(1, toast) - 1.5, by - 5, 3, 18);
+          ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(bx - 2, by - 2, bw + 4, 14);
+          ctx.fillStyle = 'rgba(255,241,214,.18)'; ctx.fillRect(bx, by, bw, 10);
+          if (roasting) {
+            ctx.fillStyle = flashZone ? '#FFFFFF' : '#FFD27A'; ctx.fillRect(bx + bw * (zoneC - zoneW / 2), by, bw * zoneW, 10);
+            ctx.fillStyle = '#FFFFFF'; ctx.fillRect(bx + bw * needle - 1.5, by - 5, 3, 20);
+          }
+          for (let i = 0; i < HITS; i++) { // progress dots: 5 hits for a perfect one
+            ctx.fillStyle = i < hits ? '#FFD27A' : 'rgba(255,241,214,.25)';
+            ctx.beginPath(); ctx.arc(F.x - 32 + i * 16, by + 22, 4, 0, TAU); ctx.fill();
+          }
           ctx.font = '700 11px ui-monospace, Menlo, monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-          ctx.fillStyle = 'rgba(255,241,214,.85)'; ctx.fillText(roasting ? 'let go in the gold!' : 'hold to roast', F.x, by - 10);
+          ctx.fillStyle = 'rgba(255,241,214,.85)'; ctx.fillText(burning ? 'burnt…' : roasting ? `tap in the gold (${hits}/${HITS})` : 'tap to roast', F.x, by - 10);
           // s'mores floating up after a perfect one
           for (const s of treats) {
             s.life -= dt * 0.7; s.y -= 40 * dt;
