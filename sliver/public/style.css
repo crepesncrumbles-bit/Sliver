@@ -673,7 +673,7 @@ body.in-game #decor-front { display: none; }
 :root[data-fx="aurora"] .brand h1 { background-image: linear-gradient(90deg, #34D399, #22D3EE, #A78BFA, #34D399); }
 :root[data-fx="sakura"] .card, :root[data-fx="cottoncandy"] .card { box-shadow: 0 6px 0 var(--page-deep), 0 10px 40px rgba(255, 255, 255, .35); }
 :root[data-fx="lagoon"] .card { box-shadow: 0 6px 0 var(--page-deep), 0 0 34px rgba(94, 234, 212, .25); }
-:root[data-fx="nebula"] .card, :root[data-fx="aurora"] .card { background: color-mix(in srgb, var(--paper) 88%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); animation: fx-breathe 6s ease-in-out infinite; }
+:root[data-fx="nebula"] .card, :root[data-fx="aurora"] .card { background: color-mix(in srgb, var(--paper) 93%, transparent); animation: fx-breathe 6s ease-in-out infinite; } /* no backdrop blur: re-blurring a moving background every frame is heavy */
 :root[data-fx="synthwave"] .brand h1 { color: #FFE4F3; animation: fx-neon 5s infinite; }
 :root[data-fx="synthwave"] .card { border: 1.5px solid rgba(255, 46, 151, .6); box-shadow: 0 6px 0 #000, 0 0 22px rgba(255, 46, 151, .35), inset 0 0 22px rgba(34, 211, 238, .08); }
 :root[data-fx="ember"] .btn.primary { animation: fx-ember 2.4s ease-in-out infinite; }

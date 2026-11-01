@@ -41,6 +41,7 @@
     const dt = Math.min(0.05, (now - (last || now)) / 1000);
     last = now;
     scene.draw(dt, (now - t0) / 1000);
+    drawParts(dt);
     if (!reduce && !document.hidden) raf = requestAnimationFrame(frame);
   }
   function startLoop() { if (!raf && scene) { last = 0; raf = requestAnimationFrame(frame); } }
@@ -72,6 +73,54 @@
   }
 
   // ---------------------------------------------------------------- scenes
+  // ---------- shared tap effects ----------
+  // One small particle pool for every theme's tap effects, capped so tapping like mad can't lag.
+  let parts = [];
+  const MAX_PARTS = 260;
+  function emit(p) {
+    if (parts.length >= MAX_PARTS) parts.splice(0, parts.length - MAX_PARTS + 1);
+    parts.push(Object.assign({ vx: 0, vy: 0, g: 0, drag: 0, life: 1, decay: 1, s: 4, rot: 0, vr: 0, c: '#fff', kind: 'dot', add: false }, p));
+  }
+  function burst(x, y, n, make) { for (let i = 0; i < n; i++) emit(make(i, (i / n) * TAU)); }
+  function drawParts(dt) {
+    if (!parts.length) return;
+    for (const p of parts) {
+      p.life -= dt * p.decay;
+      if (p.life <= 0) continue;
+      p.vy += p.g * dt; if (p.drag) { const k = Math.max(0, 1 - p.drag * dt); p.vx *= k; p.vy *= k; }
+      p.x += p.vx * dt; p.y += p.vy * dt; p.rot += p.vr * dt;
+      if (p.floor && p.y > p.floor) { p.y = p.floor; p.vy = -Math.abs(p.vy) * 0.45; p.vx *= 0.7; }
+      const a = Math.min(1, p.life * 1.8);
+      ctx.globalAlpha = a;
+      ctx.globalCompositeOperation = p.add ? 'lighter' : 'source-over';
+      ctx.fillStyle = p.c; ctx.strokeStyle = p.c;
+      switch (p.kind) {
+        case 'ring': p.s += p.vr * dt; ctx.lineWidth = p.w || 2.5; ctx.beginPath(); ctx.arc(p.x, p.y, p.s, 0, TAU); ctx.stroke(); break;
+        case 'heart': heartPath(p.x, p.y, p.s); ctx.fill(); break;
+        case 'star': sparkle(p.x, p.y, p.s, p.c, a); break;
+        case 'streak': ctx.lineWidth = p.s; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x - p.vx * 0.04, p.y - p.vy * 0.04); ctx.stroke(); break;
+        case 'bubble': ctx.lineWidth = 1.4; ctx.beginPath(); ctx.arc(p.x + Math.sin(p.rot) * 4, p.y, p.s, 0, TAU); ctx.stroke(); break;
+        case 'coin': {
+          const w = Math.max(0.15, Math.abs(Math.cos(p.rot)));
+          ctx.beginPath(); ctx.ellipse(p.x, p.y, p.s * w, p.s, 0, 0, TAU); ctx.fill();
+          ctx.strokeStyle = '#8C6A1C'; ctx.lineWidth = 1.2; ctx.stroke();
+          if (w > 0.5) { ctx.fillStyle = '#FFF3C4'; ctx.beginPath(); ctx.ellipse(p.x - p.s * 0.25 * w, p.y - p.s * 0.3, p.s * 0.18 * w, p.s * 0.25, 0, 0, TAU); ctx.fill(); }
+          break;
+        }
+        case 'petal': {
+          ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.scale(Math.max(0.2, Math.abs(Math.cos(p.rot * 2))), 1);
+          ctx.beginPath(); ctx.moveTo(0, -p.s); ctx.bezierCurveTo(p.s * 0.9, -p.s * 0.6, p.s * 0.8, p.s * 0.6, 0, p.s);
+          ctx.bezierCurveTo(-p.s * 0.8, p.s * 0.6, -p.s * 0.9, -p.s * 0.6, 0, -p.s); ctx.fill(); ctx.restore(); break;
+        }
+        case 'glow': ctx.globalAlpha = a * 0.35; ctx.beginPath(); ctx.arc(p.x, p.y, p.s * 2.4, 0, TAU); ctx.fill(); ctx.globalAlpha = a; ctx.beginPath(); ctx.arc(p.x, p.y, p.s, 0, TAU); ctx.fill(); break;
+        default: ctx.beginPath(); ctx.arc(p.x, p.y, p.s, 0, TAU); ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+    parts = parts.filter((p) => p.life > 0);
+  }
+  const ring = (x, y, c, opts = {}) => emit({ kind: 'ring', x, y, s: opts.s || 6, vr: opts.grow || 260, decay: opts.decay || 2.2, c, w: opts.w || 2.5, add: !!opts.add });
+
   const SCENES = {
     // Cherry blossoms: soft bokeh, a branch in the corner, petals fluttering down.
     sakura() {
@@ -114,6 +163,13 @@
       reset();
       return {
         resize: reset,
+        hover: () => true,
+        // Tap: a gust of blossoms bursts out and flutters down.
+        tap(x, y) {
+          burst(x, y, 24, (i, a) => { const v = rand(120, 340); return { kind: 'petal', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 80, g: 160, drag: 1.6, s: rand(6, 12), rot: rand(0, TAU), vr: rand(-6, 6), decay: rand(0.35, 0.55), c: pick(['#FFE4EC', '#FFC7D9', '#FFB3CB', '#FFFFFF', '#FF9EBB']) }; });
+          ring(x, y, 'rgba(255,255,255,.8)', { grow: 200 });
+          return true;
+        },
         draw(dt, t) {
           ctx.fillStyle = grad(0, H, [[0, '#F7A8C0'], [0.55, '#E26C93'], [1, '#C94A76']]);
           ctx.fillRect(0, 0, W, H);
@@ -130,7 +186,8 @@
 
     // Pastel sky: puffy clouds drifting at different depths, hearts floating up, twinkles.
     cottoncandy() {
-      let clouds = [], hearts = [], stars = [];
+      let clouds = [], hearts = [], stars = [], cloudsNow = [];
+      const hitCloud = (x, y) => cloudsNow.slice().reverse().find((c) => c.puffs.some(([dx, dy, r]) => Math.hypot(x - (c.x + dx * c.s), y - (c.y + dy * c.s)) < r * c.s * 1.1));
       const cloud = (any) => ({ x: any ? rand(-200, W) : -320, y: rand(20, H * 0.85), s: rand(0.5, 1.5), v: rand(8, 26), puffs: Array.from({ length: 6 }, (_, i) => [i * 34 - 85 + rand(-8, 8), rand(-24, 6), rand(26, 48)]) });
       const heart = (any) => ({ x: rand(0, W), y: any ? rand(0, H) : H + 30, s: rand(8, 18), v: rand(18, 40), p: rand(0, TAU), col: pick(['#FF8FC8', '#FFB6D9', '#FFFFFF', '#F472B6', '#C4B5FD']) });
       const reset = () => {
@@ -141,14 +198,28 @@
       reset();
       return {
         resize: reset,
+        hover: () => true,
+        // Tap a cloud: it boings and rains hearts. Anywhere else: a pop of hearts and twinkles.
+        tap(x, y) {
+          const c = hitCloud(x, y);
+          if (c) { c.boing = 1; return true; }
+          burst(x, y, 12, (i, a) => { const v = rand(90, 220); return { kind: 'heart', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 40, drag: 2, g: -20, s: rand(6, 12), decay: 0.8, c: pick(['#FF8FC8', '#FFB6D9', '#FFFFFF', '#F472B6', '#C4B5FD']) }; });
+          burst(x, y, 6, () => ({ kind: 'star', x: x + rand(-40, 40), y: y + rand(-40, 40), s: rand(4, 8), decay: 1.4, c: '#FFFFFF' }));
+          return true;
+        },
         draw(dt, t) {
           const shift = (Math.sin(t * 0.08) + 1) / 2;
+          cloudsNow = clouds;
           ctx.fillStyle = grad(0, H, [[0, `hsl(${330 - shift * 20},90%,84%)`], [0.5, `hsl(${265 + shift * 10},85%,82%)`], [1, `hsl(${200 + shift * 15},90%,80%)`]]);
           ctx.fillRect(0, 0, W, H);
           for (const s of stars) sparkle(s.x, s.y, s.s, '#FFFFFF', 0.25 + 0.75 * Math.abs(Math.sin(t * s.v + s.p)));
           for (const c of clouds) {
             c.x += c.v * c.s * dt; if (c.x > W + 260) Object.assign(c, cloud(false));
-            for (const [dx, dy, r] of c.puffs) {
+            c.boing = Math.max(0, (c.boing || 0) - dt * 1.6);
+            const sq = c.boing ? Math.sin(c.boing * 18) * c.boing * 0.18 : 0; // wobbly squash after a tap
+            if (c.boing && Math.random() < dt * 14) emit({ kind: 'heart', x: c.x + rand(-80, 80) * c.s, y: c.y + 20 * c.s, vy: rand(60, 120), vx: rand(-15, 15), s: rand(5, 9), decay: 0.7, c: pick(['#FF8FC8', '#F472B6', '#C4B5FD']) });
+            for (const [dx0, dy0, r] of c.puffs) {
+              const dx = dx0 * (1 + sq), dy = dy0 * (1 - sq);
               const g = ctx.createRadialGradient(c.x + dx * c.s, c.y + dy * c.s, 0, c.x + dx * c.s, c.y + dy * c.s, r * c.s * 1.6);
               g.addColorStop(0, 'rgba(255,255,255,.95)'); g.addColorStop(0.6, 'rgba(255,255,255,.7)'); g.addColorStop(1, 'rgba(255,255,255,0)');
               ctx.fillStyle = g; ctx.beginPath(); ctx.arc(c.x + dx * c.s, c.y + dy * c.s, r * c.s * 1.6, 0, TAU); ctx.fill();
@@ -174,9 +245,26 @@
         fish = Array.from({ length: Math.round(5 * density()) }, newFish).map((f) => ({ ...f, x: rand(0, W) }));
         glints = Array.from({ length: Math.round(30 * density()) }, () => ({ x: rand(0, W), y: rand(0, H), p: rand(0, TAU), v: rand(2, 5) }));
       };
+      const hitBubble = (x, y) => bubbles.find((b) => Math.hypot(x - b.x, y - b.y) < Math.max(14, b.r + 8));
+      const hitFish = (x, y) => fish.find((f) => Math.abs(x - f.x) < 34 * f.s && Math.abs(y - f.y) < 18 * f.s);
       reset();
       return {
         resize: reset,
+        hover: () => true,
+        // Tap a bubble to pop it, tap a fish and it darts off, anywhere else blows a stream of bubbles.
+        tap(x, y) {
+          const b = hitBubble(x, y);
+          if (b) {
+            ring(b.x, b.y, 'rgba(224,255,251,.9)', { s: b.r, grow: 120, decay: 3, w: 1.5 });
+            burst(b.x, b.y, 8, (i, a) => ({ x: b.x, y: b.y, vx: Math.cos(a) * 90, vy: Math.sin(a) * 90, drag: 3, s: 1.6, decay: 2.2, c: '#E0FFFB' }));
+            Object.assign(b, bubble(false));
+            return true;
+          }
+          const f = hitFish(x, y);
+          if (f) { f.v = 420; f.dash = 1; burst(f.x, f.y, 6, () => ({ kind: 'bubble', x: f.x, y: f.y, vx: rand(-30, 30), vy: -rand(40, 90), s: rand(2, 4), vr: 6, decay: 0.8, c: 'rgba(224,255,251,.8)' })); return true; }
+          burst(x, y, 14, () => ({ kind: 'bubble', x: x + rand(-14, 14), y: y + rand(-6, 6), vx: rand(-25, 25), vy: -rand(70, 170), s: rand(3, 10), vr: rand(3, 7), decay: rand(0.35, 0.6), c: 'rgba(224,255,251,.8)' }));
+          return true;
+        },
         draw(dt, t) {
           ctx.fillStyle = grad(0, H, [[0, '#22B8C9'], [0.45, '#0E7490'], [1, '#083344']]);
           ctx.fillRect(0, 0, W, H);
@@ -193,6 +281,7 @@
           for (const f of fish) {
             const dir = f.vx || (f.x < 0 ? 1 : -1); f.vx = dir;
             f.x += dir * f.v * dt; f.y += Math.sin(t * 1.5 + f.p) * 6 * dt;
+            if (f.dash) { f.dash = Math.max(0, f.dash - dt); if (!f.dash) f.v = rand(30, 60); }
             if (f.x < -80 || f.x > W + 80) Object.assign(f, newFish(), { vx: 0 });
             ctx.save(); ctx.translate(f.x, f.y); ctx.scale(dir * f.s, f.s); ctx.globalAlpha = 0.55; ctx.fillStyle = f.col;
             ctx.beginPath(); ctx.ellipse(0, 0, 18, 8, 0, 0, TAU); ctx.fill();
@@ -220,25 +309,47 @@
         { hue: 175, y: 0.36, amp: 55, f: 0.006, s: -0.18, h: 130 },
         { hue: 275, y: 0.22, amp: 80, f: 0.003, s: 0.12, h: 120 },
       ];
+      let surge = 0, surgeX = 0, low = null, lctx = null;
+      // Each band's colour fade is drawn once into a tiny sprite and stretched per column
+      // (much cheaper than building a gradient for every column every frame).
+      for (const b of bands) {
+        const c = document.createElement('canvas'); c.width = 1; c.height = 128;
+        const g = c.getContext('2d'), lg = g.createLinearGradient(0, 0, 0, 128);
+        lg.addColorStop(0, `hsla(${b.hue + 40},90%,65%,0)`); lg.addColorStop(0.7 * (108 / 128), `hsla(${b.hue},90%,60%,.10)`); lg.addColorStop(1, `hsla(${b.hue - 10},95%,70%,.22)`);
+        g.fillStyle = lg; g.fillRect(0, 0, 1, 128); b.sprite = c;
+      }
       return {
         resize: reset,
+        hover: () => true,
+        // Tap: the lights flare up around where you tapped, with a shower of green/violet sparkles.
+        tap(x, y) {
+          surge = 1; surgeX = x;
+          burst(x, y, 18, (i, a) => { const v = rand(60, 200); return { kind: 'glow', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, drag: 1.8, g: 25, s: rand(1.2, 2.6), decay: rand(0.5, 0.9), add: true, c: pick(['#6EE7B7', '#34D399', '#A78BFA', '#67E8F9']) }; });
+          return true;
+        },
         draw(dt, t) {
+          surge = Math.max(0, surge - dt * 0.45);
           ctx.fillStyle = grad(0, H, [[0, '#020617'], [0.6, '#0B1430'], [1, '#111C3A']]);
           ctx.fillRect(0, 0, W, H);
           for (const s of stars) { ctx.globalAlpha = 0.35 + 0.65 * Math.abs(Math.sin(t * s.v + s.p)); ctx.fillStyle = '#E0F2FE'; ctx.fillRect(s.x, s.y, s.r, s.r); }
           ctx.globalAlpha = 1;
-          ctx.globalCompositeOperation = 'lighter';
+          // The lights are soft anyway, so they're drawn at quarter size and scaled up (much lighter).
+          const Q = 4;
+          if (!low || low.width !== Math.ceil(W / Q) || low.height !== Math.ceil(H / Q)) { low = document.createElement('canvas'); low.width = Math.ceil(W / Q); low.height = Math.ceil(H / Q); lctx = low.getContext('2d'); }
+          lctx.setTransform(1, 0, 0, 1, 0, 0); lctx.clearRect(0, 0, low.width, low.height);
+          lctx.globalCompositeOperation = 'lighter'; lctx.setTransform(1 / Q, 0, 0, 1 / Q, 0, 0);
           for (const b of bands) {
-            for (let x = -10; x < W + 10; x += 4) {
+            for (let x = -10; x < W + 10; x += 8) {
               const y = H * b.y + Math.sin(x * b.f + t * b.s * 2) * b.amp + Math.sin(x * b.f * 2.7 - t * b.s * 3) * b.amp * 0.35;
-              const h = b.h * (0.6 + 0.4 * Math.sin(x * 0.01 + t * 0.8 + b.hue));
-              const g = ctx.createLinearGradient(0, y - h, 0, y + 20);
-              g.addColorStop(0, `hsla(${b.hue + 40},90%,65%,0)`);
-              g.addColorStop(0.7, `hsla(${b.hue},90%,60%,.10)`);
-              g.addColorStop(1, `hsla(${b.hue - 10},95%,70%,.22)`);
-              ctx.fillStyle = g; ctx.fillRect(x, y - h, 4, h + 20);
+              const boost = surge ? 1 + surge * 1.4 * Math.exp(-(((x - surgeX) / (W * 0.25)) ** 2)) : 1;
+              const h = b.h * (0.6 + 0.4 * Math.sin(x * 0.01 + t * 0.8 + b.hue)) * boost;
+              lctx.globalAlpha = Math.min(1, boost);
+              lctx.drawImage(b.sprite, x, y - h, 8, h + 20);
             }
           }
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.drawImage(low, 0, 0, W, H);
+          ctx.globalAlpha = 1;
           ctx.globalCompositeOperation = 'source-over';
           ctx.fillStyle = '#050A18';
           ctx.beginPath(); ctx.moveTo(0, H);
@@ -250,7 +361,7 @@
 
     // Deep space: three layers of stars drifting, glowing nebulae, shooting stars.
     nebula() {
-      let layers = [], clouds = [], shoot = null, nextShot = 2;
+      let layers = [], clouds = [], shoot = null, nextShot = 2, warp = 0;
       const reset = () => {
         layers = [0.25, 0.6, 1.2].map((speed, i) => ({ speed, stars: Array.from({ length: Math.round([160, 80, 30][i] * density()) }, () => ({ x: rand(0, W), y: rand(0, H), r: [0.7, 1.2, 2][i] * rand(0.6, 1.2), p: rand(0, TAU) })) }));
         clouds = Array.from({ length: 5 }, (_, i) => ({ x: rand(0, W), y: rand(0, H), r: rand(180, 380), hue: pick([320, 280, 210, 190, 340]), p: i }));
@@ -258,7 +369,18 @@
       reset();
       return {
         resize: reset,
+        hover: () => true,
+        // Tap: a supernova where you tapped, and the stars jump to warp speed for a moment.
+        tap(x, y) {
+          warp = 1;
+          ring(x, y, 'rgba(255,255,255,.9)', { grow: 420, decay: 1.6, w: 3, add: true });
+          ring(x, y, 'rgba(244,114,182,.8)', { grow: 260, decay: 1.2, w: 6, add: true });
+          burst(x, y, 26, (i, a) => { const v = rand(80, 380); return { kind: 'glow', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, drag: 1.4, s: rand(1, 2.4), decay: rand(0.5, 0.9), add: true, c: pick(['#FFFFFF', '#F9A8D4', '#93C5FD', '#C4B5FD']) }; });
+          return true;
+        },
         draw(dt, t) {
+          warp = Math.max(0, warp - dt * 0.7);
+          const wf = 1 + warp * warp * 30;
           ctx.fillStyle = '#05031A'; ctx.fillRect(0, 0, W, H);
           ctx.globalCompositeOperation = 'lighter';
           for (const c of clouds) {
@@ -270,9 +392,11 @@
           ctx.globalCompositeOperation = 'source-over';
           for (const L of layers) {
             for (const s of L.stars) {
-              s.x -= L.speed * 12 * dt; if (s.x < -2) { s.x = W + 2; s.y = rand(0, H); }
+              s.x -= L.speed * 12 * wf * dt; if (s.x < -2) { s.x = W + 2; s.y = rand(0, H); }
               ctx.globalAlpha = 0.5 + 0.5 * Math.sin(t * 2 + s.p);
-              ctx.fillStyle = '#F8FAFF'; ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, TAU); ctx.fill();
+              ctx.fillStyle = '#F8FAFF';
+              if (wf > 3) ctx.fillRect(s.x, s.y - s.r / 2, Math.min(80, L.speed * wf * 1.4), s.r); // stretched into streaks
+              else { ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, TAU); ctx.fill(); }
             }
           }
           ctx.globalAlpha = 1;
@@ -291,13 +415,25 @@
 
     // Retro neon: striped sun, mountains and a grid racing toward you.
     synthwave() {
+      let turbo = 0, pos = 0, sunPulse = 0;
       return {
+        hover: () => true,
+        // Tap: turbo! The grid rushes toward you, the sun pulses, and a neon ring shoots out.
+        tap(x, y) {
+          turbo = 1; sunPulse = 1;
+          ring(x, y, '#FF2E97', { grow: 520, decay: 1.5, w: 3, add: true });
+          ring(x, y, '#22D3EE', { grow: 340, decay: 1.5, w: 2, add: true });
+          burst(x, y, 16, (i, a) => { const v = rand(200, 460); return { kind: 'streak', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, drag: 2, s: 2, decay: 1.6, add: true, c: pick(['#FF2E97', '#22D3EE', '#FDE047']) }; });
+          return true;
+        },
         draw(dt, t) {
+          turbo = Math.max(0, turbo - dt * 0.5); sunPulse = Math.max(0, sunPulse - dt * 2);
+          pos += dt * 0.6 * (1 + turbo * turbo * 7);
           const horizon = H * 0.58;
           ctx.fillStyle = grad(0, horizon, [[0, '#0B0024'], [0.6, '#3B0764'], [1, '#9D174D']]);
           ctx.fillRect(0, 0, W, horizon);
           // sun with stripes sliding down
-          const r = Math.min(W, H) * 0.22, cx = W / 2, cy = horizon - r * 0.35;
+          const r = Math.min(W, H) * 0.22 * (1 + sunPulse * 0.08), cx = W / 2, cy = horizon - r * 0.35;
           ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.clip();
           ctx.fillStyle = grad(cy - r, cy + r, [[0, '#FDE047'], [0.5, '#FB7185'], [1, '#C026D3']]);
           ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
@@ -319,7 +455,7 @@
           ctx.fillStyle = grad(horizon, H, [[0, '#1A0033'], [1, '#05000F']]);
           ctx.fillRect(0, horizon, W, H - horizon);
           ctx.strokeStyle = 'rgba(34,211,238,.75)'; ctx.lineWidth = 1.4;
-          const speed = (t * 0.6) % 1;
+          const speed = pos % 1;
           for (let i = 0; i < 18; i++) {
             const z = (i + 1 - speed) / 18; // 0 far .. 1 near
             const y = horizon + Math.pow(z, 2.2) * (H - horizon);
@@ -341,13 +477,23 @@
       let embers = [];
       const ember = (any) => ({ x: rand(0, W), y: any ? rand(0, H) : H + rand(0, 40), r: rand(0.8, 2.6), vy: rand(40, 120), sway: rand(10, 40), p: rand(0, TAU), life: rand(0.6, 1), hot: Math.random() < 0.15 });
       const reset = () => { embers = Array.from({ length: Math.round(110 * density()) }, () => ember(true)); };
+      let heat = 0;
       reset();
       return {
         resize: reset,
+        hover: () => true,
+        // Tap: like a hammer on an anvil, a fountain of sparks flies out and the forge flares.
+        tap(x, y) {
+          heat = 1;
+          ring(x, y, 'rgba(255,200,120,.9)', { grow: 300, decay: 3, w: 2, add: true });
+          burst(x, y, 34, () => { const a = rand(-Math.PI * 0.95, -Math.PI * 0.05), v = rand(220, 620); return { kind: 'streak', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, g: 900, s: rand(1.2, 2.4), decay: rand(0.7, 1.3), add: true, c: pick(['#FFE7A3', '#FDBA74', '#FB923C', '#FFFFFF']) }; });
+          return true;
+        },
         draw(dt, t) {
+          heat = Math.max(0, heat - dt * 1.2);
           ctx.fillStyle = grad(0, H, [[0, '#0A0503'], [0.65, '#1C0D06'], [1, '#3A1405']]);
           ctx.fillRect(0, 0, W, H);
-          const pulse = 0.85 + 0.15 * Math.sin(t * 2.3) + 0.05 * Math.sin(t * 7.1);
+          const pulse = 0.85 + 0.15 * Math.sin(t * 2.3) + 0.05 * Math.sin(t * 7.1) + heat * 0.35;
           glowDot(W / 2, H + 80, Math.max(W, H) * 0.75 * pulse, 'rgba(249,115,22,.55)');
           glowDot(W * 0.2, H + 40, W * 0.35, 'rgba(234,88,12,.35)');
           glowDot(W * 0.8, H + 40, W * 0.35, 'rgba(251,191,36,.25)');
@@ -371,12 +517,16 @@
       let drops = [], splashes = [], bolt = null, flash = 0, next = 2.5;
       const drop = (any) => ({ x: rand(-100, W + 100), y: any ? rand(-H, H) : rand(-120, -10), l: rand(12, 28), v: rand(700, 1100) });
       const reset = () => { drops = Array.from({ length: Math.round(220 * density()) }, () => drop(true)); };
-      function makeBolt() {
-        const pts = [[rand(W * 0.15, W * 0.85), 0]];
-        while (pts[pts.length - 1][1] < H * rand(0.45, 0.8)) {
+      function makeBolt(tx, ty) {
+        const pts = [[tx !== undefined ? tx + rand(-120, 120) : rand(W * 0.15, W * 0.85), 0]];
+        const end = ty !== undefined ? ty : H * rand(0.45, 0.8);
+        while (pts[pts.length - 1][1] < end) {
           const [x, y] = pts[pts.length - 1];
-          pts.push([x + rand(-45, 45), y + rand(25, 60)]);
+          // steer toward the tap point if there is one
+          const pull = tx !== undefined ? (tx - x) / Math.max(1, (end - y) / 40) : 0;
+          pts.push([x + rand(-40, 40) + pull, Math.min(end, y + rand(25, 60))]);
         }
+        if (tx !== undefined) pts[pts.length - 1] = [tx, ty];
         const forks = [];
         for (let i = 2; i < pts.length - 2; i += 3) if (Math.random() < 0.5) {
           const f = [pts[i]];
@@ -385,18 +535,33 @@
         }
         return { pts, forks, life: 0.35 };
       }
+      function strike(b) {
+        bolt = b; flash = 1;
+        document.documentElement.classList.add('fx-flash');
+        setTimeout(() => document.documentElement.classList.remove('fx-flash'), 140);
+      }
+      let lastTap = 0;
       reset();
       return {
         resize: reset,
+        hover: () => true,
+        // Tap: lightning strikes right where you tapped, with a burst of sparks.
+        tap(x, y) {
+          const nowS = performance.now();
+          if (nowS - lastTap < 120) return true; // one bolt at a time
+          lastTap = nowS;
+          strike(makeBolt(x, y)); next = Math.max(next, 2.5);
+          burst(x, y, 14, (i, a) => { const v = rand(120, 320); return { kind: 'streak', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 60, g: 700, s: 1.5, decay: 2, add: true, c: pick(['#E0F2FE', '#BAE6FD', '#FFFFFF']) }; });
+          ring(x, y, 'rgba(186,230,253,.9)', { grow: 240, decay: 3, w: 2, add: true });
+          return true;
+        },
         draw(dt, t) {
           ctx.fillStyle = grad(0, H, [[0, '#050913'], [0.5, '#0B1220'], [1, '#111B2E']]);
           ctx.fillRect(0, 0, W, H);
           for (let i = 0; i < 4; i++) glowDot(W * (i / 3) + Math.sin(t * 0.1 + i) * 80, 0, W * 0.4, 'rgba(71,85,105,.35)'); // clouds
           next -= dt;
           if (next <= 0) {
-            bolt = makeBolt(); flash = 1; next = rand(3, 8);
-            document.documentElement.classList.add('fx-flash');
-            setTimeout(() => document.documentElement.classList.remove('fx-flash'), 140);
+            strike(makeBolt()); next = rand(3, 8);
           }
           if (flash > 0) { ctx.fillStyle = `rgba(200,225,255,${flash * 0.35})`; ctx.fillRect(0, 0, W, H); flash -= dt * 3; }
           if (bolt) {
@@ -439,12 +604,28 @@
           m.stroke();
         }
       }
+      let shine = null;
       const reset = () => { paintMarble(); dust = Array.from({ length: Math.round(90 * density()) }, () => ({ x: rand(0, W), y: rand(0, H), r: rand(0.6, 2.2), vx: rand(-6, 6), vy: rand(-10, -3), p: rand(0, TAU), v: rand(1, 3) })); };
       reset();
       return {
         resize: reset,
+        hover: () => true,
+        // Tap: a shower of spinning gold coins that bounce off the bottom, and a gold shine ripples out.
+        tap(x, y) {
+          shine = { x, y, r: 0, life: 1 };
+          burst(x, y, 9, () => { const a = rand(-Math.PI * 0.9, -Math.PI * 0.1), v = rand(260, 560); return { kind: 'coin', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, g: 1300, s: rand(6, 10), rot: rand(0, TAU), vr: rand(8, 16), decay: 0.45, floor: H - 8, c: pick(['#E8C25A', '#D4AF37', '#F5D77A']) }; });
+          burst(x, y, 10, () => ({ kind: 'star', x: x + rand(-30, 30), y: y + rand(-30, 30), s: rand(4, 9), decay: 1.5, c: '#FFF3C4' }));
+          return true;
+        },
         draw(dt, t) {
           ctx.drawImage(marble, 0, 0, W, H);
+          if (shine) {
+            shine.r += dt * 700; shine.life -= dt * 0.9;
+            const g2 = ctx.createRadialGradient(shine.x, shine.y, Math.max(0, shine.r - 90), shine.x, shine.y, shine.r);
+            g2.addColorStop(0, 'rgba(245,230,168,0)'); g2.addColorStop(0.7, `rgba(245,230,168,${0.16 * shine.life})`); g2.addColorStop(1, 'rgba(245,230,168,0)');
+            ctx.fillStyle = g2; ctx.fillRect(shine.x - shine.r, shine.y - shine.r, shine.r * 2, shine.r * 2);
+            if (shine.life <= 0 || shine.r > Math.hypot(W, H)) shine = null;
+          }
           const sweep = ((t * 0.12) % 1.6) - 0.3; // a band of light every ~13 s
           const sx = sweep * (W + H);
           const g = ctx.createLinearGradient(sx - 220, 0, sx + 220, H * 0.6);
@@ -627,7 +808,8 @@
 
     // Crimson city: a red-lit skyline at night, flickering neon, rain and fog.
     crimson() {
-      let far = [], near = [], rain = [], span = 0;
+      let far = [], near = [], rain = [], span = 0, glitch = 0;
+      const nearSeen = []; // where the near buildings were drawn this frame (for tapping)
       const city = (n, minH, maxH, minW, maxW) => {
         const out = []; let x = 0;
         while (x < span) {
@@ -645,19 +827,23 @@
         near = city(0.35, H * 0.25, H * 0.62, 60, 130);
         rain = Array.from({ length: Math.round(150 * density()) }, () => ({ x: rand(0, W), y: rand(0, H), l: rand(10, 26), v: rand(500, 800) }));
       };
-      function layer(list, off, base, fill, edge, t, winA) {
+      function layer(list, off, base, fill, edge, t, winA, seen) {
         for (const b of list) {
           let x = b.x - off; if (x + b.w < 0) x += span; if (x > W) continue;
           const top = base - b.h;
+          if (seen) seen.push({ b, x, top });
+          b.lit = Math.max(0, (b.lit || 0) - 1 / 60 * 0.8);
           ctx.fillStyle = fill; ctx.fillRect(x, top, b.w, b.h);
           if (b.antenna) { ctx.fillRect(x + b.w / 2 - 1, top - 24, 2, 24); glowDot(x + b.w / 2, top - 24, 6, '#FF2847', 0.5 + 0.5 * Math.sin(t * 3 + b.x)); }
           for (const w of b.wins) {
-            const on = w.on ? (Math.sin(t * w.f + b.x) > -0.95) : false;
+            const lit = b.lit && (w.y / b.h) > 1 - b.lit * 1.4; // a wave of light running up the building
+            const on = lit || (w.on ? (Math.sin(t * w.f + b.x) > -0.95) : false);
             if (!on) continue;
-            ctx.globalAlpha = winA; ctx.fillStyle = w.c; ctx.fillRect(x + w.x, top + w.y, 5, 7);
+            ctx.globalAlpha = lit ? 1 : winA; ctx.fillStyle = lit ? '#FFD1D6' : w.c; ctx.fillRect(x + w.x, top + w.y, 5, 7);
           }
           ctx.globalAlpha = 1;
-          ctx.strokeStyle = edge; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x + b.w, top); ctx.stroke();
+          ctx.strokeStyle = edge; ctx.lineWidth = b.lit ? 3 : 1; ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x + b.w, top); ctx.stroke();
+          if (b.lit) { ctx.globalAlpha = b.lit * 0.8; ctx.strokeStyle = '#FF2847'; ctx.lineWidth = 2; ctx.strokeRect(x + 1, top + 1, b.w - 2, b.h); ctx.globalAlpha = 1; }
           if (b.sign) {
             const s = b.sign; const flick = Math.sin(t * 9 + s.p) > -0.85 && Math.sin(t * 0.7 + s.p) > -0.98 ? 1 : 0.15;
             const sx = x + b.w * 0.5 - 6, sy = top + s.y;
@@ -671,15 +857,29 @@
       reset();
       return {
         resize: reset,
+        hover: () => true,
+        // Tap a building: a wave of light runs up it and its neon outline flares. Anywhere: a red
+        // hologram ring and a quick glitch across the screen.
+        tap(x, y) {
+          const hit = nearSeen.slice().reverse().find((n) => x >= n.x && x <= n.x + n.b.w && y >= n.top);
+          if (hit) hit.b.lit = 1;
+          glitch = 1;
+          ring(x, y, '#FF2847', { grow: 360, decay: 1.8, w: 2.5, add: true });
+          ring(x, y, '#FF8A3D', { s: 2, grow: 200, decay: 2.4, w: 1.5, add: true });
+          burst(x, y, 12, (i, a) => ({ kind: 'streak', x, y, vx: Math.cos(a) * 300, vy: Math.sin(a) * 300, drag: 3, s: 1.5, decay: 2, add: true, c: pick(['#FF2847', '#FF5A36', '#FFD1D6']) }));
+          return true;
+        },
         draw(dt, t) {
           const ground = H * 0.86;
+          glitch = Math.max(0, glitch - dt * 3);
           ctx.fillStyle = grad(0, H, [[0, '#0B0105'], [0.55, '#2A040E'], [0.86, '#4A0716'], [1, '#12020A']]);
           ctx.fillRect(0, 0, W, H);
           glowDot(W * 0.72, H * 0.3, H * 0.28, 'rgba(255,40,71,.35)');
           ctx.fillStyle = 'rgba(255,90,90,.9)'; ctx.beginPath(); ctx.arc(W * 0.72, H * 0.3, Math.min(W, H) * 0.07, 0, TAU); ctx.fill();
           layer(far, (t * 8) % span, ground - 10, '#2B0610', 'rgba(255,60,80,.35)', t, 0.45);
           ctx.fillStyle = grad(ground - H * 0.25, ground, [[0, 'rgba(90,8,24,0)'], [1, 'rgba(90,8,24,.55)']]); ctx.fillRect(0, ground - H * 0.25, W, H * 0.25);
-          layer(near, (t * 20) % span, ground, '#0E0206', 'rgba(255,40,71,.8)', t, 0.9);
+          nearSeen.length = 0;
+          layer(near, (t * 20) % span, ground, '#0E0206', 'rgba(255,40,71,.8)', t, 0.9, nearSeen);
           // wet street with reflections
           ctx.fillStyle = grad(ground, H, [[0, '#1A030A'], [1, '#050003']]); ctx.fillRect(0, ground, W, H - ground);
           ctx.globalAlpha = 0.25; ctx.fillStyle = grad(ground, H, [[0, '#FF2847'], [1, 'rgba(255,40,71,0)']]); ctx.fillRect(0, ground, W, (H - ground) * 0.6); ctx.globalAlpha = 1;
@@ -687,6 +887,13 @@
           const sy = ((t * 60) % (H + 200)) - 100;
           ctx.fillStyle = grad(sy - 40, sy + 40, [[0, 'rgba(255,40,71,0)'], [0.5, 'rgba(255,40,71,.06)'], [1, 'rgba(255,40,71,0)']]); ctx.fillRect(0, sy - 40, W, 80);
           // rain
+          if (glitch > 0) { // a few horizontal slices jump sideways for a split second
+            for (let k = 0; k < 4; k++) {
+              const gy = rand(0, H), gh = rand(3, 14);
+              ctx.fillStyle = k % 2 ? `rgba(255,40,71,${0.35 * glitch})` : `rgba(80,220,255,${0.18 * glitch})`;
+              ctx.fillRect(rand(-30, 30) * glitch, gy, W, gh);
+            }
+          }
           ctx.strokeStyle = 'rgba(255,170,180,.35)'; ctx.lineWidth = 1; ctx.beginPath();
           for (const r of rain) { r.y += r.v * dt; r.x -= r.v * 0.12 * dt; if (r.y > H) { r.y = -20; r.x = rand(0, W + 60); } ctx.moveTo(r.x, r.y); ctx.lineTo(r.x - r.l * 0.12, r.y + r.l); }
           ctx.stroke();
@@ -878,6 +1085,7 @@
     if (name === current) return;
     current = name;
     stopLoop();
+    parts = [];
     if (!name || !SCENES[name]) {
       scene = null;
       if (canvas) { ctx.clearRect(0, 0, W, H); canvas.hidden = true; }
@@ -896,9 +1104,12 @@
   const onBackground = (e) => !(e.target && e.target.closest && e.target.closest(UI));
   window.addEventListener('pointerdown', (e) => {
     if (!scene || !scene.tap || reduce || !onBackground(e)) return;
+    const n = performance.now();
+    if (n - lastTapAt < 70) return; // mashing can't pile up effects
+    lastTapAt = n;
     scene.tap(e.clientX, e.clientY);
   }, { passive: true });
-  let hoverOn = false;
+  let hoverOn = false, lastTapAt = 0;
   window.addEventListener('pointermove', (e) => {
     if (e.pointerType !== 'mouse') return;
     const on = !!(scene && scene.hover && !reduce && onBackground(e) && scene.hover(e.clientX, e.clientY));
