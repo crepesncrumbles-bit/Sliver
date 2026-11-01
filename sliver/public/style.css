@@ -861,3 +861,11 @@ body.ui-hidden #app > *:not(#fx-front), body.ui-hidden .coffee-btn, body.ui-hidd
 
 /* Interface hidden: the screen is all game, so it never scrolls (free drawing / holding on phones). */
 html:has(body.ui-hidden), body.ui-hidden { touch-action: none; overflow: hidden; overscroll-behavior: none; }
+
+/* Profile picture: big and centred at the top */
+.pf-bigwrap { display: flex; justify-content: center; width: 100%; margin: 2px 0 14px; flex: none; }
+.pf-big { margin: 0 !important; display: flex !important; align-items: center; justify-content: center; padding: 0 !important; }
+.pf-glyph { display: block; width: 100%; height: 100%; line-height: 140px; text-align: center; text-indent: 0; letter-spacing: 0; }
+.pf-big.photo .pf-glyph { line-height: 0; }
+.pf-glyph img { width: 100%; height: 100%; object-fit: cover; display: block; }
+@media (max-width: 480px) { .pf-glyph { line-height: 88px; } }
