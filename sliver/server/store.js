@@ -23,7 +23,7 @@ class MiniRedis {
     try {
       const raw = JSON.parse(fs.readFileSync(this.file, 'utf8'));
       for (const [k, e] of Object.entries(raw)) {
-        const v = e.t === 'hash' || e.t === 'zset' ? new Map(Object.entries(e.v)) : e.v;
+        const v = e.t === 'hash' || e.t === 'zset' || e.t === 'set' ? new Map(Object.entries(e.v)) : e.v;
         this.data.set(k, { t: e.t, v, exp: e.exp || null });
       }
     } catch (err) {
@@ -100,6 +100,12 @@ class MiniRedis {
         return n;
       }
       case 'HLEN': { const e = this.entry(a[0], 'hash'); return e ? e.v.size : 0; }
+      // sets (kept as a Map of member -> 1)
+      case 'SADD': { const e = this.entry(a[0], 'set', true); let n = 0; for (const m of a.slice(1)) if (!e.v.has(String(m))) { e.v.set(String(m), 1); n++; } write(); return n; }
+      case 'SREM': { const e = this.entry(a[0], 'set'); if (!e) return 0; let n = 0; for (const m of a.slice(1)) if (e.v.delete(String(m))) n++; write(); return n; }
+      case 'SCARD': { const e = this.entry(a[0], 'set'); return e ? e.v.size : 0; }
+      case 'SISMEMBER': { const e = this.entry(a[0], 'set'); return e && e.v.has(String(a[1])) ? 1 : 0; }
+      case 'SMEMBERS': { const e = this.entry(a[0], 'set'); return e ? [...e.v.keys()] : []; }
       case 'HDEL': {
         const e = this.entry(a[0], 'hash');
         if (!e) return 0;

@@ -171,6 +171,11 @@ async function handleApi(req, res, p, url) {
       refreshUserInRooms(out.user);
       return sendJson(res, 200, { ok: true, ...out });
     }
+    if (p === '/api/referrals') {
+      const me = await accounts.session(bearer(req));
+      if (!me) return sendJson(res, 401, { ok: false, error: 'Log in first' });
+      return sendJson(res, 200, { ok: true, ...(await accounts.referralInfo(me.id)) });
+    }
     if (p === '/api/admin/user') return await handleAdminUser(req, res);
     if (p === '/api/admin/users') {
       const me = await accounts.session(bearer(req));
@@ -328,6 +333,16 @@ function refreshUserInRooms(user) {
     if (r && pl && !(r.game && r.game.ranked)) { r.setAccount(pl.id, user); r.broadcast(); }
   }
 }
+// Someone finished their first game: if a friend invited them, it counts toward Campfire Crew.
+async function referralCredit(userId) {
+  try {
+    const r = await accounts.creditReferral(userId);
+    if (!r) return;
+    const need = SHOP.REFERRALS_NEEDED;
+    if (r.unlocked) notifyUser(r.by, 'themesChanged', { text: `🔥 ${need} friends joined and played! You unlocked Campfire Crew. Find it in Settings → Themes.`, themes: ['campfire'] });
+    else if (r.played < need) notifyUser(r.by, 'toast', { kind: 'good', text: `${r.name} played their first game with your invite (${r.played}/${need} for Campfire Crew)` });
+  } catch (err) { console.error('referral:', err.message); }
+}
 function notifyUser(userId, event, data) {
   for (const sid of userSockets.get(userId) || []) io.to(sid).emit(event, data);
 }
@@ -383,7 +398,7 @@ async function handleFriends(req, res, p) {
   return sendJson(res, 200, { ok: true, ...out, ...(await accounts.friends(me.id, presence)) });
 }
 
-const API_PATHS = /^\/api\/(signup|signup\/verify|signup\/resend|reset\/start|reset\/finish|login|logout|me|leaderboard|profile\/[\w-]+|artists|me\/(settings|avatar|name|delete)|avatar\/guest|leaderboard\/friends|admin\/(stats|user|users)|bmc\/webhook|friends(\/(request|accept|remove|block|unblock))?)$/;
+const API_PATHS = /^\/api\/(signup|signup\/verify|signup\/resend|reset\/start|reset\/finish|login|logout|me|leaderboard|profile\/[\w-]+|artists|me\/(settings|avatar|name|delete)|avatar\/guest|leaderboard\/friends|admin\/(stats|user|users)|referrals|bmc\/webhook|friends(\/(request|accept|remove|block|unblock))?)$/;
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -443,6 +458,7 @@ async function onRanked(room, entries) {
   for (const e of entries) {
     try {
       const result = await accounts.submitRanked(e.userId, e);
+      await referralCredit(e.userId);
       const p = room.players.get(e.playerId);
       if (p && p.connected) io.to(p.socketId).emit('rankedResult', result);
     } catch (err) {
@@ -462,7 +478,10 @@ rooms = new RoomManager(io, {
   onRanked,
   // Casual games played to the end count toward logged-in players' casual stats.
   onCasual: async (room, entries) => {
-    for (const e of entries) await accounts.submitCasual(e.userId, e).catch((err) => console.error('casual stats:', err.message));
+    for (const e of entries) {
+      await accounts.submitCasual(e.userId, e).catch((err) => console.error('casual stats:', err.message));
+      await referralCredit(e.userId);
+    }
   },
 });
 

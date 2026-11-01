@@ -18,7 +18,19 @@
   ];
   // Buy Me a Coffee: one coffee of $2 or more gives a random premium theme you don't own yet.
   const COFFEE_MIN = 2;
-  const api = { PRICE, PREMIUM, COFFEE_MIN, ids: PREMIUM.map((t) => t.id), byId: Object.fromEntries(PREMIUM.map((t) => [t.id, t])) };
+  // Themes that can't be bought. Campfire Crew: get 5 friends to sign up with your invite link
+  // and finish a game.
+  const REFERRALS_NEEDED = 5;
+  const SPECIAL = [
+    { id: 'campfire', name: 'Campfire Crew', referral: true, blurb: 'Friends round a campfire under the stars. Hold to roast a marshmallow and let go when it\'s golden for the perfect s\'more. Can\'t be bought: invite friends to unlock it.' },
+  ];
+  const ALL = PREMIUM.concat(SPECIAL);
+  const api = {
+    PRICE, PREMIUM, COFFEE_MIN, SPECIAL, ALL, REFERRALS_NEEDED,
+    ids: PREMIUM.map((t) => t.id), // the ones for sale (coffee gifts pick from these)
+    allIds: ALL.map((t) => t.id),
+    byId: Object.fromEntries(ALL.map((t) => [t.id, t])),
+  };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SliverShop = api;
 })(this);

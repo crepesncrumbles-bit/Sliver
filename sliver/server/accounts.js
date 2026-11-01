@@ -36,6 +36,8 @@ const K = {
   fr: (id) => `fr:${id}`,       // hash: otherId -> "friend" | "in" (they asked me) | "out" (I asked them)
   blk: (id) => `blk:${id}`,     // hash: otherId -> when I blocked them
   fcode: (c) => `fcode:${c}`,   // friend code -> userId
+  refs: (id) => `refs:${id}`,       // set: accounts that signed up with this player's invite link
+  refok: (id) => `refok:${id}`,     // set: …of those, the ones who have finished a game
 };
 
 const MAX_FRIENDS = 200;
@@ -118,7 +120,7 @@ class Accounts {
     const owned = Object.keys(toObj(await this.store.cmd('HGETALL', K.own(u.id))));
     return {
       ...this.publicUser(u), email: u.email, hidden: !!int(u.hidden),
-      themes: this.isAdmin(u) ? SHOP.ids.slice() : owned.filter((t) => SHOP.ids.includes(t)), admin: this.isAdmin(u),
+      themes: this.isAdmin(u) ? SHOP.allIds.slice() : owned.filter((t) => SHOP.allIds.includes(t)), admin: this.isAdmin(u),
     };
   }
 
@@ -197,7 +199,7 @@ class Accounts {
 
   // ---------- premium themes ----------
   async ownedThemes(userId) {
-    return Object.keys(toObj(await this.store.cmd('HGETALL', K.own(userId)))).filter((t) => SHOP.ids.includes(t));
+    return Object.keys(toObj(await this.store.cmd('HGETALL', K.own(userId)))).filter((t) => SHOP.allIds.includes(t));
   }
 
   // themeId: a premium theme, or 'random' (one they don't own yet). Returns the theme given, or
@@ -209,7 +211,7 @@ class Accounts {
       if (!left.length) return null;
       themeId = left[crypto.randomInt(0, left.length)];
     }
-    if (!SHOP.ids.includes(themeId)) throw new AccountError('No theme with that name');
+    if (!SHOP.allIds.includes(themeId)) throw new AccountError('No theme with that name');
     if (owned.includes(themeId)) return null;
     await this.store.cmd('HSET', K.own(userId), themeId, JSON.stringify({ from, at: Date.now() }));
     return themeId;
@@ -362,7 +364,7 @@ class Accounts {
     return { salt, hash };
   }
 
-  async createUser(name, email, salt, hash) {
+  async createUser(name, email, salt, hash, ref) {
     const id = crypto.randomBytes(9).toString('base64url');
     const claimed = await this.store.cmd('SET', K.email(email), id, 'NX');
     if (!claimed) throw new AccountError('That email already has an account. Log in instead.');
@@ -370,6 +372,7 @@ class Accounts {
       'id', id, 'name', name, 'email', email, 'salt', salt, 'hash', hash, 'created', Date.now(), 'pv', 0,
       'games', 0, 'songs', 0, 'correct', 0, 'firstTry', 0, 'heard10', 0, 'points', 0, 'best', 0, 'bestPack', '', 'rating', 0);
     const token = await this.newSession(id, 0);
+    await this.noteReferral(id, ref).catch(() => {});
     const gifts = await this.applyPendingGrants(id, email);
     return { token, user: await this.selfUser(await this.getUser(id)), gifts };
   }
@@ -391,16 +394,17 @@ class Accounts {
   }
 
   // Step 1 of sign-up. Without email set up, the account is created right away.
-  async signup({ name, email, password } = {}) {
+  async signup({ name, email, password, ref } = {}) {
     name = checkName(name);
     email = checkEmail(email);
     password = checkPassword(password);
     if (await this.store.cmd('GET', K.email(email))) throw new AccountError('That email already has an account. Log in instead.');
     const { salt, hash } = await this.hashPassword(password);
-    if (!this.mailer) return this.createUser(name, email, salt, hash);
+    ref = String(ref || '').trim().slice(0, 12);
+    if (!this.mailer) return this.createUser(name, email, salt, hash, ref);
     await this.throttle(email);
     const code = newCode();
-    await this.store.cmd('HSET', K.pend(email), 'name', name, 'salt', salt, 'hash', hash, 'code', sha(code), 'tries', 0);
+    await this.store.cmd('HSET', K.pend(email), 'name', name, 'salt', salt, 'hash', hash, 'code', sha(code), 'tries', 0, 'ref', ref);
     await this.store.cmd('EXPIRE', K.pend(email), CODE_MINUTES * 60);
     await this.sendCode(email, code, 'signup');
     return { pending: true, email };
@@ -413,7 +417,7 @@ class Accounts {
     if (!p.code) throw new AccountError('That code expired. Sign up again to get a new one.');
     await this.checkCode(K.pend(email), p, code);
     await this.store.cmd('DEL', K.pend(email));
-    return this.createUser(p.name, email, p.salt, p.hash);
+    return this.createUser(p.name, email, p.salt, p.hash, p.ref);
   }
 
   async resendSignup({ email } = {}) {
@@ -646,6 +650,34 @@ class Accounts {
 
   // ---------- friends ----------
   // Each account gets a short, unique friend code (e.g. "K7QM2X") to share.
+  // ---------- referrals: invite 5 friends who sign up and finish a game -> Campfire Crew ----------
+  // A new account that signed up through someone's invite link (their friend code).
+  async noteReferral(newId, ref) {
+    const code = String(ref || '').trim().toUpperCase();
+    if (!/^[A-Z0-9]{6}$/.test(code)) return;
+    const by = await this.store.cmd('GET', K.fcode(code));
+    if (!by || by === newId || !(await this.getUser(by))) return;
+    await this.store.pipeline([['HSET', K.user(newId), 'refBy', by], ['SADD', K.refs(by), newId]]);
+  }
+  // Called when someone finishes a game. If they were invited, it counts for whoever invited them
+  // (once). Returns { by, played, unlocked } when it counted, else null.
+  async creditReferral(userId) {
+    const [by, done] = await this.store.cmd('HMGET', K.user(userId), 'refBy', 'refDone');
+    if (!by || int(done)) return null;
+    await this.store.cmd('HSET', K.user(userId), 'refDone', 1);
+    if (!(await this.getUser(by))) return null;
+    await this.store.cmd('SADD', K.refok(by), userId);
+    const played = int(await this.store.cmd('SCARD', K.refok(by)));
+    let unlocked = false;
+    if (played >= SHOP.REFERRALS_NEEDED) unlocked = !!(await this.grantTheme(by, 'campfire', 'referral').catch(() => null));
+    const u = await this.getUser(userId);
+    return { by, played, unlocked, name: u ? u.name : 'A friend' };
+  }
+  async referralInfo(userId) {
+    const [joined, played] = await this.store.pipeline([['SCARD', K.refs(userId)], ['SCARD', K.refok(userId)]]);
+    return { code: await this.friendCode(userId), joined: int(joined), played: int(played), needed: SHOP.REFERRALS_NEEDED, unlocked: (await this.ownedThemes(userId)).includes('campfire') };
+  }
+
   async friendCode(id) {
     const have = await this.store.cmd('HGET', K.user(id), 'fcode');
     if (have) return have;

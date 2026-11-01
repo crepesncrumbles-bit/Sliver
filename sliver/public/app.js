@@ -115,6 +115,18 @@
   new MutationObserver(syncUiToggle).observe(document.documentElement, { attributes: true, attributeFilter: ['data-fx'] });
   syncUiToggle();
 
+  // Invite links: /?ref=CODE. Remember the code until this person signs up.
+  const REF_KEY = 'sliver.ref';
+  const cameWithRef = (() => {
+    try {
+      const u = new URL(location.href), r = (u.searchParams.get('ref') || '').trim().toUpperCase();
+      if (/^[A-Z0-9]{6}$/.test(r)) { localStorage.setItem(REF_KEY, r); u.searchParams.delete('ref'); history.replaceState(null, '', u.pathname + u.search + u.hash); return true; }
+    } catch {}
+    return false;
+  })();
+  const pendingRef = () => { try { return localStorage.getItem(REF_KEY) || ''; } catch { return ''; } };
+  if (cameWithRef) setTimeout(() => { if (pendingRef() && !(auth && auth.user)) toast('👋 A friend invited you! Sign up and play a game to help them unlock a special theme.', 'good', 6500); }, 1200);
+
   function toast(text, kind = 'info', ms = 3800) {
     const el = document.createElement('div');
     el.className = `toast ${kind}`;
@@ -469,11 +481,33 @@
           <span class="sw-bar" style="top:28px;background:${v['--accent']}"></span>
         </span>
         <span class="name">${esc(t.name)}</span>
-        <span class="season">${own ? '✓ Yours' : `🔒 ${money(SHOP.PRICE)}`}</span>
+        <span class="season">${own ? '✓ Yours' : t.referral ? `🎁 Invite ${SHOP.REFERRALS_NEEDED || 5}` : `🔒 ${money(SHOP.PRICE)}`}</span>
       </button>`;
     }).join('');
     renderShopDetail();
   }
+  // ---- invite friends (referrals): 5 friends sign up with your link and play a game ----
+  let inviteInfo = null;
+  async function renderInvites() {
+    const boxes = () => document.querySelectorAll('[data-invite-box]');
+    if (!boxes().length || !auth || !auth.user) return;
+    const res = await api('/api/referrals');
+    if (!res.ok) { boxes().forEach((b) => { b.innerHTML = `<p class="hint">${esc(res.error)}</p>`; }); return; }
+    inviteInfo = res;
+    const link = `${location.origin}/?ref=${res.code}`;
+    const pips = Array.from({ length: res.needed }, (_, i) => `<i class="${i < res.played ? 'on' : i < res.joined ? 'half' : ''}"></i>`).join('');
+    const html = `<h4>🔥 Invite friends${res.unlocked ? ' <span class="hid-tag">unlocked</span>' : ''}</h4>
+      <p class="hint">${res.unlocked ? 'You unlocked <b>Campfire Crew</b>! Thanks for bringing your friends.' : `When <b>${res.needed} friends</b> sign up with your link and finish a game, you unlock <b>Campfire Crew</b>, a theme you can't buy.`}</p>
+      <div class="ref-pips" aria-label="${res.played} of ${res.needed} friends have played">${pips}<span>${res.played}/${res.needed} played${res.joined > res.played ? ` · ${res.joined - res.played} signed up, waiting for their first game` : ''}</span></div>
+      <div class="ref-link"><code>${esc(link)}</code><button type="button" class="btn small" data-copy-ref="${esc(link)}">Copy link</button>${navigator.share ? `<button type="button" class="btn small primary-ish" data-share-ref="${esc(link)}">Share</button>` : ''}</div>`;
+    boxes().forEach((b) => { b.innerHTML = html; });
+  }
+  document.addEventListener('click', async (e) => {
+    const c = e.target.closest('[data-copy-ref]');
+    if (c) { try { await navigator.clipboard.writeText(c.dataset.copyRef); toast('Invite link copied', 'good'); } catch { toast('Couldn\'t copy. Long-press the link to copy it.', 'error'); } return; }
+    const sh = e.target.closest('[data-share-ref]');
+    if (sh) { try { await navigator.share({ title: 'Play Sliver with me', text: 'Guess the song from a split second. Join me on Sliver!', url: sh.dataset.shareRef }); } catch {} }
+  });
   function renderShopDetail() {
     const T = window.SliverThemes;
     const box = $('#shop-detail');
@@ -481,6 +515,13 @@
     if (!t) { box.hidden = true; return; }
     box.hidden = false;
     const own = T.owns(t.id), loggedIn = !!(auth && auth.user);
+    if (t.referral) {
+      box.innerHTML = `<b>${esc(t.name)}</b><p>${esc(t.blurb || '')}</p>
+        <div class="acct-actions">${own ? `<button class="btn small primary-ish" data-theme-id="${t.id}">Use it</button>` : `<button class="btn small" data-shop-preview="${t.id}">Preview 12 s</button>`}</div>
+        ${own ? '' : loggedIn ? '<div class="invite-box" data-invite-box><p class="hint">Loading…</p></div>' : '<p class="hint">Log in to get your invite link.</p>'}`;
+      if (!own && loggedIn) renderInvites();
+      return;
+    }
     box.innerHTML = `<b>${esc(t.name)}</b><p>${esc(t.blurb || '')}</p>
       <div class="acct-actions">
         ${own ? `<button class="btn small primary-ish" data-theme-id="${t.id}">Use it</button>`
@@ -1587,7 +1628,7 @@
     halloween: ['🎃', '🦇', 'rect', 'dot'], christmas: ['❄︎', '★', 'rect', 'dot'], valentine: ['♥︎', '♥︎', 'rect'],
     cottoncandy: ['♥︎', '★', 'dot', 'dot'], easter: ['egg', 'egg', 'dot', 'rect'], stpatricks: ['☘︎', '☘︎', 'rect'],
     july4: ['★', '★', 'rect', 'bar'], newyear: ['★', 'spark', 'rect', 'bar'], thanksgiving: ['petal', 'rect', 'dot'],
-    sakura: ['petal', 'petal', 'petal', 'dot'], piano: ['♪', '♫', 'dot', 'spark'], crimson: ['bar', 'spark', 'rect'], critters: ['♥︎', '★', 'dot', 'dot'], lagoon: ['bubble', 'bubble', 'dot'], aurora: ['✦', 'bar', 'dot'],
+    sakura: ['petal', 'petal', 'petal', 'dot'], piano: ['♪', '♫', 'dot', 'spark'], campfire: ['spark', '♥︎', 'dot', '★'], crimson: ['bar', 'spark', 'rect'], critters: ['♥︎', '★', 'dot', 'dot'], lagoon: ['bubble', 'bubble', 'dot'], aurora: ['✦', 'bar', 'dot'],
     nebula: ['✦', '★', 'spark', 'dot'], midnight: ['✦', 'dot', 'rect'], synthwave: ['bar', 'bar', 'spark'], neon: ['bar', 'spark', 'dot'],
     ember: ['spark', 'spark', 'dot'], storm: ['⚡︎', 'bar', 'dot'], blackgold: ['spark', 'rect', 'dot', '✦'], mono: ['rect', 'dot'],
   };
@@ -1837,6 +1878,7 @@
            <button class="btn small" type="submit">Change username</button>
          </form>
          <div class="acct-actions"><button class="btn small" data-open-profile="${esc(u.id)}">My stats</button><button class="btn ghost small" data-logout>Log out</button></div>
+         <div class="invite-box" data-invite-box><p class="hint">Loading your invite link…</p></div>
          <details class="danger-zone"><summary>Delete my account</summary>
            <p class="hint">This deletes your account, stats, leaderboard places, friends, photo and any themes you bought. It can't be undone.</p>
            <form class="row" id="delete-account" autocomplete="off">
@@ -1848,6 +1890,7 @@
          <div class="acct-actions"><button class="btn small" data-open-auth="signup">Sign up</button><button class="btn small" data-open-auth="login">Log in</button></div>`;
     if (u && (!nameEdited || !$('#name').value.trim())) $('#name').value = u.name;
     $('#admin-panel').hidden = !(u && u.admin);
+    if (u) renderInvites();
     renderMyIconButton();
     $('#btn-friends').hidden = !u;
     if (!u) { friendsData = null; updateFriendBadge(); }
@@ -1983,7 +2026,7 @@
     const email = $('#auth-email').value, password = $('#auth-password').value, code = $('#auth-code').value;
     const calls = {
       login: ['/api/login', { email, password }],
-      signup: ['/api/signup', { name: $('#auth-name').value, email, password }],
+      signup: ['/api/signup', { name: $('#auth-name').value, email, password, ref: pendingRef() }],
       verify: ['/api/signup/verify', { email, code }],
       reset: ['/api/reset/start', { email }],
       reset2: ['/api/reset/finish', { email, code, password }],

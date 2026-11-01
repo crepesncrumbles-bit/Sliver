@@ -1866,6 +1866,164 @@
       };
     },
 
+    // Campfire Crew (the invite-friends theme): a starry night, pine trees, fireflies, and a
+    // campfire with your crew sitting round it. Mini-game: hold to roast a marshmallow over the
+    // fire and let go when it's golden-brown for the perfect s'more (your friends cheer).
+    // Hold too long and it catches fire.
+    campfire() {
+      let stars = [], flies = [], trees = null, shoot = null, nextShot = 4, now = 0;
+      let toast = 0, roasting = false, burning = 0, label = null, cheer = 0, smores = 0, streak = 0, best = 0, treats = [];
+      try { smores = Number(localStorage.getItem('sliver.camp.smores')) || 0; best = Number(localStorage.getItem('sliver.camp.best')) || 0; } catch {}
+      const save = () => { try { localStorage.setItem('sliver.camp.smores', String(smores)); localStorage.setItem('sliver.camp.best', String(best)); } catch {} };
+      const CREW = [
+        { dx: -108, dy: 4, hood: '#7C9CFF', skin: '#F2C9A0', hat: '#FF6B6B' },
+        { dx: -58, dy: 18, hood: '#FF9EC7', skin: '#8D5A3B', hat: null },
+        { dx: 62, dy: 18, hood: '#9EF0C8', skin: '#C68B59', hat: '#FFD27A' },
+        { dx: 112, dy: 4, hood: '#FFB38A', skin: '#F8DCC0', hat: null },
+      ];
+      const fire = () => { const g = lanes(); return g ? { x: Math.max(170, g / 2), y: H - 96 } : { x: W / 2, y: H - 90 }; };
+      function paintTrees() { // two layers of pines, drawn once per size
+        trees = document.createElement('canvas'); trees.width = Math.round(W * DPR); trees.height = Math.round(H * DPR);
+        const g = trees.getContext('2d'); g.scale(DPR, DPR);
+        const pine = (x, base, h, col) => { g.fillStyle = col; g.beginPath(); for (let k = 0; k < 3; k++) { const y = base - h * (k * 0.28); const w = h * (0.34 - k * 0.07); g.moveTo(x - w, y); g.lineTo(x, y - h * 0.45); g.lineTo(x + w, y); } g.fill(); g.fillRect(x - h * 0.03, base - 2, h * 0.06, h * 0.08); };
+        for (let x = -20; x < W + 40; x += rand(26, 48)) pine(x, H - 48, rand(70, 130), '#1E1A3A');
+        for (let x = -20; x < W + 40; x += rand(34, 60)) pine(x, H - 30, rand(90, 160), '#14112A');
+        g.fillStyle = '#100D22'; g.fillRect(0, H - 36, W, 36);
+      }
+      const reset = () => {
+        stars = Array.from({ length: Math.round(130 * density()) }, () => ({ x: rand(0, W), y: rand(0, H * 0.7), r: rand(0.5, 1.6), p: rand(0, TAU), v: rand(0.6, 2) }));
+        flies = Array.from({ length: Math.round(18 * density()) }, () => ({ x: rand(0, W), y: rand(H * 0.45, H - 60), p: rand(0, TAU), v: rand(0.5, 1.4) }));
+        paintTrees();
+      };
+      function say(text, c) { label = { text, c, life: 1 }; }
+      function finish() {
+        roasting = false;
+        if (toast < 0.08 || burning) return;
+        const t = toast;
+        if (t >= 0.55 && t <= 0.8) {
+          smores++; streak++; best = Math.max(best, streak); save(); cheer = 1;
+          say(streak > 1 ? `PERFECT S'MORE! ×${streak}` : "PERFECT S'MORE!", '#FFD27A');
+          const F = fire();
+          treats.push({ x: F.x + 40, y: F.y - 80, life: 1 });
+          burst(F.x, F.y - 120, 18, (i, a) => ({ kind: i % 3 ? 'star' : 'heart', x: F.x, y: F.y - 120, vx: Math.cos(a) * rand(90, 200), vy: Math.sin(a) * rand(90, 200) - 40, drag: 1.6, s: rand(4, 8), decay: 0.9, c: pick(['#FFD27A', '#FF9EC7', '#FFFFFF', '#FF8A3D']) }));
+        } else if (t < 0.55) { streak = 0; say(t < 0.3 ? 'Still raw…' : 'A bit pale', '#FFF1D6'); }
+        else { streak = 0; say('Pretty toasty!', '#E8A15C'); }
+        toast = 0;
+      }
+      function friend(c, x, y, t, i) {
+        const jump = cheer ? Math.abs(Math.sin((1 - cheer) * Math.PI * 3 + i)) * 14 * cheer : 0;
+        const sway = Math.sin(t * 1.3 + i) * 1.5;
+        y -= jump;
+        ctx.save(); ctx.translate(x + sway, y);
+        ctx.fillStyle = c.hood; // body
+        ctx.beginPath(); ctx.moveTo(-14, 0); ctx.quadraticCurveTo(-16, -26, 0, -28); ctx.quadraticCurveTo(16, -26, 14, 0); ctx.closePath(); ctx.fill();
+        if (cheer) { ctx.strokeStyle = c.hood; ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(-10, -20); ctx.lineTo(-18, -40); ctx.moveTo(10, -20); ctx.lineTo(18, -40); ctx.stroke(); }
+        ctx.fillStyle = c.skin; ctx.beginPath(); ctx.arc(0, -36, 10, 0, TAU); ctx.fill(); // head
+        if (c.hat) { ctx.fillStyle = c.hat; ctx.beginPath(); ctx.arc(0, -38, 10.5, Math.PI, TAU); ctx.fill(); ctx.beginPath(); ctx.arc(0, -49, 3, 0, TAU); ctx.fill(); }
+        ctx.fillStyle = '#2B1B2E'; ctx.beginPath(); ctx.arc(-3.5, -35, 1.4, 0, TAU); ctx.arc(3.5, -35, 1.4, 0, TAU); ctx.fill(); // eyes (lit by the fire)
+        ctx.strokeStyle = '#2B1B2E'; ctx.lineWidth = 1.3; ctx.beginPath(); ctx.arc(0, -32, cheer ? 3.5 : 2.5, 0.15, Math.PI - 0.15); ctx.stroke();
+        ctx.fillStyle = 'rgba(255,140,60,.25)'; ctx.beginPath(); ctx.arc(0, -36, 10, -0.8, 0.8); ctx.fill(); // warm rim light
+        ctx.restore();
+      }
+      function flame(x, y, s, t) {
+        const f = (k, w, h, col) => { const wob = Math.sin(t * 9 + k) * 3; ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(x - w, y); ctx.quadraticCurveTo(x - w * 0.9, y - h * 0.5, x + wob, y - h); ctx.quadraticCurveTo(x + w * 0.9, y - h * 0.5, x + w, y); ctx.closePath(); ctx.fill(); };
+        const fl = 1 + Math.sin(t * 7) * 0.06 + Math.sin(t * 13) * 0.04;
+        f(1, 26 * s, 70 * s * fl, '#FF6B2B'); f(2, 18 * s, 54 * s * fl, '#FF9F43'); f(3, 10 * s, 34 * s * fl, '#FFE08A');
+      }
+      const mallowCol = (t) => { // white -> golden -> brown -> black
+        const stops = [[0, [250, 246, 238]], [0.55, [240, 196, 110]], [0.8, [176, 112, 52]], [1.05, [70, 40, 22]], [1.3, [20, 14, 12]]];
+        for (let i = 1; i < stops.length; i++) if (t <= stops[i][0]) { const [a0, c0] = stops[i - 1], [a1, c1] = stops[i]; const k = (t - a0) / (a1 - a0); return `rgb(${c0.map((v, j) => Math.round(v + (c1[j] - v) * k)).join(',')})`; }
+        return 'rgb(20,14,12)';
+      };
+      reset();
+      return {
+        resize: reset,
+        hover: () => true,
+        press() { if (!burning) roasting = true; },
+        pressMove() {},
+        pressEnd() { finish(); },
+        tap() { roasting = true; finish(); return true; },
+        draw(dt, t) {
+          now = t;
+          cheer = Math.max(0, cheer - dt * 0.7);
+          ctx.fillStyle = grad(0, H, [[0, '#0B0B26'], [0.55, '#211A44'], [0.85, '#3B2445'], [1, '#2A1A2E']]);
+          ctx.fillRect(0, 0, W, H);
+          for (const s of stars) { ctx.globalAlpha = 0.35 + 0.65 * Math.abs(Math.sin(t * s.v + s.p)); ctx.fillStyle = '#FFF8E7'; ctx.fillRect(s.x, s.y, s.r, s.r); }
+          ctx.globalAlpha = 1;
+          const mx = W * 0.82, my = H * 0.16, mr = Math.min(W, H) * 0.05; // crescent moon
+          glowDot(mx, my, mr * 4, 'rgba(255,240,200,.18)');
+          ctx.fillStyle = '#FFF1C9'; ctx.beginPath(); ctx.arc(mx, my, mr, 0, TAU); ctx.fill();
+          ctx.fillStyle = '#16133A'; ctx.beginPath(); ctx.arc(mx + mr * 0.45, my - mr * 0.2, mr * 0.9, 0, TAU); ctx.fill();
+          nextShot -= dt;
+          if (!shoot && nextShot <= 0) { shoot = { x: rand(W * 0.2, W), y: rand(0, H * 0.3), life: 1 }; nextShot = rand(5, 10); }
+          if (shoot) { shoot.x -= 520 * dt; shoot.y += 180 * dt; shoot.life -= dt * 1.4; ctx.strokeStyle = `rgba(255,255,255,${Math.max(0, shoot.life)})`; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(shoot.x, shoot.y); ctx.lineTo(shoot.x + 70, shoot.y - 24); ctx.stroke(); if (shoot.life <= 0) shoot = null; }
+          ctx.drawImage(trees, 0, 0, W, H);
+          ctx.globalCompositeOperation = 'lighter';
+          for (const f of flies) { f.x += Math.sin(t * 0.7 * f.v + f.p) * 14 * dt; f.y += Math.cos(t * 0.9 * f.v + f.p) * 10 * dt; const a = Math.max(0, Math.sin(t * 2 * f.v + f.p)); glowDot(f.x, f.y, 8, 'rgba(210,255,140,.8)', a * 0.8); }
+          ctx.globalCompositeOperation = 'source-over';
+          // ---- the campfire, the crew and the marshmallow (front layer) ----
+          toFront();
+          const F = fire();
+          const zoom = lanes() ? Math.min(1.35, lanes() / 260) : 1; // bigger on wide screens
+          ctx.save(); ctx.translate(F.x, F.y); ctx.scale(zoom, zoom); ctx.translate(-F.x, -F.y);
+          ctx.globalCompositeOperation = 'lighter';
+          glowDot(F.x, F.y - 20, 190 + Math.sin(t * 6) * 8, 'rgba(255,140,60,.28)');
+          ctx.globalCompositeOperation = 'source-over';
+          for (let i = 0; i < 2; i++) friend(CREW[i], F.x + CREW[i].dx, F.y + CREW[i].dy - 6, t, i); // back row
+          ctx.fillStyle = '#5B3A1E'; // logs
+          ctx.save(); ctx.translate(F.x, F.y + 6); ctx.rotate(0.35); ctx.fillRect(-34, -6, 68, 12); ctx.rotate(-0.7); ctx.fillRect(-34, -6, 68, 12); ctx.restore();
+          ctx.fillStyle = '#7A5230'; ctx.beginPath(); ctx.arc(F.x - 31, F.y + 17, 5, 0, TAU); ctx.arc(F.x + 31, F.y + 17, 5, 0, TAU); ctx.fill();
+          flame(F.x, F.y, 1 + (roasting ? 0.06 : 0), t);
+          if (Math.random() < dt * 9) emit({ kind: 'glow', x: F.x + rand(-14, 14), y: F.y - 40, vx: rand(-20, 20), vy: -rand(60, 130), s: rand(1, 2), decay: 1.2, add: true, c: pick(['#FFD27A', '#FF9F43']) });
+          for (let i = 2; i < 4; i++) friend(CREW[i], F.x + CREW[i].dx, F.y + CREW[i].dy, t, i); // front row
+          // roasting
+          if (roasting) toast += dt * 0.33;
+          if (toast > 1.0 && !burning) { burning = 1; roasting = false; streak = 0; say('Oops, it caught fire!', '#FF8A5C'); }
+          if (burning) { burning += dt; toast = Math.min(1.3, toast + dt * 0.2); if (burning > 2.2) { burning = 0; toast = 0; say('Fresh marshmallow!', '#FFF1D6'); } }
+          const target = roasting || burning ? 1 : 0;
+          const tip = { x: F.x + 18 + (1 - target) * 52, y: F.y - 58 - (1 - target) * 26 };
+          ctx.strokeStyle = '#8B5A2B'; ctx.lineWidth = 4; ctx.lineCap = 'round'; // the stick
+          ctx.beginPath(); ctx.moveTo(F.x + 150, F.y - 6); ctx.lineTo(tip.x, tip.y); ctx.stroke();
+          ctx.fillStyle = mallowCol(toast); // the marshmallow
+          ctx.beginPath(); ctx.roundRect ? ctx.roundRect(tip.x - 10, tip.y - 12, 20, 24, 6) : ctx.rect(tip.x - 10, tip.y - 12, 20, 24); ctx.fill();
+          ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.fillRect(tip.x - 6, tip.y - 9, 4, 14);
+          if (burning) flame(tip.x, tip.y - 8, 0.35, t * 1.3);
+          // the toast meter (gold zone = perfect)
+          const bx = F.x - 70, by = F.y - 150, bw = 140;
+          ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(bx - 2, by - 2, bw + 4, 12);
+          const zone = (a, b, col) => { ctx.fillStyle = col; ctx.fillRect(bx + bw * a, by, bw * (b - a), 8); };
+          zone(0, 0.55, '#FFF1D6'); zone(0.55, 0.8, '#FFD27A'); zone(0.8, 1, '#B0703A');
+          ctx.fillStyle = '#FFFFFF'; ctx.fillRect(bx + bw * Math.min(1, toast) - 1.5, by - 5, 3, 18);
+          ctx.font = '700 11px ui-monospace, Menlo, monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+          ctx.fillStyle = 'rgba(255,241,214,.85)'; ctx.fillText(roasting ? 'let go in the gold!' : 'hold to roast', F.x, by - 10);
+          // s'mores floating up after a perfect one
+          for (const s of treats) {
+            s.life -= dt * 0.7; s.y -= 40 * dt;
+            ctx.globalAlpha = Math.max(0, s.life);
+            ctx.fillStyle = '#C98B4F'; ctx.fillRect(s.x - 14, s.y - 4, 28, 7); ctx.fillRect(s.x - 14, s.y + 10, 28, 7);
+            ctx.fillStyle = '#4A2A1A'; ctx.fillRect(s.x - 12, s.y + 3, 24, 3);
+            ctx.fillStyle = '#F0C46E'; ctx.fillRect(s.x - 11, s.y + 6, 22, 4);
+            ctx.globalAlpha = 1;
+          }
+          treats = treats.filter((s) => s.life > 0);
+          if (label) {
+            label.life -= dt * 0.8;
+            ctx.globalAlpha = Math.max(0, Math.min(1, label.life * 2)); ctx.font = '900 17px ui-monospace, Menlo, monospace';
+            ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillText(label.text, F.x + 1, by - 30 - (1 - label.life) * 20 + 1);
+            ctx.fillStyle = label.c; ctx.fillText(label.text, F.x, by - 30 - (1 - label.life) * 20);
+            ctx.globalAlpha = 1;
+            if (label.life <= 0) label = null;
+          }
+          ctx.restore();
+          ctx.textAlign = 'left';
+          ctx.font = '700 12px ui-monospace, Menlo, monospace';
+          ctx.fillStyle = 'rgba(16,13,34,.65)'; ctx.fillRect(14, 14, 238, 26);
+          ctx.fillStyle = '#FFE7B8'; ctx.fillText(`🔥 ${smores} s'more${smores === 1 ? '' : 's'}   best streak ${best}`, 24, 32);
+          toBack();
+        },
+      };
+    },
+
     // Critter club: little bunnies, kittens, bears, chicks and frogs floating up on balloons,
     // with hearts and sparkles, over a pastel sky.
     critters() {

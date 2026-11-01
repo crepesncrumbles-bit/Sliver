@@ -115,6 +115,31 @@ const io = { to: (to) => ({ emit: (e, d) => events.push({ to, e, d }) }) };
     check(list.length === 3 && list.every((u) => u.id && u.tag && u.email) && list.some((u) => u.name === 'Zed'), `lists every account with name, #tag and email (${list.map((u) => u.name).join(', ')})`);
   }
 
+  console.log('referrals: 5 friends sign up and play -> Campfire Crew');
+  {
+    const { Accounts } = require('../server/accounts');
+    const { MiniRedis } = require('../server/store');
+    const SHOP = require('../public/shop');
+    const st = new MiniRedis(); const acc = new Accounts(st, null, {});
+    const host = (await acc.signup({ name: 'Host', email: 'host@x.co', password: 'secret1' })).user;
+    const code = await acc.friendCode(host.id);
+    check(!SHOP.ids.includes('campfire') && SHOP.allIds.includes('campfire'), 'Campfire Crew exists but is not for sale');
+    const friends = [];
+    for (let i = 0; i < 5; i++) friends.push((await acc.signup({ name: 'F' + i, email: `f${i}@x.co`, password: 'secret1', ref: code.toLowerCase() })).user);
+    await acc.signup({ name: 'Self', email: 'self@x.co', password: 'secret1', ref: 'BADBAD' });
+    let info = await acc.referralInfo(host.id);
+    check(info.joined === 5 && info.played === 0 && !info.unlocked && info.code === code, 'sign-ups through the link are counted');
+    let last = null;
+    for (let i = 0; i < 4; i++) last = await acc.creditReferral(friends[i].id);
+    check(last.played === 4 && !last.unlocked, 'each first game counts (4/5)');
+    check((await acc.creditReferral(friends[0].id)) === null, 'a second game by the same friend doesn\'t count again');
+    last = await acc.creditReferral(friends[4].id);
+    info = await acc.referralInfo(host.id);
+    check(last.unlocked && info.unlocked && (await acc.ownedThemes(host.id)).includes('campfire'), 'the 5th friend\'s game unlocks Campfire Crew');
+    for (let i = 0; i < 30; i++) await acc.grantTheme(host.id, 'random');
+    check((await acc.ownedThemes(host.id)).length === SHOP.allIds.length, 'random coffee gifts never hand out the referral theme (only the paid ones)');
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
