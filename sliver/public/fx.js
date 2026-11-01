@@ -498,7 +498,39 @@
         k.held = true;
       }
       // A key lets go only after it's been quiet for a moment (the analysis flickers frame to frame).
-      function release(k, dt) { k.off += dt; if (k.off > 0.12) k.held = false; }
+      function release(k, dt) { k.off += dt; if (k.off > 0.12 && now > (k.tapUntil || 0)) k.held = false; }
+      // Tapping a key: it lights up and music notes and sparkles burst out of it.
+      let notes = [];
+      function keyAt(x, y) {
+        if (y < kbY - 6) return null;
+        const blk = keys.find((k) => k.black && x >= k.x && x <= k.x + k.w && y <= kbY + kbH * 0.62);
+        return blk || keys.find((k) => !k.black && x >= k.x && x < k.x + k.w) || null;
+      }
+      function burst(k) {
+        k.held = false; k.last = -9;
+        press(k, 1);
+        k.tapUntil = now + 0.35;
+        const cx = k.x + k.w / 2;
+        for (let i = 0; i < 7; i++) {
+          notes.push({ x: cx, y: kbY - 6, vx: rand(-110, 110), vy: rand(-420, -230), rot: rand(-0.4, 0.4), vr: rand(-2, 2), life: 1, s: rand(18, 30), g: pick(['♪', '♫', '♩', '♬']), c: k.col, spark: false });
+        }
+        for (let i = 0; i < 10; i++) notes.push({ x: cx, y: kbY - 4, vx: rand(-160, 160), vy: rand(-300, -80), life: 1, s: rand(2, 4), c: '#FFF3D6', spark: true });
+        if (notes.length > 220) notes.splice(0, notes.length - 220);
+      }
+      function drawNotes(dt) {
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        for (const n of notes) {
+          n.life -= dt * (n.spark ? 1.4 : 0.55);
+          n.vy += (n.spark ? 260 : 60) * dt; n.x += n.vx * dt; n.y += n.vy * dt;
+          if (n.life <= 0) continue;
+          ctx.globalAlpha = Math.min(1, n.life * 1.6); ctx.fillStyle = n.c;
+          if (n.spark) { ctx.fillRect(n.x, n.y, n.s, n.s); continue; }
+          n.rot += n.vr * dt;
+          ctx.save(); ctx.translate(n.x, n.y); ctx.rotate(n.rot); ctx.font = `700 ${n.s}px system-ui, sans-serif`; ctx.fillText(n.g, 0, 0); ctx.restore();
+        }
+        ctx.globalAlpha = 1;
+        notes = notes.filter((n) => n.life > 0);
+      }
       let lastListen = 0, heard = false;
       function listen(dt) {
         if (now - lastListen < 1 / 30) return heard; // analyse at most 30 times a second
@@ -531,7 +563,7 @@
       function idle(dt) {
         idleT -= dt;
         if (idleT > 0) return;
-        keys.forEach((k) => { k.held = false; });
+        keys.forEach((k) => { if (now > (k.tapUntil || 0)) k.held = false; });
         idleT = 0.42;
         const m = IDLE[idleStep++ % IDLE.length];
         const k = keys.find((x) => x.m === m);
@@ -542,6 +574,8 @@
       reset();
       return {
         resize: reset,
+        hover(x, y) { return !!keyAt(x, y); },
+        tap(x, y) { const k = keyAt(x, y); if (!k) return false; burst(k); return true; },
         draw(dt, t) {
           ctx.fillStyle = grad(0, H, [[0, '#07070C'], [0.6, '#0F0F1A'], [1, '#17131F']]);
           ctx.fillRect(0, 0, W, H);
@@ -586,6 +620,7 @@
           }
           ctx.fillStyle = grad(kbY, kbY + 14, [[0, 'rgba(0,0,0,.45)'], [1, 'rgba(0,0,0,0)']]);
           ctx.fillRect(0, kbY, W, 14);
+          drawNotes(dt);
         },
       };
     },
@@ -703,9 +738,104 @@
         if (kind === 'bunny' || kind === 'kitty' || kind === 'bear') { ctx.fillStyle = '#FF8FB1'; ctx.beginPath(); ctx.ellipse(0, s * 0.08, s * 0.07, s * 0.05, 0, 0, TAU); ctx.fill(); }
         ctx.restore();
       }
+      // ---- interactive bits: popped balloons drop their animal onto the trampoline floor ----
+      let jumpers = [], bits = [], rings = [], dips = [];
+      const MAX_JUMPERS = 14, G = 1500;
+      const matY = () => H - Math.max(26, Math.min(44, H * 0.05));
+      function popPal(q) {
+        const x = q.cx, by = q.by;
+        rings.push({ x, y: by, r: q.br * 0.6, life: 1 });
+        for (let i = 0; i < 12; i++) {
+          const a = (i / 12) * TAU + rand(-0.2, 0.2), v = rand(140, 300);
+          bits.push({ x, y: by, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 60, life: 1, c: i % 3 ? q.bal : '#FFFFFF', rot: rand(0, TAU), vr: rand(-10, 10), s: rand(4, 8) });
+        }
+        if (jumpers.length >= MAX_JUMPERS) { const old = jumpers.find((j) => !j.leaving); if (old) old.leaving = true; }
+        jumpers.push({ x: q.cx, y: q.y, vx: rand(-90, 90), vy: rand(-260, -120), s: q.s, kind: q.kind, rot: 0, vr: rand(-3, 3), bounces: 0, squash: 0, blink: q.blink, p: q.p, leaving: false });
+        Object.assign(q, pal(false));
+      }
+      function hitPal(x, y) {
+        for (let i = pals.length - 1; i >= 0; i--) {
+          const q = pals[i];
+          if (q.cx === undefined) continue;
+          const dx = (x - q.cx) / (q.br * 1.15), dy = (y - q.by) / (q.br * 1.3);
+          if (dx * dx + dy * dy <= 1 || Math.hypot(x - q.cx, y - q.y) < q.s * 1.1) return q;
+        }
+        return null;
+      }
+      function hitJumper(x, y) { return jumpers.find((j) => Math.hypot(x - j.x, y - j.y) < j.s * 1.3) || null; }
+      function stepJumpers(dt) {
+        const floor = matY();
+        for (const j of jumpers) {
+          j.vy += G * dt; j.x += j.vx * dt; j.y += j.vy * dt; j.rot += j.vr * dt;
+          j.squash = Math.max(0, j.squash - dt * 4);
+          if (j.x < j.s) { j.x = j.s; j.vx = Math.abs(j.vx); }
+          if (j.x > W - j.s) { j.x = W - j.s; j.vx = -Math.abs(j.vx); }
+          if (!j.leaving && j.y < j.s) { j.y = j.s; j.vy = Math.abs(j.vy) * 0.4; }
+          if (j.vy > 0 && j.y + j.s * 0.9 >= floor) {
+            j.y = floor - j.s * 0.9;
+            j.bounces++;
+            if (j.bounces > 9) j.leaving = true; // after a while it boings off the top of the screen
+            j.vy = -(j.leaving ? rand(1500, 1800) : rand(820, 1180));
+            j.vx = Math.max(-260, Math.min(260, j.vx + rand(-140, 140)));
+            j.vr = rand(-5, 5);
+            j.squash = 1;
+            dips.push({ x: j.x, d: 16 + j.s * 0.4, v: 0, life: 1.2 });
+            if (Math.random() < 0.35) bits.push({ x: j.x, y: j.y - j.s, vx: rand(-40, 40), vy: rand(-160, -90), life: 1, c: '#FF7EB3', heart: true, rot: 0, vr: 0, s: rand(6, 9) });
+          }
+        }
+        jumpers = jumpers.filter((j) => !(j.leaving && j.y < -j.s * 4));
+        if (dips.length > 6) dips.splice(0, dips.length - 6);
+        for (const d of dips) { d.life -= dt; d.v += (-d.d * 260 - d.v * 7) * dt; d.d += d.v * dt; }
+        dips = dips.filter((d) => d.life > 0);
+      }
+      function trampoline() {
+        const y = matY();
+        const off = (x) => { let o = 0; for (const d of dips) { const k = (x - d.x) / 70; o += d.d * Math.exp(-k * k) * Math.min(1, d.life * 2); } return o; };
+        // springs + frame
+        ctx.fillStyle = '#6D5BD0'; ctx.fillRect(0, y + 8, W, H - y - 8);
+        ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 1.5; ctx.beginPath();
+        for (let x = 10; x < W; x += 34) { ctx.moveTo(x, y + 9); ctx.lineTo(x + 6, y + 3 + off(x) * 0.3); }
+        ctx.stroke();
+        // mat
+        ctx.fillStyle = '#2E2547'; ctx.beginPath(); ctx.moveTo(0, y);
+        for (let x = 0; x <= W + 24; x += 24) ctx.lineTo(x, y + off(x));
+        ctx.lineTo(W, y + 8); ctx.lineTo(0, y + 8); ctx.closePath(); ctx.fill();
+        // padded edge
+        ctx.fillStyle = '#FF9EC7'; ctx.fillRect(0, y + 8, W, 7);
+        ctx.fillStyle = 'rgba(255,255,255,.5)'; for (let x = 0; x < W; x += 40) ctx.fillRect(x, y + 8, 20, 7);
+      }
+      function drawBits(dt) {
+        for (const r of rings) {
+          r.life -= dt * 3.2; r.r += dt * 260;
+          if (r.life <= 0) continue;
+          ctx.globalAlpha = r.life; ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, TAU); ctx.stroke();
+          for (let k = 0; k < 8; k++) { const a = (k / 8) * TAU; ctx.beginPath(); ctx.moveTo(r.x + Math.cos(a) * r.r * 0.6, r.y + Math.sin(a) * r.r * 0.6); ctx.lineTo(r.x + Math.cos(a) * r.r * 0.95, r.y + Math.sin(a) * r.r * 0.95); ctx.stroke(); }
+        }
+        rings = rings.filter((r) => r.life > 0);
+        for (const b of bits) {
+          b.life -= dt * (b.heart ? 0.9 : 1.6);
+          b.vy += (b.heart ? -30 : 700) * dt; b.x += b.vx * dt; b.y += b.vy * dt; b.rot += b.vr * dt;
+          if (b.life <= 0) continue;
+          ctx.globalAlpha = Math.min(1, b.life * 1.5); ctx.fillStyle = b.c;
+          if (b.heart) { heartPath(b.x, b.y, b.s); ctx.fill(); continue; }
+          ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.rot); ctx.fillRect(-b.s / 2, -b.s / 3, b.s, b.s * 0.66); ctx.restore();
+        }
+        ctx.globalAlpha = 1;
+        bits = bits.filter((b) => b.life > 0);
+        if (bits.length > 160) bits.splice(0, bits.length - 160);
+      }
       reset();
       return {
         resize: reset,
+        hover(x, y) { return !!(hitPal(x, y) || hitJumper(x, y)); },
+        tap(x, y) {
+          const j = hitJumper(x, y);
+          if (j) { j.vy = -rand(950, 1250); j.vx += rand(-200, 200); j.vr = rand(-8, 8); return true; }
+          const q = hitPal(x, y);
+          if (q) { popPal(q); return true; }
+          return false;
+        },
         draw(dt, t) {
           ctx.fillStyle = grad(0, H, [[0, '#FFE3F0'], [0.5, '#F6D3F5'], [1, '#D9D2FF']]);
           ctx.fillRect(0, 0, W, H);
@@ -720,6 +850,7 @@
             if (q.y < -q.s * 6) Object.assign(q, pal(false));
             const x = q.x + Math.sin(t * 0.8 + q.p) * 18, y = q.y;
             const br = q.s * 1.05, by = y - q.s * 3.1;
+            q.cx = x; q.by = by; q.br = br; // remembered for tapping
             // string
             ctx.strokeStyle = 'rgba(120,90,130,.45)'; ctx.lineWidth = 1.2;
             ctx.beginPath(); ctx.moveTo(x, by + br * 1.1); ctx.quadraticCurveTo(x + Math.sin(t * 2 + q.p) * 8, (by + y) / 2, x, y - q.s * 0.9); ctx.stroke();
@@ -729,6 +860,15 @@
             ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.beginPath(); ctx.ellipse(x - br * 0.35, by - br * 0.4, br * 0.18, br * 0.3, -0.5, 0, TAU); ctx.fill();
             face(x, y, q.s, q.kind, t + q.p, q.blink);
           }
+          trampoline(); // in front of new balloons rising from below, behind the bouncing animals
+          stepJumpers(dt);
+          for (const j of jumpers) {
+            const sq = j.squash;
+            ctx.save(); ctx.translate(j.x, j.y); ctx.rotate(j.rot); ctx.scale(1 + sq * 0.25, 1 - sq * 0.22);
+            face(0, 0, j.s, j.kind, t + j.p, j.blink);
+            ctx.restore();
+          }
+          drawBits(dt);
         },
       };
     },
@@ -749,6 +889,21 @@
     scene = SCENES[name]();
     if (reduce) frame(performance.now()); else startLoop();
   }
+
+  // Taps on the empty background (not on a card, button or menu) go to the animated scene, for
+  // themes that can be played with (pop balloons, tap piano keys).
+  const UI = '.card, button, a, input, select, textarea, label, .sheet-backdrop, .sheet, [role="dialog"], .toast, .pop-msg, .coffee-btn, .brand, ul, li, h1, h2, h3, p';
+  const onBackground = (e) => !(e.target && e.target.closest && e.target.closest(UI));
+  window.addEventListener('pointerdown', (e) => {
+    if (!scene || !scene.tap || reduce || !onBackground(e)) return;
+    scene.tap(e.clientX, e.clientY);
+  }, { passive: true });
+  let hoverOn = false;
+  window.addEventListener('pointermove', (e) => {
+    if (e.pointerType !== 'mouse') return;
+    const on = !!(scene && scene.hover && !reduce && onBackground(e) && scene.hover(e.clientX, e.clientY));
+    if (on !== hoverOn) { hoverOn = on; document.documentElement.style.cursor = on ? 'pointer' : ''; }
+  }, { passive: true });
 
   window.addEventListener('sliver:theme', (e) => use(e.detail && e.detail.fx));
   window.SliverFx = { scenes: Object.keys(SCENES), use };
