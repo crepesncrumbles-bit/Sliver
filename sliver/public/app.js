@@ -1017,7 +1017,15 @@
 
   // ---------- sound-wave ring around the play button ----------
   // Bars around the button follow the actual audio (Web Audio analyser).
-  let analyser = null, freq = null, master = null;
+  let analyser = null, freq = null, master = null, fxAn = null, fxBuf = null;
+  window.SliverAudio = {
+    // The music's frequency spectrum right now, or null when nothing is playing.
+    spectrum() {
+      if (!fxAn || !playing) return null;
+      fxAn.getByteFrequencyData(fxBuf);
+      return { data: fxBuf, rate: ctx.sampleRate, size: fxAn.fftSize };
+    },
+  };
   function ensureMaster() {
     if (!master) {
       master = ctx.createGain();
@@ -1033,6 +1041,14 @@
       analyser.smoothingTimeConstant = 0.55;
       analyser.connect(ensureMaster());
       freq = new Uint8Array(analyser.frequencyBinCount);
+      // A finer analyser for themes that react to the music (the piano theme's keys).
+      fxAn = ctx.createAnalyser();
+      fxAn.fftSize = 4096;
+      fxAn.smoothingTimeConstant = 0.5;
+      analyser.connect(fxAn);
+      const sink = ctx.createGain(); sink.gain.value = 0; // keeps the analyser running, silently
+      fxAn.connect(sink).connect(ctx.destination);
+      fxBuf = new Uint8Array(fxAn.frequencyBinCount);
     }
     return analyser;
   }
@@ -1432,7 +1448,7 @@
     halloween: ['🎃', '🦇', 'rect', 'dot'], christmas: ['❄︎', '★', 'rect', 'dot'], valentine: ['♥︎', '♥︎', 'rect'],
     cottoncandy: ['♥︎', '★', 'dot', 'dot'], easter: ['egg', 'egg', 'dot', 'rect'], stpatricks: ['☘︎', '☘︎', 'rect'],
     july4: ['★', '★', 'rect', 'bar'], newyear: ['★', 'spark', 'rect', 'bar'], thanksgiving: ['petal', 'rect', 'dot'],
-    sakura: ['petal', 'petal', 'petal', 'dot'], lagoon: ['bubble', 'bubble', 'dot'], aurora: ['✦', 'bar', 'dot'],
+    sakura: ['petal', 'petal', 'petal', 'dot'], piano: ['♪', '♫', 'dot', 'spark'], crimson: ['bar', 'spark', 'rect'], critters: ['♥︎', '★', 'dot', 'dot'], lagoon: ['bubble', 'bubble', 'dot'], aurora: ['✦', 'bar', 'dot'],
     nebula: ['✦', '★', 'spark', 'dot'], midnight: ['✦', 'dot', 'rect'], synthwave: ['bar', 'bar', 'spark'], neon: ['bar', 'spark', 'dot'],
     ember: ['spark', 'spark', 'dot'], storm: ['⚡︎', 'bar', 'dot'], blackgold: ['spark', 'rect', 'dot', '✦'], mono: ['rect', 'dot'],
   };

@@ -197,6 +197,9 @@
     ember: { colors: { page: '#120A06', card: '#1E1410', accent: '#F97316', pop: '#FBBF24' }, glow: ['rgba(249,115,22,.35)', 'rgba(251,191,36,.20)'], dark: true },
     storm: { colors: { page: '#0B1220', card: '#141E30', accent: '#38BDF8', pop: '#E2E8F0' }, glow: ['rgba(56,189,248,.18)', 'rgba(148,163,184,.18)'], dark: true },
     blackgold: { colors: { page: '#0A0A0A', card: '#141210', accent: '#D4AF37', pop: '#F5E6A8' }, glow: ['rgba(212,175,55,.25)', 'rgba(245,230,168,.12)'], dark: true },
+    piano: { colors: { page: '#0B0B12', card: '#16161F', accent: '#E8C27A', pop: '#9DB4FF' }, glow: ['rgba(232,194,122,.22)', 'rgba(157,180,255,.18)'], dark: true },
+    crimson: { colors: { page: '#14030A', card: '#1F0711', accent: '#FF2847', pop: '#FF8A3D' }, glow: ['rgba(255,40,71,.30)', 'rgba(255,138,61,.18)'], dark: true },
+    critters: { colors: { page: '#F3B4D3', card: '#FFFFFF', accent: '#E0559A', pop: '#FFD86B' }, glow: ['rgba(255,214,235,.55)', 'rgba(217,210,255,.45)'] },
   };
   for (const item of SHOP.PREMIUM) {
     const look = PREMIUM_LOOKS[item.id];

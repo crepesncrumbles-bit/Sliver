@@ -58,7 +58,7 @@ function loadThemes(store = {}) {
       check(!T.slots()[2] && T.current() === 'cobalt', 'clearing the slot you use goes back to the default');
 
       const premium = T.premium();
-      check(premium.length === 9 && premium.every((t) => t.fx && t.premium) && SHOP.PRICE === 2.5, '9 premium themes, $2.50 each');
+      check(premium.length === SHOP.PREMIUM.length && premium.length >= 12 && premium.every((t) => t.fx && t.premium) && SHOP.PRICE === 2.5, `${premium.length} premium themes, $2.50 each`);
       check(!T.available().some((t) => t.premium), 'premium themes aren\'t in the free list');
       T.set('nebula');
       check(T.current() === 'cobalt', 'a premium theme you don\'t own falls back to the default');
@@ -105,9 +105,9 @@ function loadThemes(store = {}) {
       const t1 = await acc.grantTheme(a.id, 'sakura', 'test');
       check(t1 === 'sakura' && (await acc.grantTheme(a.id, 'sakura')) === null, 'grant a theme; no duplicates');
       const got = [];
-      for (let i = 0; i < 12; i++) { const t = await acc.grantTheme(a.id, 'random'); if (t) got.push(t); }
-      check(got.length === 8 && !got.includes('sakura') && (await acc.ownedThemes(a.id)).length === 9, 'random gifts never repeat; stop when you own them all');
-      check((await acc.session((await acc.login({ email: 'a@x.co', password: 'secret1' })).token)).themes.length === 9, 'your themes come with your login');
+      for (let i = 0; i < SHOP.ids.length + 3; i++) { const t = await acc.grantTheme(a.id, 'random'); if (t) got.push(t); }
+      check(got.length === SHOP.ids.length - 1 && !got.includes('sakura') && (await acc.ownedThemes(a.id)).length === SHOP.ids.length, 'random gifts never repeat; stop when you own them all');
+      check((await acc.session((await acc.login({ email: 'a@x.co', password: 'secret1' })).token)).themes.length === SHOP.ids.length, 'your themes come with your login');
       const pend = await acc.grantByEmail('newbie@x.co', 'random', 'bmc');
       check(pend.pending, 'bought before having an account: kept for that email');
       const nb = await acc.signup({ name: 'Newbie', email: 'newbie@x.co', password: 'secret1' });

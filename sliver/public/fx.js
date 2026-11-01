@@ -459,6 +459,255 @@
         },
       };
     },
+
+    // Grand piano: a keyboard along the bottom whose keys light up with the music that's playing
+    // (read live from the game's audio), and glowing notes rising off them. When nothing is
+    // playing, it noodles a soft melody by itself.
+    piano() {
+      const LO = 48, HI = 95; // C3..B6
+      const isBlack = (m) => [1, 3, 6, 8, 10].includes(m % 12);
+      const keys = [];
+      let kbH = 0, kbY = 0, whiteW = 0, bars = [], dust = [], idleT = 0, idleStep = 0;
+      const IDLE = [72, 76, 79, 84, 81, 79, 76, 74, 72, 67, 69, 72, 76, 74, 71, 67];
+      const reset = () => {
+        kbH = Math.max(70, Math.min(140, H * 0.16));
+        kbY = H - kbH;
+        const whites = [];
+        for (let m = LO; m <= HI; m++) if (!isBlack(m)) whites.push(m);
+        whiteW = W / whites.length;
+        keys.length = 0;
+        for (let m = LO; m <= HI; m++) {
+          const black = isBlack(m);
+          const wi = whites.indexOf(black ? m - 1 : m);
+          const x = black ? (wi + 1) * whiteW - whiteW * 0.31 : wi * whiteW;
+          keys.push({ m, black, x, w: black ? whiteW * 0.62 : whiteW, glow: 0, held: false, f: 440 * Math.pow(2, (m - 69) / 12) });
+        }
+        dust = Array.from({ length: Math.round(40 * density()) }, () => ({ x: rand(0, W), y: rand(0, kbY), r: rand(0.6, 1.8), v: rand(4, 14), p: rand(0, TAU) }));
+      };
+      const hue = (m) => { const k = (m - LO) / (HI - LO); return `hsl(${Math.round(38 + k * 190)}, 85%, ${68 - k * 6}%)`; };
+      function press(k, amt) {
+        k.glow = Math.max(k.glow, amt);
+        if (!k.held) { k.held = true; bars.push({ k, y: kbY, h: 0, growing: true, a: Math.min(1, 0.45 + amt) }); }
+      }
+      function listen(dt) {
+        const A = window.SliverAudio && window.SliverAudio.spectrum && window.SliverAudio.spectrum();
+        if (!A) return false;
+        const { data, rate, size } = A;
+        const vals = keys.map((k) => {
+          const b = Math.round((k.f * size) / rate);
+          return Math.max(data[b] || 0, data[b - 1] || 0, data[b + 1] || 0) / 255;
+        });
+        const loud = Math.max(...vals);
+        if (loud < 0.12) { keys.forEach((k) => { k.held = false; }); return true; }
+        const mean = vals.reduce((x, y) => x + y, 0) / vals.length;
+        keys.forEach((k, i) => {
+          const v = vals[i];
+          const peak = v >= (vals[i - 1] || 0) && v >= (vals[i + 1] || 0);
+          const on = peak && v > mean * 1.15 + 0.06 && v > loud * 0.72;
+          if (on) press(k, Math.min(1, (v - mean) * 2.2 + 0.35)); else k.held = false;
+        });
+        return true;
+      }
+      function idle(dt) {
+        idleT -= dt;
+        if (idleT > 0) return;
+        keys.forEach((k) => { k.held = false; });
+        idleT = 0.42;
+        const m = IDLE[idleStep++ % IDLE.length];
+        const k = keys.find((x) => x.m === m);
+        if (k) press(k, 0.55);
+        if (idleStep % 4 === 1) { const b = keys.find((x) => x.m === m - 12); if (b) press(b, 0.4); }
+      }
+      function rr(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+      reset();
+      return {
+        resize: reset,
+        draw(dt, t) {
+          ctx.fillStyle = grad(0, H, [[0, '#07070C'], [0.6, '#0F0F1A'], [1, '#17131F']]);
+          ctx.fillRect(0, 0, W, H);
+          glowDot(W * 0.5, -H * 0.15, H * 0.9, 'rgba(232,194,122,.10)');
+          for (const d of dust) { d.y -= d.v * dt; if (d.y < 0) { d.y = kbY; d.x = rand(0, W); } glowDot(d.x + Math.sin(t * 0.4 + d.p) * 10, d.y, d.r * 3, 'rgba(255,240,210,.5)', 0.5); }
+          if (!listen(dt)) idle(dt);
+          // rising notes
+          ctx.globalCompositeOperation = 'lighter';
+          const speed = 70;
+          bars = bars.filter((b) => b.y + b.h > -20 && b.a > 0.02);
+          for (const b of bars) {
+            if (b.growing && b.k.held) b.h += speed * dt; else { b.growing = false; b.y -= speed * dt; }
+            b.a -= dt * 0.07;
+            const x = b.k.x + b.k.w * 0.12, w = b.k.w * 0.76, top = b.y - b.h;
+            ctx.globalAlpha = Math.max(0, b.a);
+            ctx.shadowColor = hue(b.k.m); ctx.shadowBlur = 16;
+            ctx.fillStyle = hue(b.k.m);
+            rr(x, top, w, Math.max(4, b.h), Math.min(6, w / 2)); ctx.fill();
+          }
+          ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+          // felt strip + keyboard
+          ctx.fillStyle = '#5A0F1C'; ctx.fillRect(0, kbY - 5, W, 5);
+          for (const k of keys) {
+            k.glow = Math.max(0, k.glow - dt * (k.held ? 0.4 : 2.6));
+            if (k.black) continue;
+            const press = k.glow * 3;
+            ctx.fillStyle = grad(kbY, H, [[0, '#FFFDF6'], [1, '#E9E2D0']]);
+            ctx.fillRect(k.x + 0.5, kbY + press, k.w - 1, kbH - press);
+            if (k.glow > 0.02) { ctx.globalAlpha = k.glow * 0.85; ctx.fillStyle = hue(k.m); ctx.fillRect(k.x + 0.5, kbY + press, k.w - 1, kbH - press); ctx.globalAlpha = 1; glowDot(k.x + k.w / 2, kbY, k.w * 1.6, hue(k.m), k.glow * 0.7); }
+            ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.fillRect(k.x + k.w - 1, kbY, 1, kbH);
+          }
+          for (const k of keys) {
+            if (!k.black) continue;
+            const bh = kbH * 0.62, press = k.glow * 2;
+            ctx.fillStyle = grad(kbY, kbY + bh, [[0, '#2A2A30'], [1, '#0B0B0E']]);
+            ctx.fillRect(k.x, kbY + press, k.w, bh);
+            if (k.glow > 0.02) { ctx.globalAlpha = k.glow; ctx.fillStyle = hue(k.m); ctx.fillRect(k.x, kbY + press, k.w, bh); ctx.globalAlpha = 1; glowDot(k.x + k.w / 2, kbY, k.w * 2.2, hue(k.m), k.glow * 0.7); }
+          }
+          ctx.fillStyle = grad(kbY, kbY + 14, [[0, 'rgba(0,0,0,.45)'], [1, 'rgba(0,0,0,0)']]);
+          ctx.fillRect(0, kbY, W, 14);
+        },
+      };
+    },
+
+    // Crimson city: a red-lit skyline at night, flickering neon, rain and fog.
+    crimson() {
+      let far = [], near = [], rain = [], span = 0;
+      const city = (n, minH, maxH, minW, maxW) => {
+        const out = []; let x = 0;
+        while (x < span) {
+          const w = rand(minW, maxW), h = rand(minH, maxH);
+          const wins = [];
+          for (let wy = 14; wy < h - 10; wy += 13) for (let wx = 7; wx < w - 8; wx += 11) if (Math.random() < 0.38) wins.push({ x: wx, y: wy, on: Math.random() < 0.7, f: rand(0.2, 2), c: pick(['#FF3B4E', '#FF6A3D', '#FFB199', '#FF2D6A']) });
+          out.push({ x, w, h, wins, sign: Math.random() < n ? { y: rand(0.2, 0.6) * h, h: rand(30, 70), c: pick(['#FF2847', '#FF2D9A', '#FF5A36']), p: rand(0, TAU) } : null, antenna: Math.random() < 0.3 });
+          x += w + rand(2, 10);
+        }
+        return out;
+      };
+      const reset = () => {
+        span = W * 2;
+        far = city(0.05, H * 0.18, H * 0.45, 40, 90);
+        near = city(0.35, H * 0.25, H * 0.62, 60, 130);
+        rain = Array.from({ length: Math.round(150 * density()) }, () => ({ x: rand(0, W), y: rand(0, H), l: rand(10, 26), v: rand(500, 800) }));
+      };
+      function layer(list, off, base, fill, edge, t, winA) {
+        for (const b of list) {
+          let x = b.x - off; if (x + b.w < 0) x += span; if (x > W) continue;
+          const top = base - b.h;
+          ctx.fillStyle = fill; ctx.fillRect(x, top, b.w, b.h);
+          if (b.antenna) { ctx.fillRect(x + b.w / 2 - 1, top - 24, 2, 24); glowDot(x + b.w / 2, top - 24, 6, '#FF2847', 0.5 + 0.5 * Math.sin(t * 3 + b.x)); }
+          for (const w of b.wins) {
+            const on = w.on ? (Math.sin(t * w.f + b.x) > -0.95) : false;
+            if (!on) continue;
+            ctx.globalAlpha = winA; ctx.fillStyle = w.c; ctx.fillRect(x + w.x, top + w.y, 5, 7);
+          }
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = edge; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x + b.w, top); ctx.stroke();
+          if (b.sign) {
+            const s = b.sign; const flick = Math.sin(t * 9 + s.p) > -0.85 && Math.sin(t * 0.7 + s.p) > -0.98 ? 1 : 0.15;
+            const sx = x + b.w * 0.5 - 6, sy = top + s.y;
+            ctx.globalAlpha = flick; ctx.strokeStyle = s.c; ctx.lineWidth = 3; ctx.shadowColor = s.c; ctx.shadowBlur = 18;
+            ctx.strokeRect(sx, sy, 12, s.h);
+            for (let k = 1; k < 4; k++) { ctx.beginPath(); ctx.moveTo(sx + 3, sy + (s.h * k) / 4); ctx.lineTo(sx + 9, sy + (s.h * k) / 4); ctx.stroke(); }
+            ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+          }
+        }
+      }
+      reset();
+      return {
+        resize: reset,
+        draw(dt, t) {
+          const ground = H * 0.86;
+          ctx.fillStyle = grad(0, H, [[0, '#0B0105'], [0.55, '#2A040E'], [0.86, '#4A0716'], [1, '#12020A']]);
+          ctx.fillRect(0, 0, W, H);
+          glowDot(W * 0.72, H * 0.3, H * 0.28, 'rgba(255,40,71,.35)');
+          ctx.fillStyle = 'rgba(255,90,90,.9)'; ctx.beginPath(); ctx.arc(W * 0.72, H * 0.3, Math.min(W, H) * 0.07, 0, TAU); ctx.fill();
+          layer(far, (t * 8) % span, ground - 10, '#2B0610', 'rgba(255,60,80,.35)', t, 0.45);
+          ctx.fillStyle = grad(ground - H * 0.25, ground, [[0, 'rgba(90,8,24,0)'], [1, 'rgba(90,8,24,.55)']]); ctx.fillRect(0, ground - H * 0.25, W, H * 0.25);
+          layer(near, (t * 20) % span, ground, '#0E0206', 'rgba(255,40,71,.8)', t, 0.9);
+          // wet street with reflections
+          ctx.fillStyle = grad(ground, H, [[0, '#1A030A'], [1, '#050003']]); ctx.fillRect(0, ground, W, H - ground);
+          ctx.globalAlpha = 0.25; ctx.fillStyle = grad(ground, H, [[0, '#FF2847'], [1, 'rgba(255,40,71,0)']]); ctx.fillRect(0, ground, W, (H - ground) * 0.6); ctx.globalAlpha = 1;
+          // scan line sweeping down
+          const sy = ((t * 60) % (H + 200)) - 100;
+          ctx.fillStyle = grad(sy - 40, sy + 40, [[0, 'rgba(255,40,71,0)'], [0.5, 'rgba(255,40,71,.06)'], [1, 'rgba(255,40,71,0)']]); ctx.fillRect(0, sy - 40, W, 80);
+          // rain
+          ctx.strokeStyle = 'rgba(255,170,180,.35)'; ctx.lineWidth = 1; ctx.beginPath();
+          for (const r of rain) { r.y += r.v * dt; r.x -= r.v * 0.12 * dt; if (r.y > H) { r.y = -20; r.x = rand(0, W + 60); } ctx.moveTo(r.x, r.y); ctx.lineTo(r.x - r.l * 0.12, r.y + r.l); }
+          ctx.stroke();
+        },
+      };
+    },
+
+    // Critter club: little bunnies, kittens, bears, chicks and frogs floating up on balloons,
+    // with hearts and sparkles, over a pastel sky.
+    critters() {
+      let pals = [], hearts = [], twinkles = [];
+      const KINDS = {
+        bunny: { body: '#FFFFFF', inner: '#FFC4D6' }, kitty: { body: '#FFD9A8', inner: '#FF9DB5' }, bear: { body: '#C99A73', inner: '#F0CDB0' },
+        chick: { body: '#FFE27A', inner: '#FFB347' }, frog: { body: '#9BE3A8', inner: '#FFB3C7' }, panda: { body: '#FFFFFF', inner: '#2F2F3A' },
+      };
+      const BALLOONS = ['#FF9EC7', '#B8A6FF', '#8FE3FF', '#FFD86B', '#9EF0C8', '#FFB38A'];
+      const pal = (any) => ({ x: rand(40, W - 40), y: any ? rand(0, H + 200) : H + rand(60, 200), s: rand(20, 34), v: rand(18, 34), p: rand(0, TAU), kind: pick(Object.keys(KINDS)), bal: pick(BALLOONS), blink: rand(2, 6) });
+      const reset = () => {
+        pals = Array.from({ length: Math.max(5, Math.round(11 * density())) }, () => pal(true));
+        hearts = Array.from({ length: Math.round(22 * density()) }, () => ({ x: rand(0, W), y: rand(0, H), s: rand(5, 11), v: rand(10, 26), p: rand(0, TAU), c: pick(['#FF7EB3', '#FFB0D0', '#FFFFFF', '#C9B6FF']) }));
+        twinkles = Array.from({ length: Math.round(30 * density()) }, () => ({ x: rand(0, W), y: rand(0, H), s: rand(3, 7), p: rand(0, TAU), v: rand(1, 2.5) }));
+      };
+      function face(x, y, s, kind, t, blinkAt) {
+        const K = KINDS[kind];
+        ctx.save(); ctx.translate(x, y);
+        ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(90,50,80,.25)';
+        const ear = (ex, ey, rx, ry, rot, c) => { ctx.fillStyle = c; ctx.beginPath(); ctx.ellipse(ex, ey, rx, ry, rot, 0, TAU); ctx.fill(); };
+        if (kind === 'bunny') { ear(-s * 0.38, -s * 1.15, s * 0.22, s * 0.62, -0.15, K.body); ear(s * 0.38, -s * 1.15, s * 0.22, s * 0.62, 0.15, K.body); ear(-s * 0.38, -s * 1.1, s * 0.1, s * 0.42, -0.15, K.inner); ear(s * 0.38, -s * 1.1, s * 0.1, s * 0.42, 0.15, K.inner); }
+        if (kind === 'kitty') for (const d of [-1, 1]) { ctx.fillStyle = K.body; ctx.beginPath(); ctx.moveTo(d * s * 0.85, -s * 0.35); ctx.lineTo(d * s * 0.62, -s * 1.08); ctx.lineTo(d * s * 0.18, -s * 0.78); ctx.fill(); ctx.fillStyle = K.inner; ctx.beginPath(); ctx.moveTo(d * s * 0.72, -s * 0.5); ctx.lineTo(d * s * 0.6, -s * 0.9); ctx.lineTo(d * s * 0.36, -s * 0.74); ctx.fill(); }
+        if (kind === 'bear' || kind === 'panda') { const c = kind === 'panda' ? '#2F2F3A' : K.body; ear(-s * 0.7, -s * 0.72, s * 0.32, s * 0.32, 0, c); ear(s * 0.7, -s * 0.72, s * 0.32, s * 0.32, 0, c); if (kind === 'bear') { ear(-s * 0.7, -s * 0.72, s * 0.16, s * 0.16, 0, K.inner); ear(s * 0.7, -s * 0.72, s * 0.16, s * 0.16, 0, K.inner); } }
+        if (kind === 'frog') { ear(-s * 0.5, -s * 0.78, s * 0.32, s * 0.3, 0, K.body); ear(s * 0.5, -s * 0.78, s * 0.32, s * 0.3, 0, K.body); }
+        if (kind === 'chick') { ctx.strokeStyle = '#E8A93A'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(0, -s * 0.95); ctx.quadraticCurveTo(-s * 0.25, -s * 1.35, s * 0.05, -s * 1.3); ctx.stroke(); }
+        ctx.fillStyle = K.body; ctx.beginPath(); ctx.ellipse(0, 0, s, s * 0.9, 0, 0, TAU); ctx.fill(); ctx.strokeStyle = 'rgba(90,50,80,.18)'; ctx.lineWidth = 2; ctx.stroke();
+        // eyes
+        const ey = kind === 'frog' ? -s * 0.78 : -s * 0.05, ex = kind === 'frog' ? s * 0.5 : s * 0.36;
+        const blink = (t % blinkAt) < 0.14;
+        for (const d of [-1, 1]) {
+          if (kind === 'panda') { ctx.fillStyle = '#2F2F3A'; ctx.beginPath(); ctx.ellipse(d * ex, ey, s * 0.2, s * 0.25, d * 0.5, 0, TAU); ctx.fill(); }
+          if (blink) { ctx.strokeStyle = kind === 'panda' ? '#fff' : '#2B1B2E'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(d * ex, ey, s * 0.09, 0.2, Math.PI - 0.2); ctx.stroke(); continue; }
+          ctx.fillStyle = kind === 'panda' ? '#FFFFFF' : '#2B1B2E'; ctx.beginPath(); ctx.arc(d * ex, ey, s * 0.11, 0, TAU); ctx.fill();
+          ctx.fillStyle = kind === 'panda' ? '#2B1B2E' : '#FFFFFF'; ctx.beginPath(); ctx.arc(d * ex + s * 0.035, ey - s * 0.04, s * 0.04, 0, TAU); ctx.fill();
+        }
+        // blush
+        ctx.fillStyle = 'rgba(255,120,160,.45)';
+        for (const d of [-1, 1]) { ctx.beginPath(); ctx.ellipse(d * s * 0.58, s * 0.22, s * 0.16, s * 0.1, 0, 0, TAU); ctx.fill(); }
+        // mouth / beak
+        if (kind === 'chick') { ctx.fillStyle = K.inner; ctx.beginPath(); ctx.moveTo(-s * 0.12, s * 0.12); ctx.lineTo(s * 0.12, s * 0.12); ctx.lineTo(0, s * 0.3); ctx.fill(); }
+        else { ctx.strokeStyle = '#2B1B2E'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(-s * 0.08, s * 0.16, s * 0.08, 0.1, Math.PI - 0.1); ctx.arc(s * 0.08, s * 0.16, s * 0.08, 0.1, Math.PI - 0.1); ctx.stroke(); }
+        if (kind === 'bunny' || kind === 'kitty' || kind === 'bear') { ctx.fillStyle = '#FF8FB1'; ctx.beginPath(); ctx.ellipse(0, s * 0.08, s * 0.07, s * 0.05, 0, 0, TAU); ctx.fill(); }
+        ctx.restore();
+      }
+      reset();
+      return {
+        resize: reset,
+        draw(dt, t) {
+          ctx.fillStyle = grad(0, H, [[0, '#FFE3F0'], [0.5, '#F6D3F5'], [1, '#D9D2FF']]);
+          ctx.fillRect(0, 0, W, H);
+          for (const w of twinkles) sparkle(w.x, w.y, w.s, '#FFFFFF', 0.25 + 0.6 * Math.abs(Math.sin(t * w.v + w.p)));
+          for (const h of hearts) {
+            h.y -= h.v * dt; if (h.y < -20) { h.y = H + 20; h.x = rand(0, W); }
+            ctx.globalAlpha = 0.75; ctx.fillStyle = h.c; heartPath(h.x + Math.sin(t + h.p) * 12, h.y, h.s); ctx.fill(); ctx.globalAlpha = 1;
+          }
+          pals.sort((a, b) => a.s - b.s);
+          for (const q of pals) {
+            q.y -= q.v * dt;
+            if (q.y < -q.s * 6) Object.assign(q, pal(false));
+            const x = q.x + Math.sin(t * 0.8 + q.p) * 18, y = q.y;
+            const br = q.s * 1.05, by = y - q.s * 3.1;
+            // string
+            ctx.strokeStyle = 'rgba(120,90,130,.45)'; ctx.lineWidth = 1.2;
+            ctx.beginPath(); ctx.moveTo(x, by + br * 1.1); ctx.quadraticCurveTo(x + Math.sin(t * 2 + q.p) * 8, (by + y) / 2, x, y - q.s * 0.9); ctx.stroke();
+            // balloon
+            ctx.fillStyle = q.bal; ctx.beginPath(); ctx.ellipse(x, by, br, br * 1.15, 0, 0, TAU); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(x - 4, by + br * 1.12); ctx.lineTo(x + 4, by + br * 1.12); ctx.lineTo(x, by + br * 1.0); ctx.fill();
+            ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.beginPath(); ctx.ellipse(x - br * 0.35, by - br * 0.4, br * 0.18, br * 0.3, -0.5, 0, TAU); ctx.fill();
+            face(x, y, q.s, q.kind, t + q.p, q.blink);
+          }
+        },
+      };
+    },
   };
 
   function use(name) {

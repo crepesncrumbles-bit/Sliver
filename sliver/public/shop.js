@@ -12,6 +12,9 @@
     { id: 'ember', name: 'Ember Forge', blurb: 'Sparks and embers rise from a glowing forge.', buy: 'https://buymeacoffee.com/asher05/e/593673' },
     { id: 'storm', name: 'Thunderstorm', blurb: 'Driving rain with lightning that cracks across the sky.', buy: 'https://buymeacoffee.com/asher05/e/593674' },
     { id: 'blackgold', name: 'Black Gold', blurb: 'Gold dust drifts over black marble, with a shine that sweeps your buttons.', buy: 'https://buymeacoffee.com/asher05/e/593675' },
+    { id: 'piano', name: 'Grand Piano', blurb: 'A piano keyboard that plays along: keys light up with the song and glowing notes rise off them.' },
+    { id: 'crimson', name: 'Crimson City', blurb: 'A red-lit skyline at night: flickering neon, rain and drifting fog.' },
+    { id: 'critters', name: 'Critter Club', blurb: 'Little bunnies, kittens, bears and chicks float by on balloons, with hearts and sparkles.' },
   ];
   // Buy Me a Coffee: one coffee of $2 or more gives a random premium theme you don't own yet.
   const COFFEE_MIN = 2;
