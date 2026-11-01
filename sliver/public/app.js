@@ -491,7 +491,7 @@
     const u = auth && auth.user;
     const need = SHOP.REFERRALS_NEEDED || 5;
     const html = u
-      ? `<div class="invite-hero"><span class="ih-fire" aria-hidden="true">🔥</span><div><b>Unlock Campfire Crew for free</b><small>A theme you can't buy. Invite ${need} friends who sign up and play a game.</small></div><button type="button" class="btn ghost small" data-shop-preview="campfire">Preview</button></div>
+      ? `<div class="invite-hero"><span class="ih-fire" aria-hidden="true">🔥</span><div><b>Unlock Campfire Crew for free</b><small>A theme you should get. Invite ${need} friends who sign up and play a game.</small></div><button type="button" class="btn ghost small" data-shop-preview="campfire">Preview</button></div>
          <div class="invite-box" data-invite-box><p class="hint">Loading your invite link…</p></div>`
       : `<div class="invite-hero"><span class="ih-fire" aria-hidden="true">🔥</span><div><b>Get a free theme</b><small>Invite ${need} friends to unlock Campfire Crew, a theme you can't buy. Sign up to get your invite link.</small></div></div>
          <div class="acct-actions"><button class="btn small primary-ish" data-open-auth="signup">Sign up</button><button class="btn ghost small" data-shop-preview="campfire">Preview the theme</button></div>`;
