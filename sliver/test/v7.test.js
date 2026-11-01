@@ -58,7 +58,7 @@ function loadThemes(store = {}) {
       check(!T.slots()[2] && T.current() === 'cobalt', 'clearing the slot you use goes back to the default');
 
       const premium = T.premium();
-      check(premium.length === SHOP.PREMIUM.length && premium.length >= 12 && premium.every((t) => t.fx && t.premium) && SHOP.PRICE === 2.5, `${premium.length} premium themes, $2.50 each`);
+      check(premium.length === SHOP.ALL.length && SHOP.PREMIUM.length >= 12 && premium.every((t) => t.fx && t.premium) && SHOP.PRICE === 2.5, `${premium.length} premium themes, $2.50 each`);
       check(!T.available().some((t) => t.premium), 'premium themes aren\'t in the free list');
       T.set('nebula');
       check(T.current() === 'cobalt', 'a premium theme you don\'t own falls back to the default');
