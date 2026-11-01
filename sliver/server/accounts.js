@@ -118,7 +118,7 @@ class Accounts {
     const owned = Object.keys(toObj(await this.store.cmd('HGETALL', K.own(u.id))));
     return {
       ...this.publicUser(u), email: u.email, hidden: !!int(u.hidden),
-      themes: owned.filter((t) => SHOP.ids.includes(t)), admin: this.isAdmin(u),
+      themes: this.isAdmin(u) ? SHOP.ids.slice() : owned.filter((t) => SHOP.ids.includes(t)), admin: this.isAdmin(u),
     };
   }
 

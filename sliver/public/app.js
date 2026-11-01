@@ -265,12 +265,19 @@
       </button>`;
     }).join('');
   }
+  let setTab = 'sound';
+  function showSetTab(name) {
+    setTab = name;
+    document.querySelectorAll('[data-set-tab]').forEach((b) => { const on = b.dataset.setTab === name; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); });
+    document.querySelectorAll('[data-set-panel]').forEach((p) => { p.hidden = p.dataset.setPanel !== name; });
+  }
+  document.querySelectorAll('[data-set-tab]').forEach((b) => { b.onclick = () => showSetTab(b.dataset.setTab); });
   function openSettings(focusIcons) {
     renderThemes(); renderIconGrid(); renderCustomTheme(); renderPic(); applyVolume();
     $('#decor-toggle').checked = window.SliverDecor ? window.SliverDecor.enabled() : true;
+    showSetTab(focusIcons === true ? 'picture' : (typeof focusIcons === 'string' ? focusIcons : setTab));
     openSheet('settings');
-    if (focusIcons === true) $('#icon-title').scrollIntoView({ block: 'start' });
-    else $('#btn-settings-close').focus();
+    $('#btn-settings-close').focus();
   }
   function closeSettings() { closeSheet('settings'); }
   $('#btn-settings').onclick = () => openSettings();
