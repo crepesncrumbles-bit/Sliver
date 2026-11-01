@@ -164,10 +164,11 @@ function loadThemes(store = {}) {
       check(r1.granted.length === 1 && SHOP.ids.includes(r1.granted[0]) && notes.length === 1 && /unlocked/.test(notes[0][1].text), 'a $5 coffee: one random premium theme, and a live thank-you');
       check((await bmc.handleEvent(coffee(2, 5), ctx)).ignored === 'already handled', 'the same payment sent twice only counts once');
       check((await bmc.handleEvent({ ...coffee(3, 9), live_mode: false }, ctx)).ignored === 'test event', 'BMC test events are ignored');
-      const ex = await bmc.handleEvent({ type: 'extra_purchase.created', live_mode: true, data: { id: 77, amount: '2.50', supporter_email: 'fan@x.co', extras: [{ title: 'Synthwave' }] } }, ctx);
-      check(ex.granted[0] === 'synthwave', 'buying the "Synthwave" extra unlocks Synthwave');
+      const pick = SHOP.PREMIUM.find((t) => t.id !== r1.granted[0]);
+      const ex = await bmc.handleEvent({ type: 'extra_purchase.created', live_mode: true, data: { id: 77, amount: '2.50', supporter_email: 'fan@x.co', extras: [{ title: pick.name }] } }, ctx);
+      check(ex.granted[0] === pick.id, 'buying the "Synthwave" extra unlocks Synthwave');
       const ref = await bmc.handleEvent({ type: 'extra_purchase.refunded', live_mode: true, data: { id: 77, supporter_email: 'fan@x.co' } }, ctx);
-      check(ref.revoked[0] === 'synthwave' && !(await acc2.ownedThemes(u.id)).includes('synthwave'), 'a refund takes it back');
+      check(ref.revoked[0] === pick.id && !(await acc2.ownedThemes(u.id)).includes(pick.id), 'a refund takes it back');
       const viaNote = await bmc.handleEvent(coffee(4, 3, { supporter_email: 'paypal-other@x.co', support_note: 'my sliver email is fan@x.co thanks!' }), ctx);
       check(viaNote.userId === u.id && viaNote.granted.length === 1, 'paid with another email but wrote their Sliver email in the note → still theirs');
       const pending = await bmc.handleEvent(coffee(5, 2, { supporter_email: 'later@x.co' }), ctx);
@@ -209,7 +210,7 @@ function loadThemes(store = {}) {
     try {
       check(/Admin accounts: 1/.test(log) && /Theme purchases: on \(Buy Me a Coffee, https:\/\/buymeacoffee.com\/sliver\)/.test(log), 'startup log: admins and purchases on');
       const info = await get('/api/info');
-      check(info.bmc === 'https://buymeacoffee.com/sliver' && info.shop === 'https://buymeacoffee.com/sliver/shop' && info.payments, 'the page gets the coffee and shop links');
+      check(info.bmc === 'https://buymeacoffee.com/sliver' && info.shop === 'https://buymeacoffee.com/sliver/extras' && info.payments, 'the page gets the coffee and shop links');
       const g = await post('/api/avatar/guest', { image: PNG });
       const img = await fetch(URL + g.avatar);
       check(g.ok && /^\/api\/avatar\/g\//.test(g.avatar) && img.ok && img.headers.get('content-type') === 'image/png', 'guests can upload a photo too');

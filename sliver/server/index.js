@@ -50,7 +50,7 @@ const { cleanAvatar } = require('./game');
 // BMC_SHOP_URL = where to buy themes (defaults to your page's extras).
 // Defaults are Sliver's own page; set BMC_URL / BMC_SHOP_URL to use a different one (or 'off').
 const BMC_URL = String(process.env.BMC_URL || 'https://buymeacoffee.com/asher05').trim().replace(/\/+$/, '').replace(/^off$/i, '');
-const BMC_SHOP_URL = String(process.env.BMC_SHOP_URL || (BMC_URL ? `${BMC_URL}/shop` : '')).trim().replace(/^off$/i, '');
+const BMC_SHOP_URL = String(process.env.BMC_SHOP_URL || (BMC_URL ? `${BMC_URL}/extras` : '')).trim().replace(/^off$/i, '');
 const BMC_SECRET = String(process.env.BMC_WEBHOOK_SECRET || '').trim();
 const stats = new Stats(store);
 const STARTED = Date.now();

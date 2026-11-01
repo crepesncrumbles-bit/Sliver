@@ -399,7 +399,7 @@
       <div class="acct-actions">
         ${own ? `<button class="btn small primary-ish" data-theme-id="${t.id}">Use it</button>`
           : `<button class="btn small" data-shop-preview="${t.id}">Preview 12 s</button>
-             ${shopUrl ? `<a class="btn small primary-ish" href="${esc(shopUrl)}" target="_blank" rel="noopener">Buy for ${money(SHOP.PRICE)}</a>` : '<span class="hint">Buying isn\'t set up on this server yet.</span>'}`}
+             ${shopUrl ? `<a class="btn small primary-ish" href="${esc((SHOP.byId && SHOP.byId[t.id] && SHOP.byId[t.id].buy) || shopUrl)}" target="_blank" rel="noopener">Buy for ${money(SHOP.PRICE)}</a>` : '<span class="hint">Buying isn\'t set up on this server yet.</span>'}`}
       </div>
       ${own ? '' : `<p class="hint">${loggedIn
         ? `Pay with the same email as your Sliver account (<b>${esc(auth.user.email || '')}</b>) and it unlocks by itself within a minute. Using a different email? Put your Sliver email in the message.`
