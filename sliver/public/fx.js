@@ -494,7 +494,7 @@
         k.glow = Math.max(k.glow, amt);
         k.off = 0;
         // A new note only if this key wasn't just played, and never more than MAX_BARS on screen.
-        if (!k.held && now - k.last > 0.18 && bars.length < MAX_BARS) { bars.push({ k, y: kbY, h: 0, growing: true, a: Math.min(1, 0.45 + amt) }); k.last = now; }
+        if (!k.held && now - k.last > 0.18 && bars.length < MAX_BARS && (k.live || 0) < 3) { bars.push({ k, y: kbY, h: 0, growing: true, a: Math.min(1, 0.5 + amt) }); k.last = now; k.live = (k.live || 0) + 1; }
         k.held = true;
       }
       // A key lets go only after it's been quiet for a moment (the analysis flickers frame to frame).
@@ -509,18 +509,22 @@
         if (!A) return false;
         dt = step;
         const { data, rate, size } = A;
-        const vals = keys.map((k) => {
+        // Music has much more energy in the bass, so higher keys get a boost; each key is then
+        // compared with the keys around it (not the whole keyboard), so treble notes register too.
+        const raw = keys.map((k) => {
           const b = Math.round((k.f * size) / rate);
           return Math.max(data[b] || 0, data[b - 1] || 0, data[b + 1] || 0) / 255;
         });
-        const loud = Math.max(...vals);
-        if (loud < 0.12) { keys.forEach((k) => release(k, dt)); return true; }
-        const mean = vals.reduce((x, y) => x + y, 0) / vals.length;
+        if (Math.max(...raw) < 0.12) { keys.forEach((k) => release(k, dt)); return true; }
+        const vals = raw.map((v, i) => Math.min(1, v * (1 + (i / (keys.length - 1)) * 0.9)));
         keys.forEach((k, i) => {
           const v = vals[i];
+          let sum = 0, n = 0;
+          for (let j = Math.max(0, i - 6); j <= Math.min(keys.length - 1, i + 6); j++) if (j !== i) { sum += vals[j]; n++; }
+          const local = sum / n;
           const peak = v >= (vals[i - 1] || 0) && v >= (vals[i + 1] || 0);
-          const on = peak && v > mean * 1.15 + 0.06 && v > loud * 0.72;
-          if (on) press(k, Math.min(1, (v - mean) * 2.2 + 0.35)); else release(k, dt);
+          const on = peak && v > 0.28 && v > local * 1.18 + 0.04;
+          if (on) press(k, Math.min(1, (v - local) * 2.4 + 0.35)); else release(k, dt);
         });
         return true;
       }
@@ -549,15 +553,15 @@
           // rising notes
           ctx.globalCompositeOperation = 'lighter';
           const speed = 70;
-          bars = bars.filter((b) => b.y + b.h > -20 && b.a > 0.02);
+          bars = bars.filter((b) => { const keep = b.y - b.h > -20 && b.a > 0.03; if (!keep) b.k.live--; return keep; });
           for (const b of bars) {
-            if (b.growing && b.k.held) b.h += speed * dt; else { b.growing = false; b.y -= speed * dt; }
-            b.a -= dt * 0.07;
+            if (b.growing && b.k.held && b.h < kbH * 1.6) b.h += speed * dt; else { b.growing = false; b.y -= speed * dt; }
+            b.a -= dt * 0.16;
             const x = b.k.x + b.k.w * 0.12, w = b.k.w * 0.76, top = b.y - b.h;
             const hgt = Math.max(4, b.h);
             ctx.fillStyle = b.k.col;
-            ctx.globalAlpha = Math.max(0, b.a) * 0.25; // soft halo (cheap: a wider, fainter bar)
-            ctx.fillRect(x - 4, top - 4, w + 8, hgt + 8);
+            ctx.globalAlpha = Math.max(0, b.a) * 0.22; // soft halo: the same rounded shape, a bit bigger and fainter
+            rr(x - 3, top - 3, w + 6, hgt + 6, Math.min(9, w / 2 + 3)); ctx.fill();
             ctx.globalAlpha = Math.max(0, b.a);
             rr(x, top, w, hgt, Math.min(6, w / 2)); ctx.fill();
           }

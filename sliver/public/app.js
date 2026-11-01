@@ -834,7 +834,32 @@
   let clip = { url: null, data: null, buffer: null, start: 0, gain: 1, loading: null };
   let playing = null; // { source, startedAt, len, raf }
 
+  // iPhone: web audio follows the ring/silent switch, so with the phone on silent you'd hear
+  // nothing. Asking for "playback" audio (like a music app) plays through the speaker anyway.
+  // Newer Safari has navigator.audioSession for that; older iOS needs a silent <audio> element
+  // playing in a loop, which switches the page into playback mode too.
+  let iosKeepAlive = null;
+  function iosPlayback() {
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}
+    const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (!ios || iosKeepAlive) return;
+    // 0.5 s of silence (8 kHz, 8-bit WAV), looped.
+    const n = 4000, buf = new Uint8Array(44 + n), v = new DataView(buf.buffer);
+    const str = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+    str(0, 'RIFF'); v.setUint32(4, 36 + n, true); str(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true); str(36, 'data'); v.setUint32(40, n, true);
+    buf.fill(128, 44);
+    iosKeepAlive = document.createElement('audio');
+    iosKeepAlive.setAttribute('playsinline', '');
+    iosKeepAlive.setAttribute('x-webkit-airplay', 'deny');
+    iosKeepAlive.loop = true;
+    iosKeepAlive.preload = 'auto';
+    iosKeepAlive.src = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+    iosKeepAlive.play().catch(() => { iosKeepAlive = null; });
+  }
+
   function unlockAudio() {
+    iosPlayback();
     if (!ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
       // Phones: "interactive" so a tap plays right away ("playback" adds a noticeable delay there).
@@ -851,9 +876,15 @@
   // arrives instead of when you press play.
   const firstTap = () => { try { unlockAudio(); } catch {} };
   window.addEventListener('pointerdown', firstTap, { once: true, capture: true });
+  window.addEventListener('click', firstTap, { once: true, capture: true }); // iPhone only counts taps that end (click/touchend)
+  window.addEventListener('touchend', firstTap, { once: true, capture: true });
   window.addEventListener('keydown', firstTap, { once: true, capture: true });
   // Phones suspend audio when the app is in the background; wake it up when you come back.
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && ctx && ctx.state !== 'running') ctx.resume().catch(() => {}); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {});
+    if (iosKeepAlive && iosKeepAlive.paused) iosKeepAlive.play().catch(() => {});
+  });
 
   function analyze(buf) {
     const chans = [];
