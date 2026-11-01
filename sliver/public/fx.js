@@ -1288,6 +1288,7 @@
     // bombs fall. Tap coins and diamonds to bank them (each catch in a row raises your combo);
     // a coin that hits the floor or a tapped bomb resets the combo. Your bank is remembered.
     blackgold() {
+      let now = 0, resetArm = 0;
       let marble = null, dust = [], items = [], flyers = [], spawnT = 1, combo = 1, streak = 0, bank = 0, best = 0, shake = 0, msg = null;
       try { bank = Number(localStorage.getItem('sliver.gold.bank')) || 0; best = Number(localStorage.getItem('sliver.gold.best')) || 0; } catch {}
       const save = () => { try { localStorage.setItem('sliver.gold.bank', String(bank)); localStorage.setItem('sliver.gold.best', String(best)); } catch {} };
@@ -1351,15 +1352,23 @@
         resize: reset,
         hover: () => true,
         tap(x, y) {
+          const y0 = hudY(); // ↺ reset button on the bank (tap twice to confirm)
+          if (x > hudX + 228 && x < hudX + 262 && y > y0 + 13 && y < y0 + 47) {
+            if (resetArm && now - resetArm < 2.5) { bank = 0; streak = 0; combo = 1; save(); resetArm = 0; popText('Bank reset', hudX + 120, y0, '#F5E6A8'); }
+            else { resetArm = now; popText('Tap ↺ again to reset', hudX + 120, y0, '#F5E6A8'); }
+            return true;
+          }
           let hit = null, bestD = 1e9;
           for (const it of items) { const d = Math.hypot(x - it.x, y - it.y); if (d < 34 * it.s && d < bestD) { hit = it; bestD = d; } }
           if (!hit) { burst(x, y, 5, () => ({ kind: 'star', x: x + rand(-14, 14), y: y + rand(-14, 14), s: rand(3, 6), decay: 2, c: '#FFF3C4' })); return true; }
           items = items.filter((i) => i !== hit);
           if (hit.kind === 'bomb') {
             shake = 1; combo = 1; streak = 0;
+            const lost = Math.floor(bank / 2); bank -= lost; save(); // half your money blown away
+            for (let i = 0; i < Math.min(14, 2 + lost / 400); i++) flyers.push({ kind: 'coin', blown: true, x: hudX + 26, y: hudY() + 24, vx: rand(-260, 260), vy: -rand(300, 600), k: 0 });
             ring(hit.x, hit.y, 'rgba(255,200,120,.95)', { grow: 300, decay: 2.2, w: 4, add: true });
             burst(hit.x, hit.y, 22, (i, a) => ({ kind: 'streak', x: hit.x, y: hit.y, vx: Math.cos(a) * rand(150, 380), vy: Math.sin(a) * rand(150, 380), drag: 2, s: 2, decay: 1.6, add: true, c: pick(['#FFB347', '#FF6B3D', '#FFF1B8']) }));
-            popText('BOOM! combo lost', hit.x, hit.y, '#FF8A5C');
+            popText(lost ? `BOOM! −$${lost.toLocaleString()}` : 'BOOM!', hit.x, hit.y, '#FF8A5C');
             return true;
           }
           streak++; combo = Math.min(10, 1 + Math.floor(streak / 4));
@@ -1371,6 +1380,7 @@
           return true;
         },
         draw(dt, t) {
+          now = t;
           shake = Math.max(0, shake - dt * 3);
           const sx = shake ? rand(-6, 6) * shake : 0, sy = shake ? rand(-6, 6) * shake : 0;
           ctx.drawImage(marble, sx, sy, W, H);
@@ -1395,12 +1405,13 @@
             ctx.drawImage(sp, -n / 2, -n / 2, n, n);
             if (it.kind === 'bomb') { const fl = 0.6 + 0.4 * Math.sin(t * 30); ctx.fillStyle = `rgba(255,${180 + 60 * fl},80,${fl})`; ctx.beginPath(); ctx.arc(12 * it.s, -21 * it.s, 3, 0, TAU); ctx.fill(); }
             ctx.restore();
-            if (it.y > H + 30) { it.gone = true; if (it.kind !== 'bomb') { streak = 0; combo = 1; } }
+            if (it.y > H + 30) { it.gone = true; if (it.kind !== 'bomb') { if (streak) popText('Missed! Streak lost', it.x, H - 40, '#FF8A5C'); streak = 0; combo = 1; } }
           }
           items = items.filter((i) => !i.gone);
           // caught loot flies into the bank
           const tx = hudX + 26, ty = hudY() + 24;
           for (const f of flyers) {
+            if (f.blown) { f.k += dt * 0.9; f.vy += 900 * dt; f.x += f.vx * dt; f.y += f.vy * dt; ctx.globalAlpha = Math.max(0, 1 - f.k); ctx.drawImage(COIN, f.x - 14, f.y - 14, 28, 28); ctx.globalAlpha = 1; continue; }
             f.k += dt * 2.4; const k = Math.min(1, f.k), e = k * k;
             f.x = f.sx + (tx - f.sx) * e; f.y = f.sy + (ty - f.sy) * e - Math.sin(k * Math.PI) * 60;
             const n = 40 * (1 - k * 0.6);
@@ -1424,6 +1435,12 @@
           ctx.fillStyle = combo > 1 ? '#FDE68A' : 'rgba(245,230,168,.6)'; ctx.font = '700 11px ui-monospace, Menlo, monospace';
           ctx.fillText(combo > 1 ? `COMBO ×${combo}` : 'TAP THE GOLD', hudX + 50, y0 + 50);
           ctx.textAlign = 'right'; ctx.fillStyle = 'rgba(245,230,168,.6)'; ctx.fillText(`streak ${streak}`, hudX + 208, y0 + 50); ctx.textAlign = 'left';
+          // reset button
+          const armed = resetArm && t - resetArm < 2.5;
+          ctx.fillStyle = armed ? 'rgba(255,138,92,.9)' : 'rgba(10,9,6,.72)'; ctx.strokeStyle = 'rgba(212,175,55,.75)';
+          ctx.beginPath(); ctx.arc(hudX + 245, y0 + 30, 16, 0, TAU); ctx.fill(); ctx.stroke();
+          ctx.fillStyle = '#F5E6A8'; ctx.font = '700 17px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText('↺', hudX + 245, y0 + 31); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
         },
       };
     },

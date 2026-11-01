@@ -2079,10 +2079,15 @@
       ${fs !== 'blocked' ? `<button class="btn ghost small" data-fr-block="${esc(p.id)}">Block</button>` : ''}</div>`;
     const mods = (r) => [r.hard && 'Hard', r.chaos && 'Chaos'].filter(Boolean).join(' + ');
     $('#profile-body').innerHTML = `
-      ${frBtns}
-      <div class="pf-head">
-        <div><div class="label">Rating</div><div class="pf-rating">${fmt(p.rating)}</div></div>
-        <div><div class="label">Overall rank</div><div class="pf-rank">${p.globalRank ? `#${fmt(p.globalRank)}` : 'Unranked'}<small>${p.globalRank ? ` of ${fmt(p.players)}` : ''}</small></div></div>
+      <div class="pf-top">
+        <div class="pf-left">
+          ${frBtns}
+          <div class="pf-head">
+            <div><div class="label">Rating</div><div class="pf-rating">${fmt(p.rating)}</div></div>
+            <div><div class="label">Overall rank</div><div class="pf-rank">${p.globalRank ? `#${fmt(p.globalRank)}` : 'Unranked'}<small>${p.globalRank ? ` of ${fmt(p.players)}` : ''}</small></div></div>
+          </div>
+        </div>
+        <div class="pf-big acct-av${avClass(p.icon, p.avatar)}">${avatar(p.icon, p.name, p.avatar)}</div>
       </div>
       <div class="tiles">
         <div class="tile"><b>${fmt(st.games)}</b><span>Ranked games</span></div>
