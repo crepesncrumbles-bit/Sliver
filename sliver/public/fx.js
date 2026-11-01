@@ -527,8 +527,7 @@
         if (pals.length >= 10) pals.shift();
         const kind = KINDS[nextKind++ % KINDS.length];
         const dir = Math.random() < 0.5 ? -1 : 1;
-        let [lo, hi] = laneOf(x, 46);
-        if (hi - lo < 90) { lo = 46; hi = W - 46; }
+        const lo = 46, hi = W - 46; // swims the whole width, passing behind the cards
         pals.push({ kind, x: Math.max(lo, Math.min(hi, x)), y, dir, face: dir, lo, hi, s: rand(0.95, 1.3), v: kind === 'jelly' || kind === 'seahorse' ? rand(25, 40) : rand(45, 85), vy: rand(-14, 14), p: rand(0, TAU), col: pick(['#5EEAD4', '#F0ABFC', '#FDE68A', '#93C5FD', '#FCA5A5']), spin: 0, happy: 0, puff: 0, grow: 0, zap: 0, ink: 0, shell: 0, dart: 0, spout: 0, boost: 1 });
         ring(x, y, 'rgba(224,255,251,.9)', { grow: 160, decay: 2.5, w: 2 });
         burst(x, y, 8, () => ({ kind: 'bubble', x: x + rand(-12, 12), y, vx: rand(-25, 25), vy: -rand(60, 140), s: rand(2, 6), vr: rand(3, 7), decay: 0.6, c: 'rgba(224,255,251,.8)' }));
@@ -754,9 +753,31 @@
     // black hole: it swirls nearby stars in and swallows them, then blows up in a supernova that
     // flings them back out across the screen.
     nebula() {
-      let layers = [], clouds = [], shoot = null, nextShot = 2, holes = [];
+      let layers = [], clouds = [], shoot = null, nextShot = 2, holes = [], bodies = [];
+      // Galaxies and suns: drawn once into crisp sprites (2x) and reused every frame.
+      const sprite = (n, paint) => { const c = document.createElement('canvas'); c.width = c.height = n * 2; const g = c.getContext('2d'); g.scale(2, 2); paint(g, n / 2); return c; };
+      const GALAXIES = [[280, 320], [200, 45], [170, 260]].map(([h1, h2]) => sprite(140, (g, c) => {
+        const core = g.createRadialGradient(c, c, 0, c, c, c * 0.45);
+        core.addColorStop(0, 'rgba(255,248,230,1)'); core.addColorStop(0.3, `hsla(${h2},90%,75%,.7)`); core.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = core; g.beginPath(); g.arc(c, c, c * 0.45, 0, TAU); g.fill();
+        for (let arm = 0; arm < 2; arm++) for (let i = 0; i < 260; i++) { // two spiral arms of tiny stars
+          const k = i / 260, a = arm * Math.PI + k * 3.4 * Math.PI, r = 6 + k * (c - 8);
+          const x = c + Math.cos(a) * r + rand(-4, 4) * (0.4 + k), y = c + Math.sin(a) * r * 0.55 + rand(-3, 3) * (0.4 + k);
+          g.fillStyle = `hsla(${k < 0.5 ? h2 : h1},85%,${70 + rand(0, 25)}%,${0.85 - k * 0.6})`;
+          g.fillRect(x, y, rand(0.6, 1.8), rand(0.6, 1.8));
+        }
+      }));
+      const SUNS = [['#FFFFFF', '#FFE48A', '#FF9F43'], ['#FFFFFF', '#A5D8FF', '#4C6EF5'], ['#FFFFFF', '#FFB3C7', '#E64980']].map(([a, b, c2]) => sprite(110, (g, c) => {
+        const glow = g.createRadialGradient(c, c, 0, c, c, c);
+        glow.addColorStop(0, a); glow.addColorStop(0.18, b); glow.addColorStop(0.4, c2 + '88'); glow.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = glow; g.beginPath(); g.arc(c, c, c, 0, TAU); g.fill();
+        g.strokeStyle = b + '66'; g.lineWidth = 1; // a few corona rays
+        for (let i = 0; i < 12; i++) { const an = (i / 12) * TAU; g.beginPath(); g.moveTo(c + Math.cos(an) * c * 0.22, c + Math.sin(an) * c * 0.22); g.lineTo(c + Math.cos(an) * c * (0.55 + (i % 3) * 0.12), c + Math.sin(an) * c * (0.55 + (i % 3) * 0.12)); g.stroke(); }
+      }));
+      const newBody = (kind, any) => ({ kind, spr: kind === 'galaxy' ? pick(GALAXIES) : pick(SUNS), x: any ? rand(0, W) : W + 120, y: rand(40, H - 40), s: kind === 'galaxy' ? rand(0.6, 1.15) : rand(0.35, 0.7), rot: rand(0, TAU), vr: kind === 'galaxy' ? rand(0.05, 0.15) * (Math.random() < 0.5 ? -1 : 1) : 0, vx: 0, vy: 0, scale: 1, eaten: null, drift: rand(3, 7), p: rand(0, TAU) });
       const reset = () => {
-        layers = [0.25, 0.6, 1.2].map((speed, i) => ({ speed, stars: Array.from({ length: Math.round([150, 80, 30][i] * density()) }, () => ({ x: rand(0, W), y: rand(0, H), r: [0.7, 1.2, 2][i] * rand(0.6, 1.2), p: rand(0, TAU), vx: 0, vy: 0, eaten: null })) }));
+        bodies = [...Array.from({ length: Math.max(2, Math.round(3 * density())) }, () => newBody('galaxy', true)), ...Array.from({ length: Math.max(2, Math.round(4 * density())) }, () => newBody('sun', true))];
+        layers = [0.25, 0.6, 1.2].map((speed, i) => ({ speed, stars: Array.from({ length: Math.round([230, 120, 45][i] * density()) }, () => ({ x: rand(0, W), y: rand(0, H), r: [0.7, 1.2, 2][i] * rand(0.6, 1.2), p: rand(0, TAU), vx: 0, vy: 0, eaten: null })) }));
         clouds = Array.from({ length: 5 }, (_, i) => ({ x: rand(0, W), y: rand(0, H), r: rand(180, 380), hue: pick([320, 280, 210, 190, 340]), p: i }));
         holes = [];
       };
@@ -765,6 +786,10 @@
         ring(h.x, h.y, 'rgba(255,255,255,.95)', { s: 10, grow: 520, decay: 1.4, w: 3, add: true });
         ring(h.x, h.y, 'rgba(244,114,182,.85)', { s: 6, grow: 330, decay: 1.1, w: 7, add: true });
         burst(h.x, h.y, 30, (i, a) => { const v = rand(120, 460); return { kind: 'glow', x: h.x, y: h.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, drag: 1.2, s: rand(1, 2.6), decay: rand(0.5, 0.9), add: true, c: pick(['#FFFFFF', '#F9A8D4', '#93C5FD', '#FDE68A']) }; });
+        for (const b of bodies) if (b.eaten === h) {
+          const a = rand(0, TAU), v = rand(160, 380);
+          b.x = h.x; b.y = h.y; b.vx = Math.cos(a) * v; b.vy = Math.sin(a) * v; b.eaten = null; b.scale = 0.25; b.vr += rand(-1, 1);
+        }
         for (const L of layers) for (const s of L.stars) if (s.eaten === h) {
           const a = rand(0, TAU), v = rand(250, 700);
           s.x = h.x; s.y = h.y; s.vx = Math.cos(a) * v; s.vy = Math.sin(a) * v; s.eaten = null;
@@ -821,6 +846,41 @@
             }
           }
           ctx.globalAlpha = 1;
+          // galaxies and suns: they drift, and black holes drag them in too (spinning faster,
+          // shrinking as they fall); a supernova throws them back out.
+          for (const b of bodies) {
+            if (b.eaten) continue;
+            let pulled = null;
+            for (const h of holes) {
+              const d = Math.hypot(b.x - h.x, b.y - h.y);
+              if (h.age > h.life || d > rad * 1.6) continue;
+              pulled = h;
+              const k = Math.min(1, h.age / 0.6) * (1 - d / (rad * 1.6));
+              const a = Math.atan2(b.y - h.y, b.x - h.x) + (1.8 * k + 0.3) * dt * 2.4;
+              const nd = Math.max(0, d - (30 + 170 * k) * dt);
+              b.x = h.x + Math.cos(a) * nd; b.y = h.y + Math.sin(a) * nd;
+              b.scale = Math.min(b.scale, Math.max(0.05, nd / (rad * 0.9)));
+              b.rot += dt * (2 + 8 * k);
+              if (nd < 8) { b.eaten = h; h.eaten += 6; ring(h.x, h.y, 'rgba(255,200,150,.8)', { s: 4, grow: 90, decay: 3, w: 2, add: true }); }
+              break;
+            }
+            if (!pulled) {
+              b.x += (b.vx - b.drift) * dt; b.y += b.vy * dt + Math.sin(t * 0.2 + b.p) * 3 * dt;
+              b.vx *= Math.max(0, 1 - dt * 0.9); b.vy *= Math.max(0, 1 - dt * 0.9);
+              b.scale = Math.min(1, b.scale + dt * 0.5); b.rot += b.vr * dt;
+              const m = 80 * b.s;
+              if (b.x < -m) Object.assign(b, newBody(b.kind, false), { x: W + m });
+              else if (b.x > W + m * 2) b.x = -m;
+              if (b.y < -m) b.y = H + m; else if (b.y > H + m) b.y = -m;
+            }
+            const n = (b.kind === 'galaxy' ? 140 : 110) * b.s * b.scale;
+            ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.rot);
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.globalAlpha = b.kind === 'sun' ? 0.85 + 0.15 * Math.sin(t * 3 + b.p) : 0.9;
+            ctx.drawImage(b.spr, -n / 2, -n / 2, n, n);
+            ctx.restore();
+          }
+          ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
           // the black holes
           toFront();
           for (const h of holes) {
@@ -982,29 +1042,51 @@
     // perfect strikes shape the blade fastest. Finish it and it's quenched into a sword.
     ember() {
       let embers = [], swords = 0, prog = 0, heat = 1, combo = 0, ringT = 0, hammer = 0, done = 0, flash = 0, label = null, now = 0;
+      let forge = null, fade = 1, item = null, lastItem = -1, avgE = 0, prevE = 0, lastBeat = 0, onBeat = false;
       try { swords = Number(localStorage.getItem('sliver.ember.swords')) || 0; } catch {}
+      // What gets made: a different piece each time (drawn lying on the anvil, centred on 0,0).
+      const BROWN = '#5B3A1E', GOLD = '#D4AF37', STEEL = '#D9DEE7';
+      const poly = (pts) => { ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); for (const p of pts.slice(1)) ctx.lineTo(p[0], p[1]); ctx.closePath(); ctx.fill(); };
+      const ITEMS = [
+        { name: 'SWORD', draw(c, f) { ctx.fillStyle = f ? BROWN : c; ctx.fillRect(-92, -5, 30, 10); ctx.fillStyle = f ? GOLD : c; ctx.fillRect(-64, -16, 7, 32); ctx.beginPath(); ctx.arc(-94, 0, 6, 0, TAU); ctx.fill(); ctx.fillStyle = f ? STEEL : c; poly([[-57, -6], [66, -4], [86, 0], [66, 4], [-57, 6]]); } },
+        { name: 'DAGGER', draw(c, f) { ctx.fillStyle = f ? BROWN : c; ctx.fillRect(-52, -5, 22, 10); ctx.fillStyle = f ? GOLD : c; ctx.fillRect(-32, -12, 6, 24); ctx.fillStyle = f ? STEEL : c; poly([[-26, -7], [30, -5], [48, 0], [30, 5], [-26, 7]]); } },
+        { name: 'AXE', draw(c, f) { ctx.fillStyle = f ? BROWN : c; ctx.fillRect(-80, -4, 130, 8); ctx.fillStyle = f ? STEEL : c; ctx.beginPath(); ctx.moveTo(30, -10); ctx.quadraticCurveTo(52, -40, 70, -38); ctx.quadraticCurveTo(58, 0, 70, 38); ctx.quadraticCurveTo(52, 40, 30, 10); ctx.closePath(); ctx.fill(); } },
+        { name: 'HORSESHOE', draw(c, f) { ctx.strokeStyle = f ? STEEL : c; ctx.lineWidth = 15; ctx.lineCap = 'butt'; ctx.beginPath(); ctx.arc(0, 6, 32, Math.PI * 0.8, Math.PI * 2.2); ctx.stroke(); ctx.fillStyle = 'rgba(0,0,0,.45)'; for (let i = 0; i < 6; i++) { const a = Math.PI * (0.92 + i * 0.24); ctx.beginPath(); ctx.arc(Math.cos(a) * 32, 6 + Math.sin(a) * 32, 2, 0, TAU); ctx.fill(); } } },
+        { name: 'SHIELD', draw(c, f) { ctx.fillStyle = f ? STEEL : c; ctx.beginPath(); ctx.moveTo(-34, -34); ctx.lineTo(34, -34); ctx.lineTo(34, 2); ctx.quadraticCurveTo(30, 28, 0, 40); ctx.quadraticCurveTo(-30, 28, -34, 2); ctx.closePath(); ctx.fill(); ctx.strokeStyle = f ? GOLD : 'rgba(0,0,0,.3)'; ctx.lineWidth = 3; ctx.stroke(); ctx.fillStyle = f ? GOLD : 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.arc(0, -2, 9, 0, TAU); ctx.fill(); } },
+        { name: 'HAMMER', draw(c, f) { ctx.fillStyle = f ? BROWN : c; ctx.fillRect(-70, -4, 110, 8); ctx.fillStyle = f ? STEEL : c; ctx.fillRect(34, -20, 30, 40); ctx.fillStyle = 'rgba(255,255,255,.18)'; ctx.fillRect(34, -20, 30, 5); } },
+        { name: 'KEY', draw(c, f) { const k = f ? GOLD : c; ctx.strokeStyle = k; ctx.lineWidth = 8; ctx.beginPath(); ctx.arc(-50, 0, 16, 0, TAU); ctx.stroke(); ctx.fillStyle = k; ctx.fillRect(-34, -4, 90, 8); ctx.fillRect(38, 4, 7, 14); ctx.fillRect(50, 4, 6, 10); } },
+        { name: 'CROWN', draw(c, f) { ctx.fillStyle = f ? GOLD : c; poly([[-44, 22], [44, 22], [44, -6], [24, 8], [10, -24], [0, 4], [-10, -24], [-24, 8], [-44, -6]]); if (f) { for (const [x, col] of [[-22, '#E11D48'], [0, '#2563EB'], [22, '#16A34A']]) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, 14, 4, 0, TAU); ctx.fill(); } } } },
+        { name: 'ANCHOR', draw(c, f) { const k = f ? STEEL : c; ctx.strokeStyle = k; ctx.fillStyle = k; ctx.lineWidth = 7; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(-50, 0); ctx.lineTo(44, 0); ctx.stroke(); ctx.beginPath(); ctx.arc(-58, 0, 8, 0, TAU); ctx.stroke(); ctx.beginPath(); ctx.moveTo(-34, -18); ctx.lineTo(-34, 18); ctx.stroke(); ctx.beginPath(); ctx.arc(30, 0, 30, -Math.PI * 0.5, Math.PI * 0.5); ctx.stroke(); poly([[30, -36], [22, -24], [38, -24]]); poly([[30, 36], [22, 24], [38, 24]]); } },
+      ];
+      function nextItem() { let i; do { i = Math.floor(Math.random() * ITEMS.length); } while (i === lastItem && ITEMS.length > 1); lastItem = i; item = ITEMS[i]; }
+      // The forge sets up somewhere new after every piece (side lanes on wide screens).
+      function moveForge() {
+        const g = lanes();
+        if (g) { const left = Math.random() < 0.5, cx = left ? g / 2 : W - g / 2; forge = { x: cx + rand(-g * 0.12, g * 0.12), y: rand(H * 0.32, H * 0.72) }; }
+        else forge = { x: rand(110, Math.max(111, W - 110)), y: rand(H * 0.55, H - 150) };
+      }
       const ember = (any) => ({ x: rand(0, W), y: any ? rand(0, H) : H + rand(0, 40), r: rand(0.8, 2.6), vy: rand(40, 120), sway: rand(10, 40), p: rand(0, TAU), hot: Math.random() < 0.15 });
-      const reset = () => { embers = Array.from({ length: Math.round(80 * density()) }, () => ember(true)); };
+      const reset = () => { embers = Array.from({ length: Math.round(80 * density()) }, () => ember(true)); moveForge(); if (!item) nextItem(); };
       // Where the anvil stands: centred in the right lane on wide screens, bottom corner on phones.
-      const spot = () => { const g = lanes(); return g ? { x: W - g / 2, y: H * 0.6 } : { x: W - 110, y: H - 170 }; };
+      const spot = () => { if (!forge) moveForge(); return forge; };
       const R0 = 84, TARGET = 24;
       const period = () => Math.max(0.6, 1.2 - combo * 0.05);
       const ringR = () => R0 * Math.max(0, 1 - ringT / period());
       const metal = (h) => h > 0.75 ? '#FFE7A3' : h > 0.5 ? '#FDBA74' : h > 0.3 ? '#F97316' : h > 0.15 ? '#9A3412' : '#6B7280';
       function say(text, c) { label = { text, c, life: 1 }; }
-      function strike() {
-        if (done) return;
+      function strike(auto) {
+        if (done || fade < 1) return;
         hammer = 1;
         const S = spot(), r = ringR(), d = Math.abs(r - TARGET);
         const hx = S.x, hy = S.y - 18;
-        let q = d <= 5 ? 'perfect' : d <= 13 ? 'good' : 'miss';
-        if (heat < 0.2) q = 'cold';
+        let q = auto ? 'perfect' : d <= 5 ? 'perfect' : d <= 13 ? 'good' : 'miss';
+        if (heat < 0.2 && !auto) q = 'cold';
         if (q === 'perfect' || q === 'good') {
           combo++; prog = Math.min(1, prog + (q === 'perfect' ? 0.2 : 0.11)); heat = Math.max(0.15, heat - 0.05); flash = q === 'perfect' ? 1 : 0.5;
           const n = q === 'perfect' ? 34 : 16;
           burst(hx, hy, n, () => { const a = rand(-Math.PI * 0.95, -Math.PI * 0.05), v = rand(220, q === 'perfect' ? 640 : 420); return { kind: 'streak', x: hx + rand(-20, 20), y: hy, vx: Math.cos(a) * v, vy: Math.sin(a) * v, g: 900, s: rand(1.2, 2.4), decay: rand(0.8, 1.4), add: true, c: pick(['#FFE7A3', '#FDBA74', '#FB923C', '#FFFFFF']) }; });
           ring(hx, hy, 'rgba(255,220,150,.95)', { s: 6, grow: q === 'perfect' ? 320 : 180, decay: 3, w: q === 'perfect' ? 3 : 2, add: true });
-          say(q === 'perfect' ? `PERFECT!${combo > 1 ? ` ×${combo}` : ''}` : 'GOOD', q === 'perfect' ? '#FFE7A3' : '#FDBA74');
+          say(auto ? '♪ ON THE BEAT' : q === 'perfect' ? `PERFECT!${combo > 1 ? ` ×${combo}` : ''}` : 'GOOD', q === 'perfect' ? '#FFE7A3' : '#FDBA74');
         } else {
           combo = 0; heat = Math.max(0, heat - 0.12);
           burst(hx, hy, 5, () => ({ kind: 'streak', x: hx, y: hy, vx: rand(-120, 120), vy: -rand(40, 140), g: 900, s: 1, decay: 2.5, add: true, c: '#9CA3AF' }));
@@ -1015,7 +1097,7 @@
           done = now; swords++;
           try { localStorage.setItem('sliver.ember.swords', String(swords)); } catch {}
           burst(hx, hy, 22, () => ({ kind: 'glow', x: hx + rand(-60, 60), y: hy + rand(-6, 6), vx: rand(-30, 30), vy: -rand(40, 110), drag: 0.8, s: rand(6, 12), decay: 0.6, c: 'rgba(230,230,235,.35)' })); // steam
-          say('⚔ SWORD FORGED!', '#F5E6A8');
+          say(`${item.name} FORGED!`, '#F5E6A8');
         }
       }
       function anvil(x, y) {
@@ -1025,6 +1107,16 @@
         ctx.lineTo(x + 30, y + 22); ctx.lineTo(x + 26, y + 46); ctx.lineTo(x + 50, y + 62); ctx.lineTo(x - 70, y + 62); ctx.lineTo(x - 46, y + 46); ctx.lineTo(x - 50, y + 22); ctx.lineTo(x - 70, y + 16); ctx.closePath();
         ctx.fill(); ctx.stroke();
         ctx.fillStyle = 'rgba(255,255,255,.08)'; ctx.fillRect(x - 68, y + 1, 112, 4);
+      }
+      // The bar fades out as the piece takes shape; finished pieces are polished steel/gold.
+      function piece(x, y, p, h, finished) {
+        const col = finished ? STEEL : metal(h);
+        if (!finished && h > 0.3) { ctx.globalCompositeOperation = 'lighter'; glowDot(x, y, 90, 'rgba(249,115,22,.35)', h); ctx.globalCompositeOperation = 'source-over'; }
+        if (!finished && p < 1) { ctx.globalAlpha = fade * (1 - p); ctx.fillStyle = col; ctx.fillRect(x - 36, y - 11, 72, 22); }
+        ctx.save(); ctx.translate(x, y); ctx.scale(0.75 + 0.25 * p, 0.75 + 0.25 * p);
+        ctx.globalAlpha = fade * (finished ? 1 : Math.min(1, 0.15 + p));
+        item.draw(col, finished);
+        ctx.restore(); ctx.globalAlpha = fade;
       }
       function blade(x, y, p, h, finished) {
         const L = 70 + p * 100, th = 22 - p * 11, tip = p * 26, x0 = x - L / 2;
@@ -1052,12 +1144,25 @@
         resize: reset,
         hover: () => true,
         tap() { strike(); return true; },
+        info: () => ({ item: item && item.name, forge, prog, forged: swords }),
         draw(dt, t) {
           now = t;
           hammer = Math.max(0, hammer - dt * 5); flash = Math.max(0, flash - dt * 3);
           if (!done) ringT = (ringT + dt) % period();
           heat = Math.min(1, heat + dt * (heat < 0.2 ? 0.25 : 0.02)); // cold metal reheats in the forge
-          if (done && now - done > 2.4) { done = 0; prog = 0; heat = 1; combo = 0; ringT = 0; }
+          // after a finished piece: the forge fades out, moves somewhere new and starts the next one
+          if (done && now - done > 2.4) { fade = Math.max(0, fade - dt * 3); if (!fade) { done = 0; prog = 0; heat = 1; combo = 0; ringT = 0; moveForge(); nextItem(); } }
+          else if (!done && fade < 1) fade = Math.min(1, fade + dt * 3);
+          // while a song plays, the smith hammers on the beat by itself (kick drum energy)
+          const A = window.SliverAudio && window.SliverAudio.spectrum && window.SliverAudio.spectrum();
+          onBeat = !!A;
+          if (A) {
+            const lo = Math.max(1, Math.floor((45 * A.size) / A.rate)), hi = Math.ceil((150 * A.size) / A.rate);
+            let e = 0; for (let i = lo; i <= hi; i++) e += A.data[i]; e = e / (hi - lo + 1) / 255;
+            avgE += (e - avgE) * Math.min(1, dt * 2.5);
+            if (e > avgE * 1.22 && e > 0.3 && e - prevE > 0.015 && now - lastBeat > 0.3) { lastBeat = now; strike(true); }
+            prevE = e;
+          } else { avgE *= 0.9; }
           ctx.fillStyle = grad(0, H, [[0, '#0A0503'], [0.65, '#1C0D06'], [1, '#3A1405']]);
           ctx.fillRect(0, 0, W, H);
           const pulse = 0.85 + 0.15 * Math.sin(t * 2.3) + flash * 0.25;
@@ -1075,8 +1180,9 @@
           ctx.globalCompositeOperation = 'source-over';
           toFront();
           const S = spot();
+          ctx.globalAlpha = fade; ctx.save(); ctx.globalAlpha = fade;
           anvil(S.x, S.y);
-          blade(S.x, S.y - 12, prog, heat, !!done);
+          piece(S.x, S.y - 30, prog, heat, !!done);
           hammerDraw(S.x, S.y);
           if (!done) { // the timing rings
             const r = ringR(), near = Math.abs(r - TARGET) <= 5;
@@ -1088,6 +1194,7 @@
           // progress bar under the anvil
           ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(S.x - 60, S.y + 74, 120, 7);
           ctx.fillStyle = '#F5D77A'; ctx.fillRect(S.x - 60, S.y + 74, 120 * prog, 7);
+          ctx.restore(); ctx.globalAlpha = 1;
           if (label) {
             label.life -= dt * 0.9;
             ctx.globalAlpha = Math.max(0, Math.min(1, label.life * 2)); ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
@@ -1098,7 +1205,7 @@
           }
           ctx.font = '700 12px ui-monospace, Menlo, monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
           ctx.fillStyle = 'rgba(20,8,4,.6)'; ctx.fillRect(14, H - 40, 220, 26);
-          ctx.fillStyle = '#FFE7A3'; ctx.fillText(`⚔ ${swords} sword${swords === 1 ? '' : 's'}${combo > 1 ? `   combo ×${combo}` : '   tap on the ring'}`, 24, H - 22);
+          ctx.fillStyle = '#FFE7A3'; ctx.fillText(`⚒ ${swords} forged${onBeat ? '   ♪ on the beat' : combo > 1 ? `   combo ×${combo}` : '   tap on the ring'}`, 24, H - 22);
           toBack();
         },
       };
@@ -1754,8 +1861,7 @@
           bits.push({ x, y: by, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 60, life: 1, c: i % 3 ? q.bal : '#FFFFFF', rot: rand(0, TAU), vr: rand(-10, 10), s: rand(4, 8) });
         }
         if (jumpers.length >= MAX_JUMPERS) { const old = jumpers.find((j) => !j.leaving); if (old) old.leaving = true; }
-        const [lo, hi] = laneOf(q.cx, 0);
-        jumpers.push({ lo, hi, x: q.cx, y: q.y, vx: rand(-90, 90), vy: rand(-260, -120), s: q.s, kind: q.kind, rot: 0, vr: rand(-3, 3), bounces: 0, squash: 0, blink: q.blink, p: q.p, leaving: false });
+        jumpers.push({ lo: 0, hi: W, /* bounce anywhere, including behind the cards */ x: q.cx, y: q.y, vx: rand(-90, 90), vy: rand(-260, -120), s: q.s, kind: q.kind, rot: 0, vr: rand(-3, 3), bounces: 0, squash: 0, blink: q.blink, p: q.p, leaving: false });
         Object.assign(q, pal(false));
       }
       function hitPal(x, y) {
