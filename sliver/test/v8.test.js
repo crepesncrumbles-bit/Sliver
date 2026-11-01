@@ -78,6 +78,33 @@ const io = { to: (to) => ({ emit: (e, d) => events.push({ to, e, d }) }) };
     check(seenBy(boss.id).userId === 'u-shy' && seenBy(boss.id).hiddenAcct, 'an admin sees it (marked hidden)');
   }
 
+  console.log('Arabic packs: only the listed artists');
+  {
+    const realFetch = global.fetch;
+    const artistsDb = {
+      'amr diab': [{ id: 1, name: 'Amr Diab', nb_fan: 5e6 }, { id: 9, name: 'Amr Diab Tribute Band', nb_fan: 9e6 }],
+      'ruby': [{ id: 7, name: 'Ruby Rose', nb_fan: 3e6 }, { id: 2, name: 'Ruby', nb_fan: 4e5 }],
+      'hakim': [{ id: 8, name: 'Hakim Ziyech FC', nb_fan: 1e6 }],
+    };
+    global.fetch = async (url) => {
+      url = String(url);
+      const j = (o) => ({ ok: true, status: 200, json: async () => o });
+      const q = decodeURIComponent((url.match(/search\/artist\?q=([^&]+)/) || [])[1] || '').toLowerCase();
+      if (url.includes('/search/artist')) return j({ data: artistsDb[q] || [] });
+      const m = url.match(/artist\/(\d+)\/top/);
+      if (m) { const id = Number(m[1]); return j({ data: Array.from({ length: 8 }, (_, i) => ({ id: id * 100 + i, title: `Song ${id}-${i}`, preview: 'p', readable: true, rank: 900000 - i * 1000, artist: { id, name: id === 1 ? 'Amr Diab' : id === 2 ? 'Ruby' : 'Other' } })) }); }
+      throw new Error('unexpected ' + url);
+    };
+    const { loadRoster } = require('../server/deezer');
+    const pk = await loadRoster(['Amr Diab', 'Ruby', 'Hakim'], 'Egyptian Pop', { perArtist: 8 });
+    const who = new Set(pk.tracks.map((t) => t.artist));
+    check(who.has('Amr Diab') && who.has('Ruby') && who.size === 2, `only real roster artists (${[...who].join(', ')})`);
+    check(!pk.artists.includes('Ruby Rose') && !pk.artists.includes('Amr Diab Tribute Band') && !pk.artists.some((a) => /Ziyech/.test(a)), 'namesakes and tribute acts are skipped');
+    const packs = require('../server/packs');
+    check(['arabic-hits', 'khaleeji', 'egyptian', 'egyptian-classics', 'arabic-classics', 'arabic-rap', 'maghreb', 'turkish'].every((id) => (packs.byId.get(id).roster || []).length >= 12), 'every Arabic & Middle East pack is a hand-picked artist list');
+    global.fetch = realFetch;
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -28,16 +28,37 @@ const PACKS = [
   { id: 'afrobeats', cat: 'Genres', name: 'Afrobeats', spotify: null, backup: 'afrobeats hits' },
   { id: 'movies', cat: 'Genres', name: 'Movie & TV', spotify: null, backup: 'movie soundtrack hits' },
 
-  // Arabic & Middle East (Deezer playlists found by search)
-  { id: 'arabic-hits', cat: 'Arabic & Middle East', name: 'Arabic Hits', spotify: null, backup: 'arabic hits' },
-  { id: 'khaleeji', cat: 'Arabic & Middle East', name: 'Khaleeji', spotify: null, backup: 'khaleeji hits' },
-  // Egyptian packs merge several public playlists (Arabic and English searches) for more songs.
-  { id: 'egyptian', cat: 'Arabic & Middle East', name: 'Egyptian Pop', spotify: null, backup: ['egyptian pop hits', 'اغاني مصرية', 'top egypt', 'amr diab tamer hosny hits'] },
-  { id: 'egyptian-classics', cat: 'Arabic & Middle East', name: 'Egyptian Classics', spotify: null, backup: ['egyptian classics', 'اغاني زمن الفن الجميل', 'abdel halim umm kulthum'] },
-  { id: 'arabic-classics', cat: 'Arabic & Middle East', name: 'Arabic Classics (Tarab)', spotify: null, backup: 'arabic classics tarab' },
-  { id: 'arabic-rap', cat: 'Arabic & Middle East', name: 'Arabic Rap & Mahraganat', spotify: null, backup: ['arabic rap hits', 'mahraganat', 'مهرجانات', 'egyptian rap'] },
-  { id: 'maghreb', cat: 'Arabic & Middle East', name: 'Raï & Maghreb', spotify: null, backup: 'rai maghreb hits' },
-  { id: 'turkish', cat: 'Arabic & Middle East', name: 'Turkish Pop', spotify: null, backup: 'turkish pop hits' },
+  // Arabic & Middle East. Public playlists found by search mixed in Western artists, so these
+  // are built from hand-picked artists instead: each artist's own top songs, nobody else's.
+  { id: 'arabic-hits', cat: 'Arabic & Middle East', name: 'Arabic Hits', roster: [
+    'Nancy Ajram', 'Elissa', 'Haifa Wehbe', 'Myriam Fares', 'Ragheb Alama', 'Wael Kfoury', 'Assala', 'Amr Diab',
+    'Tamer Hosny', 'Mohamed Hamaki', 'Sherine', 'Saad Lamjarred', 'Balqees', 'Hussain Al Jassmi', 'Kadim Al Sahir',
+    'Nawal Al Zoghbi', 'Wael Jassar', 'Carole Samaha', 'Najwa Karam', 'Ahlam', 'Rahma Riad', 'Ahmed Saad'] },
+  { id: 'khaleeji', cat: 'Arabic & Middle East', name: 'Khaleeji', roster: [
+    'Mohammed Abdu', 'Abdul Majeed Abdullah', 'Rashed Al Majed', 'Majid Al Mohandis', 'Hussain Al Jassmi', 'Ahlam',
+    'Balqees', 'Aseel Hameem', 'Nawal Al Kuwaitia', 'Rabeh Saqer', 'Abdallah Al Rowaished', 'Mohammed Al Salem',
+    'Fouad Abdulwahed', 'Eida Al Menhali', 'Rahma Riad', 'Diana Haddad'] },
+  { id: 'egyptian', cat: 'Arabic & Middle East', name: 'Egyptian Pop', roster: [
+    'Amr Diab', 'Tamer Hosny', 'Mohamed Hamaki', 'Sherine', 'Angham', 'Ruby', 'Mohamed Fouad', 'Ehab Tawfik',
+    'Hesham Abbas', 'Bahaa Sultan', 'Ahmed Saad', 'Hamza Namira', 'Mohamed Mohie', 'Amr Mostafa', 'Tamer Ashour',
+    'Ramy Sabry', 'Ahmed Gamal', 'Medhat Saleh', 'Hakim', 'Mohamed Mounir', 'Mostafa Hagag'] },
+  { id: 'egyptian-classics', cat: 'Arabic & Middle East', name: 'Egyptian Classics', roster: [
+    'Umm Kulthum', 'Abdel Halim Hafez', 'Mohamed Abdel Wahab', 'Warda', 'Shadia', 'Farid Al Atrache',
+    'Najat Al Saghira', 'Mohamed Fawzi', 'Fayza Ahmed', 'Leila Mourad', 'Sayed Darwish', 'Mohamed Roshdy',
+    'Hany Shaker', 'Mohamed Mounir', 'Ali El Haggar'] },
+  { id: 'arabic-classics', cat: 'Arabic & Middle East', name: 'Arabic Classics (Tarab)', roster: [
+    'Umm Kulthum', 'Fairuz', 'Abdel Halim Hafez', 'Warda', 'Wadih El Safi', 'Sabah', 'Farid Al Atrache',
+    'Mohamed Abdel Wahab', 'Kadim Al Sahir', 'Najat Al Saghira', 'Majida El Roumi', 'George Wassouf',
+    'Melhem Barakat', 'Asmahan', 'Sabah Fakhri'] },
+  { id: 'arabic-rap', cat: 'Arabic & Middle East', name: 'Arabic Rap & Mahraganat', roster: [
+    'Wegz', 'Marwan Pablo', 'Marwan Moussa', 'Abyusif', 'Afroto', 'Lil Baba', 'Hassan Shakosh', 'Essam Sasa',
+    'Oka Wi Ortega', 'Mohamed Ramadan', 'ElGrandeToto', 'Shabjdeed', 'Balti', 'Muslim', 'Abo El Anwar', 'Ziad Zaza'] },
+  { id: 'maghreb', cat: 'Arabic & Middle East', name: 'Raï & Maghreb', roster: [
+    'Khaled', 'Cheb Mami', 'Cheb Hasni', 'Faudel', 'Rachid Taha', 'Saad Lamjarred', 'Douzi', 'Hatim Ammor',
+    'Cheb Bilal', 'Cheba Zahouania', 'Najat Aatabou', 'Zouhair Bahaoui', 'Cheb Khalass', 'Hamid El Kasri'] },
+  { id: 'turkish', cat: 'Arabic & Middle East', name: 'Turkish Pop', roster: [
+    'Tarkan', 'Sezen Aksu', 'Hadise', 'Mabel Matiz', 'Edis', 'Simge', 'Murat Boz', 'Aleyna Tilki', 'Mustafa Sandal',
+    'Gülşen', 'Sertab Erener', 'Ezhel', 'Sıla', 'Kenan Doğulu', 'Hande Yener', 'Mert Demir'] },
 
   // (spotify: null = no Spotify playlist I'm sure of; uses the Deezer search directly)
 

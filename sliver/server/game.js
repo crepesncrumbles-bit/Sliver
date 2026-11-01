@@ -2,7 +2,7 @@
 
 const crypto = require('crypto');
 const { demoTracks, renderDemoWav } = require('./demo');
-const { loadDeezerSource, fetchPreview, searchDeezer, loadDeezerPlaylistSearch, loadDeezerArtist } = require('./deezer');
+const { loadDeezerSource, fetchPreview, searchDeezer, loadDeezerPlaylistSearch, loadDeezerArtist, loadRoster } = require('./deezer');
 const packs = require('./packs');
 const { isSpotify, loadSpotifySource, fetchUrlPreview, fetchSpotifyCover } = require('./spotify');
 const { isAnghami, loadAnghamiSource } = require('./anghami');
@@ -278,7 +278,8 @@ class Room {
 
   async loadPack(pack, mode = 'all') {
     if (this.opts.demoOnly) throw new Error('Demo-only mode: type "demo" to load the built-in songs.');
-    if (pack.artist) return loadDeezerArtist(pack.artist, null, { mode, arabic: !!pack.arabic });
+    if (pack.artist) return loadDeezerArtist(pack.artist, null, { mode, arabic: !!pack.arabic, strict: true }); // the exact artist, not a namesake
+    if (pack.roster) return loadRoster(pack.roster, pack.name);
     if (pack.spotify) {
       try {
         const res = await loadSpotifySource(`spotify:playlist:${pack.spotify}`);

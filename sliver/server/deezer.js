@@ -164,9 +164,53 @@ function rankArtists(list, q, fansOf = (a) => a.nb_fan || a.fans || 0) {
   return list.slice().sort((a, b) => (exact(b) - exact(a)) || fansOf(b) - fansOf(a));
 }
 
-async function findArtist(q, artistId) {
+// A pack made from a list of artists: each artist's top songs (and only theirs), merged and
+// weighted by popularity across the whole pack. Artists that can't be found exactly are skipped
+// rather than risk a namesake (an artist search can return someone else with a similar name).
+const squashName2 = (s) => normText(s).replace(/[^a-z0-9\u0600-\u06ff]/g, '');
+function nameClose(found, wanted) {
+  const a = squashName2(found), b = squashName2(wanted);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  // small spelling differences only ("Farid El Atrache" / "Farid Al Atrache"), never a longer name
+  return Math.abs(a.length - b.length) <= 2 && lev(a, b) <= Math.max(1, Math.floor(Math.min(a.length, b.length) * 0.2));
+}
+// The right artist for a curated name: an exact name match (most fans if several), else a
+// near-exact spelling; null rather than a guess.
+function pickArtist(list, wanted) {
+  const fans = (x) => x.nb_fan || 0;
+  const exact = list.filter((x) => squashName2(x.name) === squashName2(wanted)).sort((x, y) => fans(y) - fans(x));
+  if (exact.length) return exact[0];
+  return list.filter((x) => nameClose(x.name, wanted)).sort((x, y) => fans(y) - fans(x))[0] || null;
+}
+async function loadRoster(names, packName, { perArtist = 12 } = {}) {
+  const seen = new Set(), tracks = [], used = [];
+  for (let i = 0; i < names.length; i += 5) {
+    const batch = names.slice(i, i + 5);
+    const lists = await Promise.all(batch.map(async (n) => {
+      try {
+        const found = await getJson(`${API}/search/artist?q=${encodeURIComponent(n)}&limit=10`);
+        const a = pickArtist(found.data || [], n);
+        if (!a) return [];
+        used.push(a.name);
+        return await artistSongs(a, { top: perArtist });
+      } catch { return []; }
+    }));
+    for (const list of lists) for (const t of list) {
+      const key = normText(t.title) + '|' + normText(t.artist);
+      if (seen.has(key) || tracks.length >= MAX_TRACKS) continue;
+      seen.add(key); tracks.push(t);
+    }
+    if (i + 5 < names.length) await wait(800); // stay under Deezer's rate limit
+  }
+  if (tracks.length < 10) throw new Error(`Couldn't load "${packName}" right now. Try again in a minute.`);
+  return { name: packName, tracks: addWeights(tracks), artists: used };
+}
+
+async function findArtist(q, artistId, strict = false) {
   if (artistId && /^\d+$/.test(String(artistId))) return getJson(`${API}/artist/${artistId}`);
   if (!q) throw new Error('Type an artist name');
+  if (strict) return pickArtist((await getJson(`${API}/search/artist?q=${encodeURIComponent(q)}&limit=15`)).data || [], q);
   const found = await getJson(`${API}/search/artist?q=${encodeURIComponent(q)}&limit=15`);
   return rankArtists(found.data || [], q)[0] || null;
 }
@@ -272,9 +316,9 @@ async function addItunesSongs(list, artistName, opts) {
 // Deezer's top 100 + albums/EPs/singles, plus iTunes for artists Deezer covers thinly
 // (Arabic artists, or anyone with under 150 songs on Deezer).
 // artistId (from the suggestions list) picks the exact artist; otherwise search by name.
-async function loadDeezerArtist(artistName, artistId, { mode = 'all', arabic = false } = {}) {
+async function loadDeezerArtist(artistName, artistId, { mode = 'all', arabic = false, strict = false } = {}) {
   const q = String(artistName || '').trim();
-  const artist = await findArtist(q, artistId);
+  const artist = await findArtist(q, artistId, strict);
   if (!artist || !artist.id) throw new Error(`No artist called "${q}" found. For a playlist, paste its link.`);
   const top = mode === 'top' ? TOP_N_SONGS : 0;
   const key = `${artist.id}:${top ? 'top' : 'all'}`;
@@ -313,4 +357,4 @@ async function searchArtists(query) {
   return list;
 }
 
-module.exports = { rankArtists, searchArtists, loadDeezerSource, fetchPreview, parseDeezerInput, searchDeezer, loadDeezerPlaylistSearch, loadDeezerArtist, addItunesSongs, sameSong, squashTitle, MAX_TRACKS, TOP_N_SONGS };
+module.exports = { loadRoster, nameClose, pickArtist, rankArtists, searchArtists, loadDeezerSource, fetchPreview, parseDeezerInput, searchDeezer, loadDeezerPlaylistSearch, loadDeezerArtist, addItunesSongs, sameSong, squashTitle, MAX_TRACKS, TOP_N_SONGS };

@@ -816,3 +816,13 @@ body.in-game #decor-front { display: none; }
 #app > .brand { position: relative; z-index: 0; }
 #app > .screen, #app > .topbar { position: relative; z-index: 2; }
 :root[data-fx]:not([data-fx=""]) .brand { pointer-events: none; }
+
+/* Quick clip lengths */
+.jump-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin: 12px 0 2px; }
+.jump { font: inherit; border: 2px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 10px; padding: 6px 2px; cursor: pointer; display: flex; flex-direction: column; align-items: center; line-height: 1.15; }
+.jump b { font-size: 14px; }
+.jump small { font-size: 10.5px; color: var(--ink-2); font-weight: 600; }
+.jump:hover { border-color: var(--accent); }
+.jump.on { border-color: var(--stroke); box-shadow: 0 2px 0 var(--stroke); }
+.jump.heard { background: var(--paper-2); }
+@media (max-width: 420px) { .jump-row { gap: 4px; } .jump b { font-size: 13px; } .jump small { font-size: 9.5px; } }

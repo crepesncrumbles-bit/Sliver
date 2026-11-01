@@ -523,8 +523,16 @@
             c.happy = 1; hearts();
         }
       }
+      // Visitors: now and then a creature swims in from one side and out the other.
+      let visitT = 1.5;
+      function visitor() {
+        if (pals.filter((c) => c.visitor).length >= 5) return;
+        const kind = pick(['fish', 'fish', 'clown', 'turtle', 'ray', 'jelly', 'whale', 'puffer', 'seahorse']);
+        const dir = Math.random() < 0.5 ? 1 : -1;
+        pals.push({ kind, visitor: true, x: dir > 0 ? -70 : W + 70, y: rand(H * 0.15, H - 90), dir, face: dir, lo: -200, hi: W + 200, s: rand(0.8, 1.2), v: kind === 'jelly' || kind === 'seahorse' ? rand(25, 40) : rand(40, 75), vy: rand(-8, 8), p: rand(0, TAU), col: pick(['#5EEAD4', '#F0ABFC', '#FDE68A', '#93C5FD', '#FCA5A5']), spin: 0, happy: 0, puff: 0, grow: 1, zap: 0, ink: 0, shell: 0, dart: 0, spout: 0, boost: 1 });
+      }
       function addPal(x, y) {
-        if (pals.length >= 10) pals.shift();
+        if (pals.filter((c) => !c.visitor).length >= 10) pals.splice(pals.findIndex((c) => !c.visitor), 1);
         const kind = KINDS[nextKind++ % KINDS.length];
         const dir = Math.random() < 0.5 ? -1 : 1;
         const lo = 46, hi = W - 46; // swims the whole width, passing behind the cards
@@ -567,6 +575,8 @@
           for (let x = 0; x <= W + 40; x += 40) ctx.lineTo(x, H - 22 - Math.sin(x * 0.01) * 8);
           ctx.lineTo(W, H); ctx.fill();
           toFront();
+          visitT -= dt; if (visitT <= 0) { visitor(); visitT = rand(2.2, 4.5); }
+          pals = pals.filter((c) => !c.visitor || (c.x > -120 && c.x < W + 120));
           for (const c of pals) {
             c.grow = Math.min(1, c.grow + dt * 3);
             // swim back and forth, turning around smoothly at the edges
@@ -1042,7 +1052,7 @@
     // perfect strikes shape the blade fastest. Finish it and it's quenched into a sword.
     ember() {
       let embers = [], swords = 0, prog = 0, heat = 1, combo = 0, ringT = 0, hammer = 0, done = 0, flash = 0, label = null, now = 0;
-      let forge = null, fade = 1, item = null, lastItem = -1, avgE = 0, prevE = 0, lastBeat = 0, onBeat = false;
+      let forge = null, fade = 1, item = null, lastItem = -1;
       try { swords = Number(localStorage.getItem('sliver.ember.swords')) || 0; } catch {}
       // What gets made: a different piece each time (drawn lying on the anvil, centred on 0,0).
       const BROWN = '#5B3A1E', GOLD = '#D4AF37', STEEL = '#D9DEE7';
@@ -1153,16 +1163,6 @@
           // after a finished piece: the forge fades out, moves somewhere new and starts the next one
           if (done && now - done > 2.4) { fade = Math.max(0, fade - dt * 3); if (!fade) { done = 0; prog = 0; heat = 1; combo = 0; ringT = 0; moveForge(); nextItem(); } }
           else if (!done && fade < 1) fade = Math.min(1, fade + dt * 3);
-          // while a song plays, the smith hammers on the beat by itself (kick drum energy)
-          const A = window.SliverAudio && window.SliverAudio.spectrum && window.SliverAudio.spectrum();
-          onBeat = !!A;
-          if (A) {
-            const lo = Math.max(1, Math.floor((45 * A.size) / A.rate)), hi = Math.ceil((150 * A.size) / A.rate);
-            let e = 0; for (let i = lo; i <= hi; i++) e += A.data[i]; e = e / (hi - lo + 1) / 255;
-            avgE += (e - avgE) * Math.min(1, dt * 2.5);
-            if (e > avgE * 1.22 && e > 0.3 && e - prevE > 0.015 && now - lastBeat > 0.3) { lastBeat = now; strike(true); }
-            prevE = e;
-          } else { avgE *= 0.9; }
           ctx.fillStyle = grad(0, H, [[0, '#0A0503'], [0.65, '#1C0D06'], [1, '#3A1405']]);
           ctx.fillRect(0, 0, W, H);
           const pulse = 0.85 + 0.15 * Math.sin(t * 2.3) + flash * 0.25;
@@ -1205,7 +1205,7 @@
           }
           ctx.font = '700 12px ui-monospace, Menlo, monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
           ctx.fillStyle = 'rgba(20,8,4,.6)'; ctx.fillRect(14, H - 40, 220, 26);
-          ctx.fillStyle = '#FFE7A3'; ctx.fillText(`⚒ ${swords} forged${onBeat ? '   ♪ on the beat' : combo > 1 ? `   combo ×${combo}` : '   tap on the ring'}`, 24, H - 22);
+          ctx.fillStyle = '#FFE7A3'; ctx.fillText(`⚒ ${swords} forged${combo > 1 ? `   combo ×${combo}` : '   tap on the ring'}`, 24, H - 22);
           toBack();
         },
       };
@@ -1451,7 +1451,19 @@
           keys.push({ m, black, x, w: black ? whiteW * 0.62 : whiteW, glow: 0, held: false, off: 0, last: -9, col: hue(m), f: 440 * Math.pow(2, (m - 69) / 12) });
         }
         dust = Array.from({ length: Math.round(40 * density()) }, () => ({ x: rand(0, W), y: rand(0, kbY), r: rand(0.6, 1.8), v: rand(4, 14), p: rand(0, TAU) }));
+        // The keyboard itself is drawn once (white keys, then black keys on a see-through layer)
+        // and reused every frame; only lit keys are drawn on top. Much lighter than redrawing.
+        const mk = () => { const c = document.createElement('canvas'); c.width = Math.round(W * DPR); c.height = Math.round(kbH * DPR); const g = c.getContext('2d'); g.scale(DPR, DPR); return [c, g]; };
+        let g; [whiteLayer, g] = mk();
+        const wg = g.createLinearGradient(0, 0, 0, kbH); wg.addColorStop(0, '#FFFDF6'); wg.addColorStop(1, '#E9E2D0');
+        for (const k of keys) if (!k.black) { g.fillStyle = wg; g.fillRect(k.x + 0.5, 0, k.w - 1, kbH); g.fillStyle = 'rgba(0,0,0,.18)'; g.fillRect(k.x + k.w - 1, 0, 1, kbH); }
+        [blackLayer, g] = mk();
+        const bg2 = g.createLinearGradient(0, 0, 0, kbH * 0.62); bg2.addColorStop(0, '#2A2A30'); bg2.addColorStop(1, '#0B0B0E');
+        for (const k of keys) if (k.black) { g.fillStyle = bg2; g.fillRect(k.x, 0, k.w, kbH * 0.62); }
+        const sh = g.createLinearGradient(0, 0, 0, 14); sh.addColorStop(0, 'rgba(0,0,0,.45)'); sh.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = sh; g.fillRect(0, 0, W, 14);
       };
+      let whiteLayer = null, blackLayer = null;
       const hue = (m) => { const k = (m - LO) / (HI - LO); return `hsl(${Math.round(38 + k * 190)}, 85%, ${68 - k * 6}%)`; };
       let now = 0;
       const MAX_BARS = 70;
@@ -1459,13 +1471,15 @@
         k.glow = Math.max(k.glow, amt);
         k.off = 0;
         // A new note only if this key wasn't just played, and never more than MAX_BARS on screen.
+        if (!k.held) { stats.oct[Math.floor((k.m - LO) / 12)]++; stats.gap = Math.max(stats.gap, now - stats.lastAt); stats.lastAt = now; }
         if (!k.held && now - k.last > 0.18 && bars.length < MAX_BARS && (k.live || 0) < 3) { bars.push({ k, y: kbY, h: 0, growing: true, a: Math.min(1, 0.5 + amt) }); k.last = now; k.live = (k.live || 0) + 1; }
         k.held = true;
       }
       // A key lets go only after it's been quiet for a moment (the analysis flickers frame to frame).
       function release(k, dt) { k.off += dt; if (k.off > 0.12 && now > (k.tapUntil || 0)) k.held = false; }
       // Tapping a key: it lights up and music notes and sparkles burst out of it.
-      let notes = [];
+      let notes = [], sus = null;
+      const stats = { oct: [0, 0, 0, 0], gap: 0, lastAt: 0 };
       function keyAt(x, y) {
         if (y < kbY - 6) return null;
         const blk = keys.find((k) => k.black && x >= k.x && x <= k.x + k.w && y <= kbY + kbH * 0.62);
@@ -1496,7 +1510,25 @@
         ctx.globalAlpha = 1;
         notes = notes.filter((n) => n.life > 0);
       }
-      let lastListen = 0, heard = false;
+      // Following the music: each tick works out which of the 12 notes (C, C#, D…) are loudest
+      // right now, and spots new hits (a sudden rise across the spectrum). On every hit it plays
+      // those notes, each in a different octave across the keyboard, so the whole keyboard is
+      // used. If a loud passage goes on with no clear hit, it keeps playing the current chord.
+      let lastListen = 0, heard = false, prev = null, fluxAvg = 0, lastHit = -9, octTurn = 0;
+      const chroma = new Float32Array(12);
+      const keyFor = (pc, oct) => keys.find((k) => k.m === 48 + oct * 12 + pc);
+      function hit(strength) {
+        let top = 0; for (let i = 0; i < 12; i++) top = Math.max(top, chroma[i]);
+        if (top <= 0) return;
+        const order = [...chroma.keys()].sort((x, y) => chroma[y] - chroma[x]).filter((pc) => chroma[pc] >= top * 0.62).slice(0, 3);
+        order.forEach((pc, i) => {
+          const oct = (octTurn + i * 2 + Math.floor(Math.random() * 2)) % 4; // spread across C3..C6 and rotate each hit
+          const k = keyFor(pc, oct);
+          if (k) { k.held = false; k.last = -9; press(k, Math.min(1, 0.45 + strength)); k.tapUntil = now + 0.22; }
+        });
+        octTurn = (octTurn + 1) % 4;
+        lastHit = now;
+      }
       function listen(dt) {
         if (now - lastListen < 1 / 30) return heard; // analyse at most 30 times a second
         const step = now - lastListen;
@@ -1504,25 +1536,27 @@
         const A = window.SliverAudio && window.SliverAudio.spectrum && window.SliverAudio.spectrum();
         heard = !!A;
         if (!A) return false;
-        dt = step;
         const { data, rate, size } = A;
-        // Music has much more energy in the bass, so higher keys get a boost; each key is then
-        // compared with the keys around it (not the whole keyboard), so treble notes register too.
-        const raw = keys.map((k) => {
-          const b = Math.round((k.f * size) / rate);
-          return Math.max(data[b] || 0, data[b - 1] || 0, data[b + 1] || 0) / 255;
-        });
-        if (Math.max(...raw) < 0.12) { keys.forEach((k) => release(k, dt)); return true; }
-        const vals = raw.map((v, i) => Math.min(1, v * (1 + (i / (keys.length - 1)) * 0.9)));
-        keys.forEach((k, i) => {
-          const v = vals[i];
-          let sum = 0, n = 0;
-          for (let j = Math.max(0, i - 6); j <= Math.min(keys.length - 1, i + 6); j++) if (j !== i) { sum += vals[j]; n++; }
-          const local = sum / n;
-          const peak = v >= (vals[i - 1] || 0) && v >= (vals[i + 1] || 0);
-          const on = peak && v > 0.28 && v > local * 1.18 + 0.04;
-          if (on) press(k, Math.min(1, (v - local) * 2.4 + 0.35)); else release(k, dt);
-        });
+        const binHz = rate / size, lo = Math.floor(100 / binHz), hi = Math.min(data.length - 1, Math.ceil(4000 / binHz));
+        if (!prev || prev.length !== data.length) prev = new Float32Array(data.length);
+        chroma.fill(0);
+        let flux = 0, loud = 0;
+        for (let i = lo; i <= hi; i++) {
+          const v = data[i] / 255;
+          const d = v - prev[i]; if (d > 0) flux += d;
+          prev[i] = v; loud = Math.max(loud, v);
+          if (i * binHz < 2100 && v > 0.2) {
+            const pc = ((Math.round(12 * Math.log2((i * binHz) / 440)) + 69) % 12 + 12) % 12;
+            chroma[pc] += v * v;
+          }
+        }
+        flux /= (hi - lo + 1);
+        if (loud < 0.15) { keys.forEach((k) => release(k, step)); fluxAvg *= 0.9; return true; } // quiet moment
+        const isHit = flux > fluxAvg * 1.45 + 0.004 && now - lastHit > 0.12;
+        fluxAvg += (flux - fluxAvg) * Math.min(1, step * 3);
+        if (isHit) hit(Math.min(0.5, flux * 20));
+        else if (now - lastHit > 0.42) hit(0.2); // a held, loud passage: keep playing the chord
+        keys.forEach((k) => release(k, step));
         return true;
       }
       function idle(dt) {
@@ -1540,7 +1574,14 @@
       return {
         resize: reset,
         hover(x, y) { return !!keyAt(x, y); },
+        stats: () => stats,
+        resetStats: () => { stats.oct = [0, 0, 0, 0]; stats.gap = 0; stats.lastAt = now; },
         tap(x, y) { const k = keyAt(x, y); if (!k) return false; burst(k); return true; },
+        // Hold a key: it stays lit, its column keeps growing and notes keep pouring out (sustain).
+        // Slide along the keys while holding to glide from note to note.
+        press(x, y) { const k = keyAt(x, y); if (!k) return; burst(k); sus = { k, acc: 0 }; k.sustain = true; },
+        pressMove(x, y) { if (!sus) return; const k = keyAt(x, Math.max(y, kbY + 4)); if (k && k !== sus.k) { sus.k.sustain = false; sus.k.tapUntil = 0; burst(k); sus.k = k; k.sustain = true; } },
+        pressEnd() { if (sus) { sus.k.sustain = false; sus.k.tapUntil = 0; } sus = null; },
         draw(dt, t) {
           ctx.fillStyle = grad(0, H, [[0, '#07070C'], [0.6, '#0F0F1A'], [1, '#17131F']]);
           ctx.fillRect(0, 0, W, H);
@@ -1548,15 +1589,22 @@
           now = t;
           ctx.fillStyle = 'rgba(255,240,210,.35)';
           for (const d of dust) { d.y -= d.v * dt; if (d.y < 0) { d.y = kbY; d.x = rand(0, W); } ctx.fillRect(d.x + Math.sin(t * 0.4 + d.p) * 10, d.y, d.r, d.r); }
-          if (!listen(dt)) idle(dt);
+          if (sus) { // sustain: keep the held key lit and pouring notes
+            const k = sus.k; k.held = true; k.tapUntil = now + 0.1; k.glow = 1;
+            sus.acc += dt * 14;
+            while (sus.acc >= 1) { sus.acc--; notes.push({ x: k.x + k.w / 2 + rand(-4, 4), y: kbY - 6, vx: rand(-50, 50), vy: rand(-320, -200), rot: rand(-0.4, 0.4), vr: rand(-2, 2), life: 1, s: rand(14, 24), g: pick(['♪', '♫', '♩', '♬']), c: k.col, spark: false }); if (Math.random() < 0.6) notes.push({ x: k.x + k.w / 2, y: kbY - 4, vx: rand(-90, 90), vy: rand(-240, -80), life: 1, s: rand(2, 3.5), c: '#FFF3D6', spark: true }); }
+            if (notes.length > 260) notes.splice(0, notes.length - 260);
+          }
+          const music = listen(dt);
+          if (!music) idle(dt);
           // rising notes
           toFront();
           ctx.globalCompositeOperation = 'lighter';
           const speed = 70;
           bars = bars.filter((b) => { const keep = b.y - b.h > -20 && b.a > 0.03; if (!keep) b.k.live--; return keep; });
           for (const b of bars) {
-            if (b.growing && b.k.held && b.h < kbH * 1.6) b.h += speed * dt; else { b.growing = false; b.y -= speed * dt; }
-            b.a -= dt * 0.16;
+            if (b.growing && b.k.held && b.h < (b.k.sustain ? H * 0.8 : kbH * 1.6)) b.h += speed * (b.k.sustain ? 1.6 : 1) * dt; else { b.growing = false; b.y -= speed * dt; }
+            b.a -= dt * (b.k.sustain && b.growing ? 0 : 0.16);
             const x = b.k.x + b.k.w * 0.12, w = b.k.w * 0.76, top = b.y - b.h;
             const hgt = Math.max(4, b.h);
             ctx.fillStyle = b.k.col;
@@ -1569,24 +1617,20 @@
           // felt strip + keyboard
           toBack();
           ctx.fillStyle = '#5A0F1C'; ctx.fillRect(0, kbY - 5, W, 5);
+          ctx.drawImage(whiteLayer, 0, kbY, W, kbH);
           for (const k of keys) {
             k.glow = Math.max(0, k.glow - dt * (k.held ? 0.4 : 2.6));
-            if (k.black) continue;
-            const press = k.glow * 3;
-            ctx.fillStyle = grad(kbY, H, [[0, '#FFFDF6'], [1, '#E9E2D0']]);
-            ctx.fillRect(k.x + 0.5, kbY + press, k.w - 1, kbH - press);
-            if (k.glow > 0.02) { ctx.globalAlpha = k.glow * 0.85; ctx.fillStyle = k.col; ctx.fillRect(k.x + 0.5, kbY + press, k.w - 1, kbH - press); ctx.globalAlpha = 1; if (k.glow > 0.15) glowDot(k.x + k.w / 2, kbY, k.w * 1.6, k.col, k.glow * 0.7); }
-            ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.fillRect(k.x + k.w - 1, kbY, 1, kbH);
+            if (k.black || k.glow <= 0.02) continue;
+            ctx.globalAlpha = k.glow * 0.85; ctx.fillStyle = k.col; ctx.fillRect(k.x + 0.5, kbY, k.w - 1, kbH); ctx.globalAlpha = 1;
           }
+          ctx.drawImage(blackLayer, 0, kbY, W, kbH);
           for (const k of keys) {
-            if (!k.black) continue;
-            const bh = kbH * 0.62, press = k.glow * 2;
-            ctx.fillStyle = grad(kbY, kbY + bh, [[0, '#2A2A30'], [1, '#0B0B0E']]);
-            ctx.fillRect(k.x, kbY + press, k.w, bh);
-            if (k.glow > 0.02) { ctx.globalAlpha = k.glow; ctx.fillStyle = k.col; ctx.fillRect(k.x, kbY + press, k.w, bh); ctx.globalAlpha = 1; if (k.glow > 0.15) glowDot(k.x + k.w / 2, kbY, k.w * 2.2, k.col, k.glow * 0.7); }
+            if (!k.black || k.glow <= 0.02) continue;
+            ctx.globalAlpha = k.glow; ctx.fillStyle = k.col; ctx.fillRect(k.x, kbY, k.w, kbH * 0.62); ctx.globalAlpha = 1;
           }
-          ctx.fillStyle = grad(kbY, kbY + 14, [[0, 'rgba(0,0,0,.45)'], [1, 'rgba(0,0,0,0)']]);
-          ctx.fillRect(0, kbY, W, 14);
+          ctx.globalCompositeOperation = 'lighter';
+          for (const k of keys) if (k.glow > 0.15) glowDot(k.x + k.w / 2, kbY, k.w * (k.black ? 2.2 : 1.6), k.col, k.glow * 0.7);
+          ctx.globalCompositeOperation = 'source-over';
           toFront(); drawNotes(dt);
         },
       };

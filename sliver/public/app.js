@@ -1286,6 +1286,7 @@
     $('#pts-value').textContent = fmt(pointsFor(effective));
     const mult = (state && state.round && state.round.mult) || 1;
     $('#pts-value').textContent = fmt(Math.round(pointsFor(effective) * mult));
+    if (document.getElementById('jump-row')) renderJumps();
     $('#heard-note').textContent = myHeard > 0
       ? `You've heard ${fmtLen(myHeard)}, so you can score up to ${fmt(Math.round(pointsFor(myHeard) * mult))}.`
       : 'Drag to hear more. The longer you listen, the fewer points.';
@@ -1301,6 +1302,22 @@
     playClip(selectedLen);
   }
   $('#btn-plus').onclick = () => plus(1);
+  // Quick lengths (like Songless): tap one to jump the slider there and play that much.
+  function renderJumps() {
+    const JUMPS = [0.1, 0.5, 1, 3, 10, 15];
+    const mult = (state && state.round && state.round.mult) || 1;
+    $('#jump-row').innerHTML = JUMPS.filter((s) => s <= maxLen).map((s) => {
+      const pts = fmt(Math.round(pointsFor(Math.max(s, myHeard)) * mult));
+      const on = Math.abs(currentLen() - s) < 0.05;
+      return `<button type="button" class="jump${on ? ' on' : ''}${s <= myHeard ? ' heard' : ''}" data-jump="${s}" title="Play ${s} seconds"><b>${s}s</b><small>${pts}</small></button>`;
+    }).join('');
+  }
+  $('#jump-row').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-jump]');
+    if (!b) return;
+    const s = Number(b.dataset.jump);
+    setLen(s); updateReadout(); playClip(s);
+  });
   $('#btn-plus-tenth').onclick = () => plus(0.1);
 
   function renderRound() {

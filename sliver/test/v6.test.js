@@ -150,7 +150,7 @@ const dz = (id, title, artist, rank, extra = {}) => ({ id, title, title_short: t
       check(packs.PACKS.filter((p) => p.cat === 'Metal artists').length >= 15, 'Metal artists');
       const eg = packs.PACKS.filter((p) => p.cat === 'Egyptian artists');
       check(eg.length >= 30 && eg.every((p) => p.arabic) && eg.some((p) => p.id === 'artist-amr-diab'), 'Egyptian artists (saved packs keep their ids), using iTunes too');
-      check(packs.byId.get('egyptian').backup.length >= 3 && packs.byId.get('egyptian-classics'), 'Egyptian packs merge several playlists; new Egyptian Classics pack');
+      check(packs.byId.get('egyptian').roster.length >= 12 && packs.byId.get('egyptian-classics').roster.length >= 12, 'Egyptian packs are hand-picked artist lists');
       check(packs.publicPacks().find((p) => p.id === 'artist-drake').artist === true, 'clients can tell artist packs apart (for All songs / Top 20)');
       routes = [
         [/search\/playlist\?q=egyptian%20pop/, json({ data: [{ id: 11, nb_tracks: 40 }] })],
