@@ -209,7 +209,7 @@ function loadThemes(store = {}) {
     try {
       check(/Admin accounts: 1/.test(log) && /Theme purchases: on \(Buy Me a Coffee, https:\/\/buymeacoffee.com\/sliver\)/.test(log), 'startup log: admins and purchases on');
       const info = await get('/api/info');
-      check(info.bmc === 'https://buymeacoffee.com/sliver' && info.shop === 'https://buymeacoffee.com/sliver/extras' && info.payments, 'the page gets the coffee and shop links');
+      check(info.bmc === 'https://buymeacoffee.com/sliver' && info.shop === 'https://buymeacoffee.com/sliver/shop' && info.payments, 'the page gets the coffee and shop links');
       const g = await post('/api/avatar/guest', { image: PNG });
       const img = await fetch(URL + g.avatar);
       check(g.ok && /^\/api\/avatar\/g\//.test(g.avatar) && img.ok && img.headers.get('content-type') === 'image/png', 'guests can upload a photo too');

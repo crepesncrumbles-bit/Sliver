@@ -48,8 +48,9 @@ const bmc = require('./bmc');
 const { cleanAvatar } = require('./game');
 // Buy Me a Coffee: BMC_URL = your page (button), BMC_WEBHOOK_SECRET = webhook signing secret,
 // BMC_SHOP_URL = where to buy themes (defaults to your page's extras).
-const BMC_URL = String(process.env.BMC_URL || '').trim().replace(/\/+$/, '');
-const BMC_SHOP_URL = String(process.env.BMC_SHOP_URL || (BMC_URL ? `${BMC_URL}/extras` : '')).trim();
+// Defaults are Sliver's own page; set BMC_URL / BMC_SHOP_URL to use a different one (or 'off').
+const BMC_URL = String(process.env.BMC_URL || 'https://buymeacoffee.com/asher05').trim().replace(/\/+$/, '').replace(/^off$/i, '');
+const BMC_SHOP_URL = String(process.env.BMC_SHOP_URL || (BMC_URL ? `${BMC_URL}/shop` : '')).trim().replace(/^off$/i, '');
 const BMC_SECRET = String(process.env.BMC_WEBHOOK_SECRET || '').trim();
 const stats = new Stats(store);
 const STARTED = Date.now();

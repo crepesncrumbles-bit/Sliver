@@ -164,8 +164,8 @@ Thunderstorm, Black Gold) have animated backgrounds; anyone can preview them, ow
 $2.50 each, and any coffee of $2 or more unlocks a random one. Purchases unlock automatically for the Sliver
 account with the buyer's email (or an email written in their message; if there's no account yet, it unlocks
 when that email signs up). Refunds take the theme back. On Render → Environment:
-- `BMC_URL`: your Buy Me a Coffee page, e.g. `https://buymeacoffee.com/yourname` (shows the coffee button).
-- `BMC_SHOP_URL` (optional): where "Buy" goes. Defaults to `BMC_URL/extras`. In Buy Me a Coffee, make one
+- `BMC_URL`: your Buy Me a Coffee page (defaults to https://buymeacoffee.com/asher05; `off` hides the button).
+- `BMC_SHOP_URL` (optional): where "Buy" goes. Defaults to `BMC_URL/shop`. In Buy Me a Coffee, make one
   **Extra** per theme at $2.50, named exactly like the theme (e.g. "Sakura Drift").
 - `BMC_WEBHOOK_SECRET`: in Buy Me a Coffee → **Integrations → New webhook**, URL
   `https://your-site/api/bmc/webhook`, events `donation.created`, `donation.refunded`,
