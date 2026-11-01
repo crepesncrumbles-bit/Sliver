@@ -9,6 +9,9 @@ const { isAnghami, loadAnghamiSource } = require('./anghami');
 const { searchItunes } = require('./itunes');
 const popularity = require('./popularity');
 const ICONS = require('../public/icons.js');
+// Uploaded photos live at /api/avatar/u/<account id> or /api/avatar/g/<guest photo id>.
+const AVATAR_RE = /^\/api\/avatar\/(u|g)\/[\w-]{6,40}(\?v=\w{1,20})?$/;
+const cleanAvatar = (a) => (AVATAR_RE.test(String(a || '')) ? String(a) : '');
 
 const MIN_LEN = 0.1;
 const MAX_LEN = 30;   // points curve runs to 30 s, like Songless (previews are 30 s long)
@@ -94,12 +97,13 @@ class Room {
   }
 
   // ---------- players ----------
-  addPlayer(name, socket, icon) {
+  addPlayer(name, socket, icon, avatar) {
     const p = {
       id: id(8),
       token: id(16),
       name: String(name || 'Player').trim().slice(0, 20) || 'Player',
       icon: ICONS.includes(icon) ? icon : '',
+      avatar: cleanAvatar(avatar),
       score: 0,
       socketId: socket.id,
       connected: true,
@@ -128,6 +132,14 @@ class Room {
     if (!p) return;
     p.userId = user ? user.id : null;
     p.hidden = !!(user && user.hidden); // hidden accounts: others don't see which account this is
+    if (user && user.avatar) p.avatar = cleanAvatar(user.avatar);
+  }
+
+  setAvatar(playerId, avatar) {
+    const p = this.players.get(playerId);
+    if (!p) return;
+    p.avatar = cleanAvatar(avatar);
+    this.broadcast();
   }
 
   setIcon(playerId, icon) {
@@ -617,7 +629,7 @@ class Room {
       const p = this.players.get(playerId);
       if (p) {
         p.score += r.points;
-        this.io.to(this.code).emit('gotIt', { playerId, name: p.name, icon: p.icon || '', points: r.points, heard: r.maxHeard, first: !!r.bonus });
+        this.io.to(this.code).emit('gotIt', { playerId, name: p.name, icon: p.icon || '', avatar: p.avatar || '', points: r.points, heard: r.maxHeard, first: !!r.bonus });
       }
     } else if (max && r.guesses.length >= max) {
       r.status = 'out';
@@ -667,7 +679,7 @@ class Room {
       listenLen: game.listenLen,
       results: [...this.players.values()].map((p) => {
         const r = this.resultFor(p.id);
-        return { id: p.id, name: p.name, icon: p.icon || '', status: r.status, points: r.points, bonus: r.bonus || 0, guesses: r.guesses.length, heard: r.maxHeard };
+        return { id: p.id, name: p.name, icon: p.icon || '', avatar: p.avatar || '', status: r.status, points: r.points, bonus: r.bonus || 0, guesses: r.guesses.length, heard: r.maxHeard };
       }).sort((a, b) => b.points - a.points),
       autoNextAt: Date.now() + waitMs,
       last: this.roundNum >= game.rounds,
@@ -698,6 +710,25 @@ class Room {
       const entries = this.rankedEntries(game);
       if (entries.length) Promise.resolve(this.opts.onRanked(this, entries)).catch((e) => console.error('ranked submit failed:', e));
     }
+    if (game && !game.ranked && this.opts.onCasual) {
+      const entries = this.casualEntries(game);
+      if (entries.length) Promise.resolve(this.opts.onCasual(this, entries)).catch((e) => console.error('casual stats failed:', e));
+    }
+  }
+
+  // Casual games count toward logged-in players' casual stats (only games played to the end).
+  casualEntries(game) {
+    if (!game.history.length) return [];
+    const inGame = [...this.players.values()].filter((p) => game.history.some((h) => h.results.has(p.id)));
+    const top = Math.max(0, ...inGame.map((p) => p.score));
+    return inGame.filter((p) => p.userId).map((p) => {
+      let correct = 0, firstTry = 0;
+      for (const h of game.history) {
+        const r = h.results.get(p.id);
+        if (r && r.status === 'correct') { correct++; if (r.guesses === 1) firstTry++; }
+      }
+      return { userId: p.userId, playerId: p.id, songs: game.history.length, correct, firstTry, points: p.score, won: top > 0 && p.score === top, players: inGame.length };
+    });
   }
 
   // One entry per logged-in player who started the ranked game and is still here.
@@ -779,6 +810,7 @@ class Room {
           score: p.score,
           connected: p.connected,
           icon: p.icon || '',
+          avatar: p.avatar || '',
           loggedIn: !!p.userId,
           userId: p.hidden ? null : p.userId || null,
           roundStatus: this.round && this.phase === 'round' ? this.resultFor(p.id).status : null,
@@ -887,4 +919,4 @@ function titleMatches(guess, track) {
   return false;
 }
 
-module.exports = { RoomManager, pointsForLength, titleMatches, multFor, MODES, MIN_LEN, MAX_LEN, GUESS_CLIP, LISTEN_AFTER, RANKED_ROUND_TIME, FIRST_BONUS, RANKED_ROUNDS };
+module.exports = { cleanAvatar, RoomManager, pointsForLength, titleMatches, multFor, MODES, MIN_LEN, MAX_LEN, GUESS_CLIP, LISTEN_AFTER, RANKED_ROUND_TIME, FIRST_BONUS, RANKED_ROUNDS };

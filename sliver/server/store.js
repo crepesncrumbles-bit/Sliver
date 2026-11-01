@@ -154,6 +154,16 @@ class MiniRedis {
         const slice = list.slice(start, stop + 1);
         return String(a[3] || '').toUpperCase() === 'WITHSCORES' ? slice.flatMap(([m, s]) => [m, String(s)]) : slice.map(([m]) => m);
       }
+      case 'RPUSH': { const e = this.entry(a[0], 'list', true); for (const v of a.slice(1)) e.v.push(String(v)); write(); return e.v.length; }
+      case 'ZREM': {
+        const e = this.entry(a[0], 'zset');
+        if (!e) return 0;
+        let n = 0;
+        for (const m of a.slice(1)) if (e.v.delete(String(m))) n++;
+        if (!e.v.size) this.data.delete(a[0]);
+        write();
+        return n;
+      }
       case 'LPUSH': { const e = this.entry(a[0], 'list', true); for (const v of a.slice(1)) e.v.unshift(String(v)); write(); return e.v.length; }
       case 'LTRIM': {
         const e = this.entry(a[0], 'list');

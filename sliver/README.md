@@ -60,7 +60,7 @@ A black window opens and your browser goes to <http://localhost:3000>.
 - **Leave room** (top left) takes you back to the home screen. Tap it twice to confirm.
 - **End game** (top right, host only, during a game) stops the game and brings everyone back to the lobby.
   Songs and players stay; scores reset. Tap it twice to confirm.
-- The **room code** is hidden (••••) until you tap the eye next to it (handy when streaming). Copy invite
+- The **room code** is always hidden (••••) when you enter a room; tap the eye to show it (handy when streaming). Copy invite
   link always works.
 - The host can remove a player with the **×** next to their name (tap twice to confirm). Removed players
   can't get back in by refreshing; they'd have to rejoin with the code.
@@ -73,14 +73,15 @@ A black window opens and your browser goes to <http://localhost:3000>.
 ### Settings
 The gear (top right) opens Settings (saved on that device only):
 - **Sound:** volume slider, mute, and a test sound.
-- **Your icon:** pick an icon that shows next to your name everywhere (or keep your initial). Also on the
-  home screen, left of your name. Logged in, it's saved to your account.
+- **Your picture:** upload a photo (shrunk to a small square) or pick an icon; it shows next to your name
+  everywhere. Logged in, it's saved to your account.
+- **Account:** change your username, hide your account, or delete it (needs your password; removes everything).
 - **Theme:** Blue Hour, Golden Hour, Bubblegum Pop, Greenroom, Velvet, On Air, Night Drive, Laser Show or Vinyl,
   plus holiday themes that only show up around their time of year: Countdown (New Year), Love Song
-  (Valentine's), Lucky Clover (St. Patrick's), Fireworks (Fourth of July), Graveyard Shift (Halloween),
+  (Valentine's), Lucky Clover (St. Patrick's), Egg Hunt (Easter), Fireworks (Fourth of July), Graveyard Shift (Halloween),
   Harvest (Thanksgiving) and Jingle (Christmas). Holiday themes come with animated decorations (bats, ghosts,
   pumpkins, snow, ornaments, hearts, fireworks, clovers, leaves); **Holiday decorations** turns them off.
-- **Make your own theme:** pick 4 colors (background, cards, buttons, highlights); the rest is worked out
+- **Make your own theme** (3 save slots): pick 4 colors (background, cards, buttons, highlights); the rest is worked out
   so text stays readable. It gets a **share code** like `SLV-28T5D-YQTZB-GHTJ1-2TFQ0-HB`: send it to a
   friend, they paste it under *Use code* and get the same theme.
 - **Account:** log in, sign up, see your stats, and **Hide my account**: other players can't open your stats,
@@ -102,6 +103,9 @@ Hard and Chaos can both be on at once for **2×** points. Tap Classic to turn th
 - In the lobby the host switches to **Ranked** and picks a genre or decade. Ranked games are always 5 songs
   from that genre, **90 seconds per song**, unlimited guesses, no first-guess bonus. Hard and Chaos work as
   multipliers (both = 2×). Everyone in the room must be logged in.
+- **Casual stats:** casual games played to the end while logged in count toward your casual games, wins,
+  accuracy and best game (on your stats page). Leaderboards → **You and your friends** ranks you against your
+  friends by ranked rating or casual wins.
 - Each genre has its own **top 25** (your best ranked game there). Your **rating** works like osu! pp:
   each genre best is worth score ÷ 100, and they add up with each one after your best counting a bit less
   (×0.95, ×0.95², …). The trophy button opens the leaderboards; tap any name to see their stats
@@ -153,6 +157,22 @@ changed files to GitHub the same way; Render redeploys automatically.
    **Save, rebuild and deploy**. The log says "Email codes: on (brevo, from …)".
 
 Codes sent from a Gmail address through Brevo sometimes land in spam; tell friends to check there.
+
+### Premium themes, Buy Me a Coffee, admins (optional)
+Nine premium themes (Sakura Drift, Cotton Candy, Mermaid Lagoon, Aurora, Nebula, Synthwave, Ember Forge,
+Thunderstorm, Black Gold) have animated backgrounds; anyone can preview them, owners can use them. They cost
+$2.50 each, and any coffee of $2 or more unlocks a random one. Purchases unlock automatically for the Sliver
+account with the buyer's email (or an email written in their message; if there's no account yet, it unlocks
+when that email signs up). Refunds take the theme back. On Render → Environment:
+- `BMC_URL`: your Buy Me a Coffee page, e.g. `https://buymeacoffee.com/yourname` (shows the coffee button).
+- `BMC_SHOP_URL` (optional): where "Buy" goes. Defaults to `BMC_URL/extras`. In Buy Me a Coffee, make one
+  **Extra** per theme at $2.50, named exactly like the theme (e.g. "Sakura Drift").
+- `BMC_WEBHOOK_SECRET`: in Buy Me a Coffee → **Integrations → New webhook**, URL
+  `https://your-site/api/bmc/webhook`, events `donation.created`, `donation.refunded`,
+  `extra_purchase.created`, `extra_purchase.refunded`. Copy its signing secret here.
+- `ADMIN_EMAILS`: your account's email (comma-separate several). Admins get an **Admin** box in Settings and
+  on everyone's stats page: find players by email/friend code, **ban/unban**, **gift** or remove themes,
+  remove photos. Banned players are logged out, can't log in, and leave the leaderboards (unban restores them).
 
 ### Admin page: live players and stats (optional, 1 minute)
 In Render → **Environment**, add `ADMIN_KEY` with a long password of your choice → **Save, rebuild and deploy**.

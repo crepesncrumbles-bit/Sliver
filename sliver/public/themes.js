@@ -126,7 +126,7 @@
       '--brand': '#B3132B', '--accent': '#0F7A43', '--accent-hover': '#13904F', '--accent-strong': '#0B6637',
       '--pop': '#F4C542', '--pop-soft': '#F9DC85', '--pop-ink': '#2A1A00' } },
   ];
-  const RENAMED = { gx: 'onair' };
+  const RENAMED = { gx: 'onair', custom: 'custom1' };
 
   // ---------- colour maths for "My theme" ----------
   const clamp = (x) => Math.max(0, Math.min(255, Math.round(x)));
@@ -183,6 +183,47 @@
     return { id: 'custom', name: 'My theme', dark: isDark, vars, colors: c };
   }
 
+  // ---------- premium themes (bought or gifted; see shop.js) ----------
+  // Four colours each (the rest is worked out like "My theme"), plus an animated background (fx.js)
+  // and a few extra touches in style.css ([data-fx=…]).
+  const SHOP = window.SliverShop || { PREMIUM: [], byId: {} };
+  const PREMIUM_LOOKS = {
+    sakura: { colors: { page: '#D9547E', card: '#FFF7FA', accent: '#C2185B', pop: '#FFD1DC' }, glow: ['rgba(255,214,228,.55)', 'rgba(255,255,255,.35)'] },
+    cottoncandy: { colors: { page: '#8E9CF5', card: '#FFFFFF', accent: '#EC4899', pop: '#FDE68A' }, glow: ['rgba(255,182,219,.55)', 'rgba(165,243,252,.45)'] },
+    lagoon: { colors: { page: '#0E7490', card: '#F0FDFA', accent: '#7C3AED', pop: '#5EEAD4' }, glow: ['rgba(94,234,212,.35)', 'rgba(167,139,250,.35)'] },
+    aurora: { colors: { page: '#050B1A', card: '#0F1A2E', accent: '#34D399', pop: '#A78BFA' }, glow: ['rgba(52,211,153,.25)', 'rgba(167,139,250,.22)'], dark: true },
+    nebula: { colors: { page: '#07041A', card: '#140F2E', accent: '#F472B6', pop: '#60A5FA' }, glow: ['rgba(244,114,182,.25)', 'rgba(96,165,250,.25)'], dark: true },
+    synthwave: { colors: { page: '#12002B', card: '#1D0B3A', accent: '#FF2E97', pop: '#22D3EE' }, glow: ['rgba(255,46,151,.30)', 'rgba(34,211,238,.25)'], dark: true },
+    ember: { colors: { page: '#120A06', card: '#1E1410', accent: '#F97316', pop: '#FBBF24' }, glow: ['rgba(249,115,22,.35)', 'rgba(251,191,36,.20)'], dark: true },
+    storm: { colors: { page: '#0B1220', card: '#141E30', accent: '#38BDF8', pop: '#E2E8F0' }, glow: ['rgba(56,189,248,.18)', 'rgba(148,163,184,.18)'], dark: true },
+    blackgold: { colors: { page: '#0A0A0A', card: '#141210', accent: '#D4AF37', pop: '#F5E6A8' }, glow: ['rgba(212,175,55,.25)', 'rgba(245,230,168,.12)'], dark: true },
+  };
+  for (const item of SHOP.PREMIUM) {
+    const look = PREMIUM_LOOKS[item.id];
+    if (!look) continue;
+    const t = buildCustom(look.colors);
+    t.vars['--glow-a'] = look.glow[0];
+    t.vars['--glow-b'] = look.glow[1];
+    THEMES.push({ id: item.id, name: item.name, blurb: item.blurb, premium: true, fx: item.id, dark: t.dark, vars: t.vars });
+  }
+
+  // Easter: the date moves every year (Western Easter, Anonymous Gregorian algorithm).
+  function easterSunday(year) {
+    const a = year % 19, b = Math.floor(year / 100), c = year % 100, d = Math.floor(b / 4), e = b % 4;
+    const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+    const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+    const month = Math.floor((h + l - 7 * m + 114) / 31), day = ((h + l - 7 * m + 114) % 31) + 1;
+    return new Date(year, month - 1, day);
+  }
+  {
+    const t = buildCustom({ page: '#7FC8A9', card: '#FFFDF7', accent: '#D946EF', pop: '#FDE68A' });
+    t.vars['--glow-a'] = 'rgba(253,230,138,.45)';
+    t.vars['--glow-b'] = 'rgba(244,182,255,.40)';
+    // Two weeks before Easter Sunday until the day after.
+    THEMES.splice(THEMES.findIndex((x) => x.id === 'july4'), 0,
+      { id: 'easter', name: 'Egg Hunt', deco: '🐣', decor: 'easter', season: { easter: [-14, 1] }, dark: t.dark, vars: t.vars });
+  }
+
   // ---------- share codes ----------
   // 12 bytes (4 colors) + a 10-bit check, written in Crockford base32: SLV-XXXXX-XXXXX-XXXXX-XXXXX-XX
   const B32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -212,56 +253,117 @@
 
   // ---------- seasons ----------
   const mmdd = (d) => `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const dayOnly = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  function easterWindow(t, date) {
+    const e = easterSunday(date.getFullYear());
+    const [before, after] = t.season.easter;
+    return [new Date(e.getFullYear(), e.getMonth(), e.getDate() + before), new Date(e.getFullYear(), e.getMonth(), e.getDate() + after)];
+  }
   function inSeason(t, date = new Date()) {
     if (!t || !t.season) return true;
+    if (t.season.easter) { const [a, b] = easterWindow(t, date); const d = dayOnly(date); return d >= a && d <= b; }
     const today = mmdd(date), { from, to } = t.season;
     return from <= to ? today >= from && today <= to : today >= from || today <= to; // wraps past New Year
   }
   // What the settings page shows: holidays happening now first, then the regular themes.
   function available(date = new Date()) {
-    return THEMES.filter((t) => t.season && inSeason(t, date)).concat(THEMES.filter((t) => !t.season));
+    return THEMES.filter((t) => t.season && inSeason(t, date)).concat(THEMES.filter((t) => !t.season && !t.premium));
   }
-  function seasonEnds(t) {
+  function seasonEnds(t, date = new Date()) {
     if (!t.season) return null;
+    if (t.season.easter) return easterWindow(t, date)[1].toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     const [m, d] = t.season.to.split('-').map(Number);
     return new Date(2000, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   }
 
   // ---------- saving & applying ----------
-  const KEY = 'sliver.theme', CUSTOM_KEY = 'sliver.customTheme';
+  const KEY = 'sliver.theme', SLOTS_KEY = 'sliver.customThemes', OWNED_KEY = 'sliver.owned';
+  const SLOTS = 3;
   const get = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
   const put = (k, v) => { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} };
-  function savedCustom() { try { return JSON.parse(get(CUSTOM_KEY)) || null; } catch { return null; } }
-  function saveCustom(c) { const t = buildCustom(c); put(CUSTOM_KEY, JSON.stringify(t.colors)); return t.colors; }
+
+  // "My theme" slots 1–3 (custom1…custom3). The old single "My theme" becomes slot 1.
+  function slots() {
+    let list;
+    try { list = JSON.parse(get(SLOTS_KEY)); } catch { list = null; }
+    if (!Array.isArray(list)) {
+      list = [null, null, null];
+      try { const old = JSON.parse(get('sliver.customTheme')); if (old) list[0] = old; } catch {}
+    }
+    while (list.length < SLOTS) list.push(null);
+    return list.slice(0, SLOTS);
+  }
+  function saveSlot(i, colors) {
+    const list = slots();
+    list[i] = colors ? buildCustom(colors).colors : null;
+    put(SLOTS_KEY, JSON.stringify(list));
+    return list[i];
+  }
+  function slotTheme(i) {
+    const c = slots()[i];
+    if (!c) return null;
+    const t = buildCustom(c);
+    return { ...t, id: `custom${i + 1}`, name: `My theme ${i + 1}`, slot: i };
+  }
+
+  // Premium themes you own (from your account; remembered on this device between visits).
+  let owned = new Set((() => { try { return JSON.parse(get(OWNED_KEY)) || []; } catch { return []; } })());
+  const owns = (id) => owned.has(id);
 
   function resolve(id) {
     id = RENAMED[id] || id;
-    if (id === 'custom') return buildCustom(savedCustom() || DEFAULT_CUSTOM);
+    const slot = String(id || '').match(/^custom([1-3])$/);
+    if (slot) return slotTheme(Number(slot[1]) - 1) || THEMES[0];
     const t = THEMES.find((x) => x.id === id);
-    return t && inSeason(t) ? t : THEMES[0]; // holiday's over: back to the default look
+    if (!t || !inSeason(t)) return THEMES[0]; // holiday's over: back to the default look
+    if (t.premium && !owns(t.id)) return THEMES[0]; // not yours (or logged out)
+    return t;
   }
-  function apply(id) {
-    const t = resolve(id);
+  function paint(t) {
     const root = document.documentElement;
     for (const [k, v] of Object.entries(t.vars)) root.style.setProperty(k, v);
     root.dataset.theme = t.id;
     root.dataset.decor = t.decor || '';
+    root.dataset.fx = t.fx || '';
     root.style.setProperty('--deco', t.deco ? `"${t.deco} "` : '""');
     root.style.colorScheme = t.dark ? 'dark' : 'light';
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', t.vars['--page']);
-    try { window.dispatchEvent(new CustomEvent('sliver:theme', { detail: { id: t.id, decor: t.decor || null } })); } catch {}
+    try { window.dispatchEvent(new CustomEvent('sliver:theme', { detail: { id: t.id, decor: t.decor || null, fx: t.fx || null } })); } catch {}
     return t;
   }
-  function saved() { return RENAMED[get(KEY)] || get(KEY) || 'cobalt'; }
+  let previewTimer = null;
+  function apply(id) { clearTimeout(previewTimer); previewTimer = null; return paint(resolve(id)); }
+  function saved() { const v = get(KEY); return RENAMED[v] || v || 'cobalt'; }
   const current = () => resolve(saved()).id;
 
   window.SliverThemes = {
-    THEMES, available, inSeason, seasonEnds, apply, current, encode, decode, buildCustom, contrast,
-    savedCustom, DEFAULT_CUSTOM,
+    THEMES, available, inSeason, seasonEnds, apply, current, encode, decode, buildCustom, contrast, easterSunday,
+    DEFAULT_CUSTOM, SLOTS, slots, slotTheme,
+    premium: () => THEMES.filter((t) => t.premium),
+    owns,
+    setOwned(list) {
+      owned = new Set((list || []).filter(Boolean));
+      put(OWNED_KEY, JSON.stringify([...owned]));
+      if (!previewTimer) apply(saved());
+    },
     set(id) { put(KEY, id); return apply(id); },
-    // Save "My theme" colors and switch to it.
-    setCustom(colors) { saveCustom(colors); put(KEY, 'custom'); return apply('custom'); },
+    // Save "My theme N" colours and switch to it.
+    setSlot(i, colors) { saveSlot(i, colors); put(KEY, `custom${i + 1}`); return apply(`custom${i + 1}`); },
+    clearSlot(i) { saveSlot(i, null); if (saved() === `custom${i + 1}`) put(KEY, 'cobalt'); return apply(saved()); },
+    // Try a premium theme for a few seconds (the shop's Preview button).
+    preview(id, ms = 12000) {
+      const t = THEMES.find((x) => x.id === id);
+      if (!t) return null;
+      clearTimeout(previewTimer);
+      paint(t);
+      previewTimer = setTimeout(() => { previewTimer = null; apply(saved()); }, ms);
+      return t;
+    },
+    previewing: () => !!previewTimer,
+    // Old single-slot API (kept for anything still calling it).
+    savedCustom: () => slots()[0],
+    setCustom(colors) { return this.setSlot(0, colors); },
   };
   apply(saved());
 })();

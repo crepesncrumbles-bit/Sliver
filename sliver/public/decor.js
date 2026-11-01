@@ -140,6 +140,33 @@
     return out;
   }
 
+  // ---------- Easter ----------
+  const egg = (w, base, band, dots) => svg('0 0 40 52', `
+    <ellipse cx="20" cy="28" rx="17" ry="22" fill="${base}"/>
+    <path d="M3 27l5-5 5 5 5-5 5 5 5-5 5 5 4-4v6l-4 4-5-5-5 5-5-5-5 5-5-5-5 5-4-4z" fill="${band}"/>
+    <circle cx="13" cy="14" r="2.4" fill="${dots}"/><circle cx="25" cy="12" r="2" fill="${dots}"/><circle cx="20" cy="43" r="2.4" fill="${dots}"/><circle cx="29" cy="40" r="1.8" fill="${dots}"/><circle cx="11" cy="40" r="1.8" fill="${dots}"/>
+    <ellipse cx="12" cy="20" rx="3" ry="6" fill="#FFFFFF" opacity=".35" transform="rotate(20 12 20)"/>`, 'fig egg', `width:${w}px`);
+  const bunny = (w) => svg('0 0 70 80', `
+    <g fill="#FFFFFF">
+      <ellipse cx="22" cy="14" rx="6" ry="16" transform="rotate(-12 22 14)"/><ellipse cx="38" cy="13" rx="6" ry="16" transform="rotate(10 38 13)"/>
+      <ellipse cx="38" cy="58" rx="24" ry="20"/><circle cx="30" cy="36" r="15"/><circle cx="62" cy="62" r="6"/>
+    </g>
+    <ellipse cx="22" cy="14" rx="2.8" ry="11" fill="#FFC7D9" transform="rotate(-12 22 14)"/><ellipse cx="38" cy="13" rx="2.8" ry="11" fill="#FFC7D9" transform="rotate(10 38 13)"/>
+    <circle cx="25" cy="34" r="2" fill="#2B2B2B"/><circle cx="35" cy="34" r="2" fill="#2B2B2B"/><path d="M28 40l2 2 2-2z" fill="#FF8FB1"/>
+    <ellipse cx="24" cy="76" rx="9" ry="4" fill="#F3F0FF"/>`, 'fig bunny', `width:${w}px`);
+  const chick = (w) => svg('0 0 50 50', `
+    <circle cx="25" cy="22" r="14" fill="#FFE066"/>
+    <circle cx="21" cy="19" r="1.8" fill="#2B2B2B"/><circle cx="30" cy="19" r="1.8" fill="#2B2B2B"/><path d="M24 23l5 1.5-5 1.5z" fill="#FF922B"/>
+    <path d="M9 30c2 14 30 14 32 0l-4 4-4-5-4 5-4-5-4 5-4-5-4 5z" fill="#FFFFFF" stroke="#E9E4F7" stroke-width="1"/>
+    <path d="M8 30c0 16 34 16 34 0" fill="#FFFFFF"/>`, 'fig chick', `width:${w}px`);
+  const tulip = (h, color) => svg(`0 0 30 ${h}`, `
+    <path d="M15 ${h}V22" stroke="#2F9E44" stroke-width="3"/><path d="M15 ${h - 14}c-8-4-12-12-10-20 6 4 9 10 10 20z" fill="#40C057"/>
+    <path d="M6 10c0 10 4 15 9 15s9-5 9-15l-5 5-4-7-4 7z" fill="${color}"/>`, 'fig tulip', `width:30px`);
+  const butterfly = (w, color) => svg('0 0 40 30', `
+    <g fill="${color}" opacity=".9"><path class="wing wing-l" d="M20 15C12 2 2 4 4 12c1 5 8 6 16 3zM20 16c-7 2-12 6-9 11 3 3 7-2 9-11z"/>
+    <path class="wing wing-r" d="M20 15c8-13 18-11 16-3-1 5-8 6-16 3zM20 16c7 2 12 6 9 11-3 3-7-2-9-11z"/></g>
+    <rect x="19" y="8" width="2" height="16" rx="1" fill="#2B2B2B"/>`, 'fig bat', `width:${w}px`);
+
   // ---------- one scene per holiday: [back layer, front layer] ----------
   const SCENES = {
     halloween() {
@@ -198,6 +225,20 @@
       let back = drift(16, () => clover(r(16, 30)));
       for (let i = 0; i < 7; i++) back += put(coin(r(16, 26)), `left:${pick([r(0, 14), r(84, 96)]).toFixed(0)}%;bottom:${r(0, 30).toFixed(0)}px`);
       return [back, ''];
+    },
+    easter() {
+      const eggs = [['#FFC9DE', '#B197FC', '#FFFFFF'], ['#C3FAE8', '#FFD43B', '#FF8FB1'], ['#FFF3BF', '#74C0FC', '#FF8FB1'], ['#E5DBFF', '#63E6BE', '#FFFFFF'], ['#FFD8A8', '#FF8FB1', '#FFFFFF']];
+      let back = '';
+      const grass = svg('0 0 400 40', '<path d="M0 40V22l6-14 6 14 6-18 6 18 6-12 6 12 6-16 6 16 6-10 6 10 6-18 6 18 6-12 6 12 6-16 6 16 6-14 6 14 6-18 6 18 6-12 6 12 6-16 6 16 6-10 6 10 6-18 6 18 6-12 6 12 6-16 6 16 6-14 6 14 6-18 6 18 6-12 6 12 6-16 6 16 6-10 6 10 6-18 6 18 6-12 6 12 6-16 6 16 6-14 6 14 6-18 6 18 6-12 6 12 6-16 6 16 6-10 6 10 6-18 6 18 6-12 6 12 6-16 6 16 6-14 6 14 6-18 6 18 6-12 6 12 6-16 6 16 6-10 6 10 6-18 6 18 6-12 6 12 6-16 6 16 6-14 6 14V40z" fill="#69DB7C"/>', 'fig grass', 'width:100%;height:40px').replace('<svg ', '<svg preserveAspectRatio="none" ');
+      back += put(grass, 'left:0;right:0;bottom:-2px;width:100%');
+      back += put(bunny(90), 'left:1%;bottom:10px', 'a-hop', 2.8) + put(bunny(64), 'right:3%;bottom:10px', 'a-hop', 3.4, -1.2, 'transform:scaleX(-1)');
+      back += put(chick(52), 'right:calc(3% + 74px);bottom:6px', 'a-float', 4);
+      [8, 14, 86, 92, 20, 80].forEach((x, i) => { back += put(egg(r(26, 40), ...eggs[i % eggs.length]), `left:${x}%;bottom:${r(4, 16).toFixed(0)}px`, 'a-wobble', r(2.5, 4), -r(0, 3)); });
+      ['#FF8FB1', '#B197FC', '#FFD43B', '#FF6B6B'].forEach((c, i) => { back += put(tulip(r(70, 100), c), `left:calc(${[2, 6, 90, 95][i]}% + ${i * 6}px);bottom:16px`, 'a-swing', r(4, 6), -r(0, 3)); });
+      back += drift(10, () => egg(r(14, 22), ...pick(eggs)));
+      let front = '';
+      for (let i = 0; i < 3; i++) front += put(butterfly(r(26, 38), pick(['#FFFFFF', '#FFC9DE', '#FFE066', '#B197FC'])), `top:${r(20, 120).toFixed(0)}px;left:-60px`, 'a-fly', r(14, 20), -r(0, 14) + i * 4);
+      return [back, front];
     },
     thanksgiving() {
       const leaves = ['#E8590C', '#F59F00', '#C92A2A', '#B5651D'];

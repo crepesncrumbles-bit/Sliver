@@ -10,6 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
+  <script src="/shop.js"></script>
   <script src="/themes.js"></script>
   <script src="/icons.js"></script>
 </head>
@@ -58,6 +59,9 @@
         </div>
       </div>
       <div class="card account-card" id="account-box"></div>
+      <a class="coffee-btn" id="coffee-home" target="_blank" rel="noopener" hidden>
+        <span class="cup" aria-hidden="true">☕</span><span><b>Buy me a coffee</b><small>$2 or more unlocks a random premium theme</small></span>
+      </a>
     </section>
 
     <!-- LOBBY -->
@@ -87,10 +91,13 @@
           <button class="btn" id="btn-add">Add</button>
         </form>
         <div class="songs-opts">
-          <div class="mini-seg" role="group" aria-label="Songs per artist">
-            <span class="mini-label">Artists</span>
-            <button type="button" class="mini-btn" data-amode="all" aria-pressed="true">All songs</button>
-            <button type="button" class="mini-btn" data-amode="top" aria-pressed="false">Top 20</button>
+          <div class="amode-box">
+            <div class="mini-seg" role="group" aria-label="Songs per artist">
+              <span class="mini-label hl">Artists</span>
+              <button type="button" class="mini-btn" data-amode="all" aria-pressed="true">All songs</button>
+              <button type="button" class="mini-btn" data-amode="top" aria-pressed="false">Top 20</button>
+            </div>
+            <p class="amode-note" id="amode-note">When you add an artist, play every song they have, or just their 20 biggest hits.</p>
           </div>
           <label class="check host-only"><input type="checkbox" id="host-only-songs" /> <span>Only the host adds songs</span></label>
         </div>
@@ -259,13 +266,29 @@
         <span id="volume-value" class="vol-value">80%</span>
       </div>
       <button id="btn-test-sound" class="btn small">Test sound</button>
-      <h3 id="icon-title">Your icon</h3>
+      <h3 id="icon-title">Your picture</h3>
+      <div class="pic-row">
+        <span class="pic-preview" id="pic-preview"></span>
+        <div class="pic-actions">
+          <label class="btn small" for="pic-file">Upload a photo</label>
+          <input type="file" id="pic-file" accept="image/*" hidden />
+          <button type="button" class="btn ghost small" id="pic-remove" hidden>Remove photo</button>
+          <p class="hint small-left" id="pic-note">Or pick an icon below.</p>
+        </div>
+      </div>
       <div id="icon-grid" class="icon-grid" role="radiogroup" aria-labelledby="icon-title"></div>
       <h3>Theme</h3>
       <div id="theme-grid" class="theme-grid" role="radiogroup" aria-label="Theme"></div>
       <label class="check decor-toggle" id="decor-toggle-row"><input type="checkbox" id="decor-toggle" /> <span>Holiday decorations</span></label>
+      <div class="shop" id="shop">
+        <h4>Premium themes <span class="price-tag" id="shop-price">$2.50 each</span></h4>
+        <p class="hint" id="shop-note">Animated backgrounds and extra effects. Tap one to preview it.</p>
+        <div id="shop-grid" class="theme-grid shop-grid"></div>
+        <div class="shop-detail" id="shop-detail" hidden></div>
+      </div>
       <div class="custom-theme" id="custom-theme">
         <h4>Make your own theme</h4>
+        <div class="mini-seg slot-seg" role="tablist" aria-label="Theme slot" id="slot-seg"></div>
         <div class="ct-colors">
           <label class="ct-color"><input type="color" id="ct-page" /><span>Background</span></label>
           <label class="ct-color"><input type="color" id="ct-card" /><span>Cards</span></label>
@@ -284,6 +307,17 @@
       </div>
       <h3>Account</h3>
       <div id="settings-account" class="settings-account"></div>
+      <div id="admin-panel" class="admin-panel" hidden>
+        <h3>Admin</h3>
+        <form id="admin-find" class="row" autocomplete="off">
+          <input id="admin-query" placeholder="Email, friend code or player id" aria-label="Find a player" />
+          <button class="btn small" type="submit">Find</button>
+        </form>
+        <div id="admin-result"></div>
+      </div>
+      <a class="coffee-btn in-settings" id="coffee-settings" target="_blank" rel="noopener" hidden>
+        <span class="cup" aria-hidden="true">☕</span><span><b>Buy me a coffee</b><small>$2 or more unlocks a random premium theme</small></span>
+      </a>
       <button id="btn-settings-done" class="btn primary">Done</button>
     </section>
   </div>
@@ -387,6 +421,7 @@
   <div id="confetti" class="confetti" aria-hidden="true"></div>
 
   <script src="/decor.js"></script>
+  <script src="/fx.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

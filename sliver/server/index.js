@@ -8,7 +8,7 @@ const os = require('os');
 const { Realtime } = require('./realtime');
 const { RoomManager } = require('./game');
 const { createStore } = require('./store');
-const { Accounts, AccountError } = require('./accounts');
+const { Accounts, AccountError, parseImage, SHOP } = require('./accounts');
 const { createMailer } = require('./mailer');
 const { searchArtists } = require('./deezer');
 const { spotifyPlays } = require('./spotifyweb');
@@ -42,7 +42,15 @@ function lanAddresses() {
 let rooms; // set below
 const store = createStore({ dir: process.env.DATA_DIR });
 const mailer = createMailer();
-const accounts = new Accounts(store, mailer);
+// ADMIN_EMAILS: comma-separated emails of accounts that can ban players and gift themes.
+const accounts = new Accounts(store, mailer, { adminEmails: process.env.ADMIN_EMAILS || '' });
+const bmc = require('./bmc');
+const { cleanAvatar } = require('./game');
+// Buy Me a Coffee: BMC_URL = your page (button), BMC_WEBHOOK_SECRET = webhook signing secret,
+// BMC_SHOP_URL = where to buy themes (defaults to your page's extras).
+const BMC_URL = String(process.env.BMC_URL || '').trim().replace(/\/+$/, '');
+const BMC_SHOP_URL = String(process.env.BMC_SHOP_URL || (BMC_URL ? `${BMC_URL}/extras` : '')).trim();
+const BMC_SECRET = String(process.env.BMC_WEBHOOK_SECRET || '').trim();
 const stats = new Stats(store);
 const STARTED = Date.now();
 // Admin page (/admin.html): set ADMIN_KEY on Render to turn it on.
@@ -53,6 +61,17 @@ const sendJson = (res, code, obj) => {
   res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(obj));
 };
+function readRaw(req, limit = 200000) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => { size += c.length; if (size > limit) { reject(new AccountError('Request too large')); req.destroy(); return; } chunks.push(c); });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+// Photos of guests (no account): kept in memory, newest 1,000.
+const guestAvatars = new Map(); // id -> { type, buffer }
 function readBody(req, limit = 10000) {
   return new Promise((resolve, reject) => {
     let size = 0;
@@ -115,20 +134,48 @@ async function handleApi(req, res, p, url) {
       return sendJson(res, 200, { ok: true, ...out });
     }
     if (p.startsWith('/api/friends')) return await handleFriends(req, res, p);
-    if (p === '/api/admin/stats') return await handleAdmin(req, res, url);
-    if (p === '/api/me/settings') {
+    if (p === '/api/bmc/webhook') return await handleBmc(req, res);
+    if (p === '/api/leaderboard/friends') {
+      const me = await accounts.session(bearer(req));
+      if (!me) return sendJson(res, 401, { ok: false, error: 'Log in to see your friends\' rankings' });
+      return sendJson(res, 200, { ok: true, ...(await accounts.friendsBoard(me.id)) });
+    }
+    if (p === '/api/avatar/guest') {
+      if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'Use POST' });
+      if (rateLimited(`avatar:${clientIp(req)}`)) return sendJson(res, 429, { ok: false, error: 'Too many uploads. Wait a few minutes.' });
+      const { image } = await readBody(req, 100000);
+      const img = parseImage(image);
+      const id = crypto.randomBytes(9).toString('base64url');
+      guestAvatars.set(id, { type: img.type, buffer: img.buffer });
+      if (guestAvatars.size > 1000) guestAvatars.delete(guestAvatars.keys().next().value);
+      return sendJson(res, 200, { ok: true, avatar: `/api/avatar/g/${id}` });
+    }
+    if (p.startsWith('/api/me/')) {
       if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'Use POST' });
       const me = await accounts.session(bearer(req));
       if (!me) return sendJson(res, 401, { ok: false, error: 'Log in first' });
-      const body = await readBody(req);
-      const out = await accounts.updateSettings(me.id, { icon: body.icon, hidden: body.hidden });
+      const body = await readBody(req, p === '/api/me/avatar' ? 100000 : 10000);
+      let out;
+      if (p === '/api/me/settings') out = await accounts.updateSettings(me.id, { icon: body.icon, hidden: body.hidden });
+      else if (p === '/api/me/avatar') {
+        if (rateLimited(`avatar:${me.id}`)) return sendJson(res, 429, { ok: false, error: 'Too many uploads. Wait a few minutes.' });
+        out = body.clear ? await accounts.clearAvatar(me.id) : await accounts.setAvatar(me.id, body.image);
+      } else if (p === '/api/me/name') out = await accounts.changeName(me.id, body.name);
+      else if (p === '/api/me/delete') {
+        if (rateLimited(clientIp(req))) return sendJson(res, 429, { ok: false, error: 'Too many tries. Wait a few minutes.' });
+        out = await accounts.deleteAccount(me.id, body.password);
+        notifyUser(me.id, 'loggedOut', { text: 'Your account was deleted' });
+        return sendJson(res, 200, { ok: true, deleted: true });
+      } else return sendJson(res, 404, { ok: false, error: 'Not found' });
       refreshUserInRooms(out.user);
       return sendJson(res, 200, { ok: true, ...out });
     }
+    if (p === '/api/admin/user') return await handleAdminUser(req, res);
+    if (p === '/api/admin/stats') return await handleAdmin(req, res, url);
     const prof = p.match(/^\/api\/profile\/([\w-]{6,40})$/);
     if (prof) {
       const viewer = await accounts.session(bearer(req));
-      return sendJson(res, 200, { ok: true, profile: await accounts.profile(prof[1], viewer && viewer.id) });
+      return sendJson(res, 200, { ok: true, profile: await accounts.profile(prof[1], viewer && viewer.id, !!(viewer && viewer.admin)) });
     }
     if (p === '/api/artists') {
       if (demoOnly) return sendJson(res, 200, { ok: true, artists: [] });
@@ -144,6 +191,64 @@ async function handleApi(req, res, p, url) {
       ? 'The account database isn\'t answering. If you run this site, check the Render logs for "Database check".'
       : 'Something went wrong on the server. Try again.' });
   }
+}
+
+// ---------- admin accounts: ban / unban / gift themes / remove photos ----------
+async function handleAdminUser(req, res) {
+  if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'Use POST' });
+  const me = await accounts.session(bearer(req));
+  if (!me || !me.admin) return sendJson(res, 403, { ok: false, error: 'Admins only' });
+  const body = await readBody(req);
+  const id = body.id ? String(body.id) : await accounts.findUser(body.query);
+  let user;
+  switch (body.action) {
+    case 'view': user = await accounts.adminView(id); break;
+    case 'ban':
+      user = await accounts.ban(id, body.reason);
+      notifyUser(id, 'loggedOut', { text: `Your account was banned${body.reason ? `: ${body.reason}` : ''}` });
+      for (const sid of userSockets.get(id) || []) {
+        const ctx = contexts.get(sid);
+        const r = ctx && ctx.room(), pl = ctx && ctx.player();
+        if (r && pl) { r.setAccount(pl.id, null); r.broadcast(); }
+      }
+      break;
+    case 'unban': user = await accounts.unban(id); break;
+    case 'gift': {
+      const t = await accounts.grantTheme(id, body.themeId || 'random', `gift:${me.id}`);
+      if (!t) throw new AccountError(body.themeId && body.themeId !== 'random' ? 'They already have that theme' : 'They already have every theme');
+      notifyUser(id, 'themesChanged', { text: `You got a gift: the ${SHOP.byId[t].name} theme! Find it in Settings → Theme.`, themes: [t] });
+      user = await accounts.adminView(id);
+      break;
+    }
+    case 'revoke': await accounts.revokeTheme(id, String(body.themeId)); notifyUser(id, 'themesChanged', {}); user = await accounts.adminView(id); break;
+    case 'removePicture': {
+      const out = await accounts.clearAvatar(id);
+      if (out.user) refreshUserInRooms(out.user);
+      user = await accounts.adminView(id);
+      break;
+    }
+    default: return sendJson(res, 400, { ok: false, error: 'Unknown action' });
+  }
+  return sendJson(res, 200, { ok: true, user });
+}
+
+// ---------- Buy Me a Coffee webhook ----------
+async function handleBmc(req, res) {
+  if (!BMC_SECRET) return sendJson(res, 404, { ok: false, error: 'Buy Me a Coffee isn\'t set up (BMC_WEBHOOK_SECRET)' });
+  if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'Use POST' });
+  const raw = await readRaw(req);
+  if (!bmc.verify(raw, req.headers['x-signature-sha256'], BMC_SECRET)) {
+    console.warn('  Buy Me a Coffee webhook: bad signature (check BMC_WEBHOOK_SECRET)');
+    return sendJson(res, 401, { ok: false, error: 'Bad signature' });
+  }
+  let evt;
+  try { evt = JSON.parse(raw.toString('utf8')); } catch { return sendJson(res, 400, { ok: false, error: 'Bad JSON' }); }
+  const out = await bmc.handleEvent(evt, {
+    accounts, store, allowTest: process.env.BMC_ALLOW_TEST === '1',
+    notify: (userId, msg) => notifyUser(userId, 'themesChanged', msg),
+  });
+  console.log(`  Buy Me a Coffee ${evt.type || ''}: ${JSON.stringify(out)}`);
+  return sendJson(res, 200, { ok: true, ...out });
 }
 
 // ---------- admin ----------
@@ -272,7 +377,7 @@ async function handleFriends(req, res, p) {
   return sendJson(res, 200, { ok: true, ...out, ...(await accounts.friends(me.id, presence)) });
 }
 
-const API_PATHS = /^\/api\/(signup|signup\/verify|signup\/resend|reset\/start|reset\/finish|login|logout|me|leaderboard|profile\/[\w-]+|artists|me\/settings|admin\/stats|friends(\/(request|accept|remove|block|unblock))?)$/;
+const API_PATHS = /^\/api\/(signup|signup\/verify|signup\/resend|reset\/start|reset\/finish|login|logout|me|leaderboard|profile\/[\w-]+|artists|me\/(settings|avatar|name|delete)|avatar\/guest|leaderboard\/friends|admin\/(stats|user)|bmc\/webhook|friends(\/(request|accept|remove|block|unblock))?)$/;
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -285,7 +390,20 @@ const server = http.createServer((req, res) => {
     // When hosted (Render sets RENDER=true), there's no Wi-Fi address to share: use the public URL.
     const lan = process.env.RENDER ? [] : lanAddresses().map((ip) => `http://${ip}:${PORT}`);
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    return res.end(JSON.stringify({ port: PORT, lan, demoOnly, accounts: store.kind, emailCodes: !!mailer }));
+    return res.end(JSON.stringify({ port: PORT, lan, demoOnly, accounts: store.kind, emailCodes: !!mailer, bmc: BMC_URL || null, shop: BMC_SHOP_URL || null, payments: !!BMC_SECRET }));
+  }
+
+  // Player photos: /api/avatar/u/<account id> (saved) or /api/avatar/g/<id> (guests, in memory).
+  const av = p.match(/^\/api\/avatar\/(u|g)\/([\w-]{6,40})$/);
+  if (av) {
+    const send = (img) => {
+      if (!img) { res.writeHead(404); return res.end(); }
+      res.writeHead(200, { 'Content-Type': img.type, 'Content-Length': img.buffer.length, 'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff' });
+      return res.end(img.buffer);
+    };
+    if (av[1] === 'g') return send(guestAvatars.get(av[2]));
+    accounts.getAvatar(av[2]).then(send, () => { res.writeHead(500); res.end(); });
+    return;
   }
 
   // The clip URL hides which song it is: only the room code and a per-round random nonce.
@@ -336,6 +454,10 @@ rooms = new RoomManager(io, {
   packCacheMs: 20 * 60 * 1000,
   plays: demoOnly || process.env.NO_PLAYS ? null : spotifyPlays,
   onRanked,
+  // Casual games played to the end count toward logged-in players' casual stats.
+  onCasual: async (room, entries) => {
+    for (const e of entries) await accounts.submitCasual(e.userId, e).catch((err) => console.error('casual stats:', err.message));
+  },
 });
 
 const contexts = new Map(); // socket id -> { drop() } so a kick can detach that player's socket
@@ -378,11 +500,11 @@ io.on('connection', (socket) => {
   };
   const sendPool = () => socket.emit('pool', { version: room.poolVersion, songs: room.poolList() });
 
-  socket.on('create', async ({ name, auth, icon } = {}, ack) => {
+  socket.on('create', async ({ name, auth, icon, avatar } = {}, ack) => {
     if (auth !== undefined) await useAuth(auth);
     if (room) socket.leaveRoom(room.code);
     room = rooms.create();
-    player = room.addPlayer(name, socket, icon);
+    player = room.addPlayer(name, socket, icon, avatar);
     room.setAccount(player.id, user);
     socket.join(room.code);
     ack && ack({ ok: true, code: room.code, token: player.token, playerId: player.id });
@@ -391,7 +513,7 @@ io.on('connection', (socket) => {
     notePlayers();
   });
 
-  socket.on('join', async ({ code, name, token, auth, icon } = {}, ack) => {
+  socket.on('join', async ({ code, name, token, auth, icon, avatar } = {}, ack) => {
     if (auth !== undefined) await useAuth(auth);
     const r = rooms.get(code);
     if (!r) return fail(ack, new Error(`No room called ${String(code || '').toUpperCase()} — it may have closed`));
@@ -404,9 +526,10 @@ io.on('connection', (socket) => {
       if (user && host && host.userId && await accounts.isBlockedEitherWay(host.userId, user.id).catch(() => false)) {
         return fail(ack, new Error('You can\'t join this room'));
       }
-      p = r.addPlayer(name, socket, icon);
-    } else if (icon !== undefined) {
-      p.icon = ICONS.includes(icon) ? icon : '';
+      p = r.addPlayer(name, socket, icon, avatar);
+    } else {
+      if (icon !== undefined) p.icon = ICONS.includes(icon) ? icon : '';
+      if (avatar !== undefined) p.avatar = cleanAvatar(avatar);
     }
     room = r; player = p;
     // Keep the account a ranked player started with, even if this device lost its login.
@@ -420,8 +543,11 @@ io.on('connection', (socket) => {
 
   socket.on('getPool', () => room && sendPool());
 
-  socket.on('setIcon', ({ icon } = {}, ack) => {
-    if (room && player) room.setIcon(player.id, icon);
+  socket.on('setIcon', ({ icon, avatar } = {}, ack) => {
+    if (room && player) {
+      if (avatar !== undefined) player.avatar = cleanAvatar(avatar);
+      room.setIcon(player.id, icon);
+    }
     ack && ack({ ok: true });
   });
 
@@ -602,7 +728,7 @@ io.on('connection', (socket) => {
       if ([...room.players.values()].some((x) => x.userId === userId && x.connected)) throw new Error('They\'re already in this room');
       if (Date.now() - (lastInvite.get(userId) || 0) < 10000) throw new Error('Invite sent. Give them a few seconds.');
       lastInvite.set(userId, Date.now());
-      notifyUser(userId, 'invite', { from: { id: user.id, name: user.name, tag: user.tag }, code: room.code });
+      notifyUser(userId, 'invite', { from: { id: user.id, name: user.name, tag: user.tag, icon: user.icon || '', avatar: user.avatar || '' }, code: room.code });
       ack && ack({ ok: true });
     } catch (err) { fail(ack, err); }
   });
@@ -619,6 +745,8 @@ server.listen(PORT, HOST, () => {
   console.log('\n  🎵 Sliver is running!\n');
   console.log(mailer ? `  Email codes: on (${mailer.kind}, from ${mailer.from})` : '  Email codes: off (sign-ups don\'t need a code; see README to turn on)');
   console.log(ADMIN_KEY ? '  Admin page: on (/admin.html)' : '  Admin page: off (set ADMIN_KEY to turn it on)');
+  console.log(accounts.adminEmails.size ? `  Admin accounts: ${accounts.adminEmails.size}` : '  Admin accounts: none (set ADMIN_EMAILS to your account email)');
+  console.log(BMC_SECRET ? `  Theme purchases: on (Buy Me a Coffee${BMC_URL ? ', ' + BMC_URL : ''})` : `  Theme purchases: off${BMC_URL ? ' (coffee button on; set BMC_WEBHOOK_SECRET to unlock themes)' : ' (set BMC_URL and BMC_WEBHOOK_SECRET)'}`);
   if (mailer && mailer.check) {
     mailer.check().then(
       (r) => console.log(`  Email check: ${r}`),

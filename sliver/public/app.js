@@ -85,10 +85,15 @@
   // ---------- player icons ----------
   const ICONS = window.SliverIcons || [];
   let myIcon = (() => { try { const i = localStorage.getItem('sliver.icon'); return ICONS.includes(i) ? i : ''; } catch { return ''; } })();
-  // An icon if they picked one, else the first letter of their name.
-  const avatar = (icon, name) => (icon && ICONS.includes(icon) ? esc(icon) : esc(String(name || '?').trim().charAt(0).toUpperCase() || '?'));
-  const avClass = (icon) => (icon && ICONS.includes(icon) ? ' emoji' : '');
-  const iconPrefix = (icon) => (icon && ICONS.includes(icon) ? `<span class="chip-icon" aria-hidden="true">${esc(icon)}</span>` : '');
+  // A photo they uploaded, else an icon they picked, else the first letter of their name.
+  const PIC_RE = /^\/api\/avatar\/(u|g)\/[\w-]{6,40}(\?v=\w{1,20})?$/;
+  const okPic = (img) => !!img && PIC_RE.test(String(img));
+  const avatar = (icon, name, img) => (okPic(img) ? `<img src="${esc(img)}" alt="" loading="lazy" onerror="this.remove()">`
+    : icon && ICONS.includes(icon) ? esc(icon) : esc(String(name || '?').trim().charAt(0).toUpperCase() || '?'));
+  const avClass = (icon, img) => (okPic(img) ? ' photo' : icon && ICONS.includes(icon) ? ' emoji' : '');
+  const iconPrefix = (icon, img) => (okPic(img) ? `<img class="chip-pic" src="${esc(img)}" alt="" loading="lazy" onerror="this.remove()">`
+    : icon && ICONS.includes(icon) ? `<span class="chip-icon" aria-hidden="true">${esc(icon)}</span>` : '');
+  let myAvatar = (() => { try { const a = localStorage.getItem('sliver.avatar'); return okPic(a) ? a : ''; } catch { return ''; } })();
 
   function toast(text, kind = 'info', ms = 3800) {
     const el = document.createElement('div');
@@ -122,7 +127,7 @@
 
   $('#btn-create').onclick = async () => {
     const name = getName(); if (!name) return;
-    const res = await emit('create', { name, auth: authToken(), icon: myIcon });
+    const res = await emit('create', { name, auth: authToken(), icon: myIcon, avatar: myAvatar });
     if (!res.ok) return toast(res.error, 'error');
     joined(res);
   };
@@ -131,7 +136,7 @@
     const name = getName(); if (!name) return;
     const code = $('#join-code').value.trim().toUpperCase();
     if (code.length !== 4) return toast('Room codes are 4 letters', 'error');
-    const res = await emit('join', { code, name, auth: authToken(), icon: myIcon });
+    const res = await emit('join', { code, name, auth: authToken(), icon: myIcon, avatar: myAvatar });
     if (!res.ok) return toast(res.error, 'error');
     joined(res);
   }
@@ -139,12 +144,13 @@
   $('#join-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinRoom(); });
 
   function joined(res) {
+    if (!session || session.code !== res.code) showCode = false; // every room starts with its code hidden
     saveSession({ code: res.code, token: res.token });
     syncUrl();
   }
   // The room code is hidden until you tap the eye (handy when streaming). While hidden it's
   // also kept out of the address bar; Copy invite link still works.
-  let showCode = (() => { try { return localStorage.getItem('sliver.showCode') === '1'; } catch { return false; } })();
+  let showCode = false;
   function syncUrl() {
     const code = session && session.code;
     history.replaceState(null, '', code && showCode ? `/?room=${code}` : '/');
@@ -161,7 +167,6 @@
   }
   $('#btn-code-eye').onclick = () => {
     showCode = !showCode;
-    try { localStorage.setItem('sliver.showCode', showCode ? '1' : '0'); } catch {}
     renderCode();
     syncUrl();
   };
@@ -169,7 +174,7 @@
   async function tryRejoin() {
     const want = (params.get('room') || '').toUpperCase();
     if (session && (!want || session.code === want)) {
-      const res = await emit('join', { code: session.code, token: session.token, name: savedName(), auth: authToken(), icon: myIcon });
+      const res = await emit('join', { code: session.code, token: session.token, name: savedName(), auth: authToken(), icon: myIcon, avatar: myAvatar });
       if (res.ok) return joined(res);
       saveSession(null);
       if (want) toast(res.error, 'error');
@@ -180,7 +185,7 @@
   socket.on('connect', () => {
     if (authToken()) emit('auth', { token: authToken() }).then(() => refreshFriends());
     if (!state) tryRejoin();
-    else if (session) emit('join', { code: session.code, token: session.token, name: savedName(), auth: authToken(), icon: myIcon });
+    else if (session) emit('join', { code: session.code, token: session.token, name: savedName(), auth: authToken(), icon: myIcon, avatar: myAvatar });
   });
   socket.on('disconnect', () => toast('Connection lost — reconnecting…', 'error', 2500));
   // Keep-alive: free hosts (Render) put the server to sleep after 15 minutes without messages,
@@ -230,7 +235,7 @@
     const el = document.createElement('div');
     el.className = 'pop-msg';
     el.style.background = POP_COLORS[popN++ % POP_COLORS.length];
-    el.innerHTML = `<span class="dot">${g.first ? '★' : '♪'}</span><span>${iconPrefix(g.icon)}<b>${esc(g.name)}</b> got the song${g.first ? ' first' : ''}</span>${g.points ? `<span class="pts">+${fmt(g.points)}</span>` : ''}`;
+    el.innerHTML = `<span class="dot">${g.first ? '★' : '♪'}</span><span>${iconPrefix(g.icon, g.avatar)}<b>${esc(g.name)}</b> got the song${g.first ? ' first' : ''}</span>${g.points ? `<span class="pts">+${fmt(g.points)}</span>` : ''}`;
     const box = $('#gotit');
     box.appendChild(el);
     while (box.children.length > 3) box.firstChild.remove();
@@ -241,8 +246,10 @@
   function renderThemes() {
     const T = window.SliverThemes;
     const cur = T.current();
-    const custom = T.savedCustom();
-    const list = T.available().concat(custom ? [T.buildCustom(custom)] : []);
+    const slotThemes = [0, 1, 2].map((i) => T.slotTheme(i)).filter(Boolean);
+    const ownedPremium = T.premium().filter((t) => T.owns(t.id));
+    const list = T.available().concat(ownedPremium, slotThemes);
+    renderShop();
     $('#theme-grid').innerHTML = list.map((t) => {
       const v = t.vars;
       return `<button class="theme${t.id === cur ? ' on' : ''}" data-theme-id="${t.id}" role="radio" aria-checked="${t.id === cur}">
@@ -254,12 +261,12 @@
         </span>
         ${t.deco ? `<span class="sw-deco" aria-hidden="true">${t.deco}</span>` : ''}
         <span class="name">${t.name}</span>
-        ${t.season ? `<span class="season">Until ${T.seasonEnds(t)}</span>` : ''}
+        ${t.season ? `<span class="season">Until ${T.seasonEnds(t)}</span>` : t.premium ? '<span class="season premium-tag">Premium</span>' : ''}
       </button>`;
     }).join('');
   }
   function openSettings(focusIcons) {
-    renderThemes(); renderIconGrid(); renderCustomTheme(); applyVolume();
+    renderThemes(); renderIconGrid(); renderCustomTheme(); renderPic(); applyVolume();
     $('#decor-toggle').checked = window.SliverDecor ? window.SliverDecor.enabled() : true;
     openSheet('settings');
     if (focusIcons === true) $('#icon-title').scrollIntoView({ block: 'start' });
@@ -280,18 +287,23 @@
   function renderIconGrid() {
     const name = ($('#name').value.trim() || (auth && auth.user && auth.user.name) || '?');
     const opts = [''].concat(ICONS);
-    $('#icon-grid').innerHTML = opts.map((i) => `<button type="button" data-icon="${esc(i)}" role="radio" aria-checked="${i === myIcon}" aria-label="${i ? esc(i) : 'Your initial'}" class="${avClass(i).trim()}">${avatar(i, name)}</button>`).join('');
+    $('#icon-grid').innerHTML = opts.map((i) => `<button type="button" data-icon="${esc(i)}" role="radio" aria-checked="${!myAvatar && i === myIcon}" aria-label="${i ? esc(i) : 'Your initial'}" class="${avClass(i).trim()}">${avatar(i, name)}</button>`).join('');
   }
   function renderMyIconButton() {
     const b = $('#btn-my-icon');
-    b.innerHTML = avatar(myIcon, $('#name').value.trim() || (auth && auth.user && auth.user.name) || '?');
-    b.classList.toggle('emoji', !!myIcon);
+    b.innerHTML = avatar(myIcon, $('#name').value.trim() || (auth && auth.user && auth.user.name) || '?', myAvatar);
+    b.classList.toggle('emoji', !!myIcon && !myAvatar);
+    b.classList.toggle('photo', !!myAvatar);
   }
   async function setMyIcon(icon, { fromAccount = false } = {}) {
     myIcon = ICONS.includes(icon) ? icon : '';
     try { localStorage.setItem('sliver.icon', myIcon); } catch {}
+    if (!fromAccount && myAvatar) { // an icon replaces your photo
+      if (auth && auth.user) { const r = await api('/api/me/avatar', { method: 'POST', body: { clear: true } }); if (r.ok) saveAuth({ token: auth.token, user: r.user }); }
+      setMyAvatar('', null);
+    }
     renderIconGrid(); renderMyIconButton();
-    if (state && session) emit('setIcon', { icon: myIcon });
+    if (state && session) emit('setIcon', { icon: myIcon, avatar: myAvatar });
     if (!fromAccount && auth && auth.user) {
       const res = await api('/api/me/settings', { method: 'POST', body: { icon: myIcon } });
       if (res.ok && res.user) saveAuth({ token: auth.token, user: res.user });
@@ -303,14 +315,18 @@
   // ---------- holiday decorations ----------
   $('#decor-toggle').onchange = (e) => window.SliverDecor && window.SliverDecor.setEnabled(e.target.checked);
 
-  // ---------- make your own theme ----------
+  // ---------- make your own theme (3 save slots) ----------
   const CT = { page: '#ct-page', card: '#ct-card', accent: '#ct-accent', pop: '#ct-pop' };
+  let slot = (() => { const m = String(window.SliverThemes.current()).match(/^custom([1-3])$/); return m ? Number(m[1]) - 1 : 0; })();
   function customColors() {
     const T = window.SliverThemes;
-    return T.savedCustom() || T.DEFAULT_CUSTOM;
+    return T.slots()[slot] || T.DEFAULT_CUSTOM;
   }
   function renderCustomTheme() {
     const T = window.SliverThemes;
+    const saved = T.slots();
+    $('#slot-seg').innerHTML = [0, 1, 2].map((i) => `<button type="button" class="mini-btn" role="tab" data-slot="${i}" aria-pressed="${i === slot}">
+      ${saved[i] ? `<i class="slot-dot" style="background:${saved[i].accent}"></i>` : ''}Slot ${i + 1}${saved[i] ? '' : ' <small>(empty)</small>'}</button>`).join('');
     const c = customColors();
     for (const [k, sel] of Object.entries(CT)) $(sel).value = c[k].toLowerCase();
     $('#ct-code').textContent = T.encode(c);
@@ -321,10 +337,17 @@
     $('#ct-warn').hidden = !warn.length;
     $('#ct-warn').textContent = warn.length ? `Heads up: ${warn.join(', and ')}.` : '';
   }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-slot]');
+    if (!b) return;
+    slot = Number(b.dataset.slot);
+    if (window.SliverThemes.slots()[slot]) window.SliverThemes.set(`custom${slot + 1}`);
+    renderCustomTheme(); renderThemes();
+  });
   for (const [k, sel] of Object.entries(CT)) {
     $(sel).addEventListener('input', (e) => {
       const c = { ...customColors(), [k]: e.target.value.toUpperCase() };
-      window.SliverThemes.setCustom(c); // live preview: switches to "My theme" as you pick
+      window.SliverThemes.setSlot(slot, c); // live preview: switches to "My theme N" as you pick
       renderCustomTheme();
       renderThemes();
     });
@@ -338,11 +361,136 @@
     e.preventDefault();
     const c = window.SliverThemes.decode($('#ct-import-code').value);
     if (!c) return toast('That theme code doesn\'t look right. Check for typos.', 'error');
-    window.SliverThemes.setCustom(c);
+    window.SliverThemes.setSlot(slot, c);
     $('#ct-import-code').value = '';
     renderCustomTheme(); renderThemes();
-    toast('Theme loaded. It\'s now "My theme".', 'good');
+    toast(`Theme loaded into slot ${slot + 1}.`, 'good');
   };
+
+  // ---------- premium themes shop ----------
+  const SHOP = window.SliverShop || { PREMIUM: [], PRICE: 2.5 };
+  let shopUrl = null, coffeeUrl = null, shopPick = null;
+  const money = (n) => `$${Number(n).toFixed(2)}`;
+  function renderShop() {
+    const T = window.SliverThemes;
+    $('#shop-price').textContent = `${money(SHOP.PRICE)} each`;
+    $('#shop-grid').innerHTML = T.premium().map((t) => {
+      const v = t.vars, own = T.owns(t.id);
+      return `<button class="theme premium${own ? ' owned' : ''}${shopPick === t.id ? ' on' : ''}" data-shop="${t.id}">
+        <span class="sw sw-fx" style="background:${v['--page']}" data-fx-thumb="${t.id}">
+          <span class="sw-card" style="background:${v['--paper']}"></span>
+          <span class="sw-disc" style="background:${v['--pop']};box-shadow:0 0 0 2px ${v['--stroke']}"></span>
+          <span class="sw-bar" style="top:28px;background:${v['--accent']}"></span>
+        </span>
+        <span class="name">${esc(t.name)}</span>
+        <span class="season">${own ? '✓ Yours' : `🔒 ${money(SHOP.PRICE)}`}</span>
+      </button>`;
+    }).join('');
+    renderShopDetail();
+  }
+  function renderShopDetail() {
+    const T = window.SliverThemes;
+    const box = $('#shop-detail');
+    const t = shopPick && T.premium().find((x) => x.id === shopPick);
+    if (!t) { box.hidden = true; return; }
+    box.hidden = false;
+    const own = T.owns(t.id), loggedIn = !!(auth && auth.user);
+    box.innerHTML = `<b>${esc(t.name)}</b><p>${esc(t.blurb || '')}</p>
+      <div class="acct-actions">
+        ${own ? `<button class="btn small primary-ish" data-theme-id="${t.id}">Use it</button>`
+          : `<button class="btn small" data-shop-preview="${t.id}">Preview 12 s</button>
+             ${shopUrl ? `<a class="btn small primary-ish" href="${esc(shopUrl)}" target="_blank" rel="noopener">Buy for ${money(SHOP.PRICE)}</a>` : '<span class="hint">Buying isn\'t set up on this server yet.</span>'}`}
+      </div>
+      ${own ? '' : `<p class="hint">${loggedIn
+        ? `Pay with the same email as your Sliver account (<b>${esc(auth.user.email || '')}</b>) and it unlocks by itself within a minute. Using a different email? Put your Sliver email in the message.`
+        : 'Log in first: themes are saved to your account, and they unlock for the email you pay with.'}</p>`}`;
+  }
+  document.addEventListener('click', (e) => {
+    const s1 = e.target.closest('[data-shop]');
+    if (s1) { shopPick = shopPick === s1.dataset.shop ? null : s1.dataset.shop; renderShop(); return; }
+    const pv = e.target.closest('[data-shop-preview]');
+    if (pv) {
+      const t = window.SliverThemes.preview(pv.dataset.shopPreview, 12000);
+      if (t) toast(`Previewing ${t.name} for 12 seconds`, 'info', 3000);
+    }
+  });
+
+  // ---------- your picture ----------
+  // The browser shrinks the photo to a 160×160 square before uploading (about 10 KB).
+  function shrinkImage(file) {
+    return new Promise((resolve, reject) => {
+      if (!file || !/^image\//.test(file.type)) return reject(new Error('Pick a picture file'));
+      if (file.size > 15 * 1024 * 1024) return reject(new Error('That picture is too big (15 MB max)'));
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const side = Math.min(img.naturalWidth, img.naturalHeight);
+        const c = document.createElement('canvas');
+        c.width = c.height = 160;
+        c.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, 160, 160);
+        URL.revokeObjectURL(url);
+        let data = c.toDataURL('image/jpeg', 0.85);
+        if (data.length > 75000) data = c.toDataURL('image/jpeg', 0.6);
+        resolve(data);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Couldn\'t read that picture')); };
+      img.src = url;
+    });
+  }
+  function setMyAvatar(url, data) {
+    myAvatar = okPic(url) ? url : '';
+    try {
+      localStorage.setItem('sliver.avatar', myAvatar);
+      if (data !== undefined) data ? localStorage.setItem('sliver.avatarData', data) : localStorage.removeItem('sliver.avatarData');
+    } catch {}
+    renderPic(); renderMyIconButton(); renderIconGrid();
+    if (state && session) emit('setIcon', { icon: myIcon, avatar: myAvatar });
+    renderAccount();
+  }
+  function renderPic() {
+    const name = $('#name').value.trim() || (auth && auth.user && auth.user.name) || '?';
+    $('#pic-preview').className = `pic-preview${avClass(myIcon, myAvatar)}`;
+    $('#pic-preview').innerHTML = avatar(myIcon, name, myAvatar);
+    $('#pic-remove').hidden = !myAvatar;
+    $('#pic-note').textContent = myAvatar ? (auth && auth.user ? 'Saved to your account.' : 'Saved on this device. Log in to keep it on your account.') : 'Or pick an icon below.';
+  }
+  async function uploadPic(data) {
+    const res = auth && auth.user
+      ? await api('/api/me/avatar', { method: 'POST', body: { image: data } })
+      : await api('/api/avatar/guest', { method: 'POST', body: { image: data } });
+    if (!res.ok) throw new Error(res.error);
+    if (res.user) { saveAuth({ token: auth.token, user: res.user }); return res.user.avatar; }
+    return res.avatar;
+  }
+  $('#pic-file').onchange = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const data = await shrinkImage(file);
+      const url = await uploadPic(data);
+      setMyAvatar(url, auth && auth.user ? null : data);
+      toast('Picture updated', 'good');
+    } catch (err) { toast(err.message || 'Upload failed', 'error'); }
+  };
+  $('#pic-remove').onclick = async () => {
+    if (auth && auth.user) {
+      const res = await api('/api/me/avatar', { method: 'POST', body: { clear: true } });
+      if (!res.ok) return toast(res.error, 'error');
+      saveAuth({ token: auth.token, user: res.user });
+    }
+    setMyAvatar('', null);
+  };
+  // Guest photos live in the server's memory; if it restarted, upload the saved copy again.
+  async function checkGuestPic() {
+    if (!myAvatar || !myAvatar.startsWith('/api/avatar/g/')) return;
+    const r = await fetch(myAvatar, { method: 'HEAD' }).catch(() => null);
+    if (r && r.ok) return;
+    let data = null;
+    try { data = localStorage.getItem('sliver.avatarData'); } catch {}
+    if (!data) return setMyAvatar('', null);
+    try { setMyAvatar(await uploadPic(data), data); } catch { setMyAvatar('', null); }
+  }
 
   // ---------- end game (host) ----------
   // Same two-tap confirm as Leave room. Sends everyone back to the lobby.
@@ -437,7 +585,7 @@
       const canKick = isHost && p.id !== state.meId;
       const armed = armedKick === p.id;
       return `<li class="${p.connected ? '' : 'offline'}${armed ? ' arm' : ''}">
-        <span class="av${avClass(p.icon)}" style="background:${AV[i % AV.length]}">${avatar(p.icon, p.name)}</span>
+        <span class="av${avClass(p.icon, p.avatar)}" style="background:${AV[i % AV.length]}">${avatar(p.icon, p.name, p.avatar)}</span>
         ${armed ? `Remove ${esc(p.name)}?` : `${esc(p.name)}${p.id === state.meId ? ' (you)' : ''}`}
         ${p.id === state.hostId ? '<span class="host-tag">host</span>' : ''}
         ${state.settings.ranked && !p.loggedIn ? '<span class="guest-tag">not logged in</span>' : ''}
@@ -556,6 +704,10 @@
   fetch('/api/info').then((r) => r.json()).then((info) => {
     lanBase = info.lan && info.lan[0];
     emailCodes = !!info.emailCodes;
+    coffeeUrl = info.bmc || null;
+    shopUrl = info.shop || null;
+    for (const id of ['#coffee-home', '#coffee-settings']) { $(id).hidden = !coffeeUrl; if (coffeeUrl) $(id).href = coffeeUrl; }
+    if (!$('#settings').hidden) renderShop();
     if (!$('#auth').hidden && authMode === 'login') setAuthMode('login', { keepMessages: true });
     if (state && state.phase === 'lobby') renderLobby();
   }).catch(() => {});
@@ -589,9 +741,16 @@
     const b = e.target.closest('[data-amode]');
     if (!b) return;
     artistMode = b.dataset.amode === 'top' ? 'top' : 'all';
+    renderAmodeNote();
     try { localStorage.setItem('sliver.artistMode', artistMode); } catch {}
     document.querySelectorAll('[data-amode]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.amode === artistMode)));
   });
+  function renderAmodeNote() {
+    $('#amode-note').textContent = artistMode === 'top'
+      ? 'Top 20: when you add an artist, only their 20 biggest hits go in.'
+      : 'All songs: when you add an artist, every song they have goes in (hits come up more often).';
+  }
+  renderAmodeNote();
   $('#host-only-songs').onchange = (e) => emit('settings', { hostOnlySongs: e.target.checked });
   $('#btn-clear').onclick = () => emit('clearPool');
   const busyPacks = new Set();
@@ -1057,7 +1216,7 @@
     const amHost = state.hostId === state.meId;
     $('#round-players').innerHTML = state.players.filter((p) => p.connected).map((p) => {
       const icon = { correct: '✓ ', out: '', 'gave-up': '', timeout: '' }[p.roundStatus] ?? '';
-      const inner = `${icon}${iconPrefix(p.icon)}${esc(p.name)}${p.id === state.hostId ? ' <small>host</small>' : ''}`;
+      const inner = `${icon}${iconPrefix(p.icon, p.avatar)}${esc(p.name)}${p.id === state.hostId ? ' <small>host</small>' : ''}`;
       return `<li class="${p.roundStatus || ''}">${amHost && p.id !== state.meId ? `<button data-player-menu="${esc(p.id)}">${inner}</button>` : inner}</li>`;
     }).join('');
 
@@ -1236,7 +1395,7 @@
         ? `Heard ${fmtLen(Math.max(0.1, r.heard))}${r.guesses > 1 ? `, ${r.guesses - 1} wrong` : ''}${r.bonus ? ', first to get it' : ''}`
         : label[r.status] || '';
       return `<li>
-        <div><div class="r-name">${iconPrefix(r.icon)}${esc(r.name)}</div><div class="r-sub">${how}. Total ${fmt(totals[r.id])}</div></div>
+        <div><div class="r-name">${iconPrefix(r.icon, r.avatar)}${esc(r.name)}</div><div class="r-sub">${how}. Total ${fmt(totals[r.id])}</div></div>
         <span class="r-pts ${r.points ? '' : 'zero'}">${r.bonus ? '<i class="first-tag">1st</i>' : ''}+${fmt(r.points)}</span>
       </li>`;
     }).join('');
@@ -1263,9 +1422,9 @@
     const ps = [...state.players].sort((a, b) => b.score - a.score);
     const top = ps[0];
     const tied = ps.filter((p) => p.score === top.score);
-    $('#winner').innerHTML = tied.length > 1 ? `${tied.map((p) => iconPrefix(p.icon) + esc(p.name)).join(' & ')} tie` : iconPrefix(top.icon) + esc(top.name);
+    $('#winner').innerHTML = tied.length > 1 ? `${tied.map((p) => iconPrefix(p.icon, p.avatar) + esc(p.name)).join(' & ')} tie` : iconPrefix(top.icon, top.avatar) + esc(top.name);
     $('#final-board').innerHTML = ps.map((p) =>
-      `<li><span class="b-name">${iconPrefix(p.icon)}${esc(p.name)}</span><span class="b-score">${fmt(p.score)}</span></li>`).join('');
+      `<li><span class="b-name">${iconPrefix(p.icon, p.avatar)}${esc(p.name)}</span><span class="b-score">${fmt(p.score)}</span></li>`).join('');
     renderRankedResult();
   }
   $('#btn-again').onclick = () => { unlockAudio(); emit('start').then((r) => !r.ok && toast(r.error, 'error')); };
@@ -1341,7 +1500,9 @@
   function saveAuth(a) {
     auth = a;
     try { a ? localStorage.setItem('sliver.auth', JSON.stringify(a)) : localStorage.removeItem('sliver.auth'); } catch {}
+    window.SliverThemes.setOwned(a && a.user ? a.user.themes || [] : []);
     renderAccount();
+    if (!$('#settings').hidden) renderThemes();
   }
   async function api(path, { method = 'GET', body } = {}) {
     const headers = {};
@@ -1366,7 +1527,7 @@
     const box = $('#account-box');
     if (u) {
       box.innerHTML = `<div class="acct-row">
-          <span class="acct-av${avClass(myIcon)}">${avatar(myIcon, u.name)}</span>
+          <span class="acct-av${avClass(myIcon, myAvatar)}">${avatar(myIcon, u.name, myAvatar)}</span>
           <div class="acct-main"><div class="acct-name">${esc(u.name)} <span class="tag-no">#${esc(u.tag)}</span></div>
           <div class="acct-sub">Rating <b>${fmt(u.rating)}</b> · ${fmt(u.games)} ranked game${u.games === 1 ? '' : 's'}</div></div>
         </div>
@@ -1388,10 +1549,22 @@
       ? `<p class="hint">Logged in as <b>${esc(u.name)}</b> #${esc(u.tag)} (${esc(u.email || '')})</p>
          <label class="check privacy-row"><input type="checkbox" id="hide-account" ${u.hidden ? 'checked' : ''} />
            <span>Hide my account<small>Other players won't see your stats, your name on leaderboards (you'll show as "Hidden player"), or your account in rooms. Friends still can.</small></span></label>
-         <div class="acct-actions"><button class="btn small" data-open-profile="${esc(u.id)}">My stats</button><button class="btn ghost small" data-logout>Log out</button></div>`
+         <form class="row name-change" id="name-change" autocomplete="off">
+           <input id="new-name" maxlength="20" value="${esc(u.name)}" aria-label="Username" />
+           <button class="btn small" type="submit">Change username</button>
+         </form>
+         <div class="acct-actions"><button class="btn small" data-open-profile="${esc(u.id)}">My stats</button><button class="btn ghost small" data-logout>Log out</button></div>
+         <details class="danger-zone"><summary>Delete my account</summary>
+           <p class="hint">This deletes your account, stats, leaderboard places, friends, photo and any themes you bought. It can't be undone.</p>
+           <form class="row" id="delete-account" autocomplete="off">
+             <input id="delete-pw" type="password" placeholder="Your password" aria-label="Your password" autocomplete="current-password" />
+             <button class="btn small danger" type="submit">Delete forever</button>
+           </form>
+         </details>`
       : `<p class="hint">Only needed for ranked games and leaderboards.</p>
          <div class="acct-actions"><button class="btn small" data-open-auth="signup">Sign up</button><button class="btn small" data-open-auth="login">Log in</button></div>`;
     if (u && !$('#name').value.trim()) $('#name').value = u.name;
+    $('#admin-panel').hidden = !(u && u.admin);
     renderMyIconButton();
     $('#btn-friends').hidden = !u;
     if (!u) { friendsData = null; updateFriendBadge(); }
@@ -1456,9 +1629,34 @@
   // Your icon follows your account: the account's icon wins; if it has none yet, it gets this device's.
   function syncIconWithAccount(user) {
     if (!user) return;
+    if (user.avatar) { if (user.avatar !== myAvatar) setMyAvatar(user.avatar, null); }
+    else if (myAvatar && myAvatar.startsWith('/api/avatar/u/')) setMyAvatar('', null); // removed on another device
+    else if (myAvatar) { // a guest photo from before logging in: move it to the account
+      let data = null; try { data = localStorage.getItem('sliver.avatarData'); } catch {}
+      if (data) uploadPic(data).then((url) => setMyAvatar(url, null)).catch(() => {});
+    }
     if (user.icon && user.icon !== myIcon) setMyIcon(user.icon, { fromAccount: true });
-    else if (!user.icon && myIcon) setMyIcon(myIcon);
+    else if (!user.icon && myIcon && !myAvatar) setMyIcon(myIcon);
   }
+  document.addEventListener('submit', async (e) => {
+    if (e.target.id === 'name-change') {
+      e.preventDefault();
+      const res = await api('/api/me/name', { method: 'POST', body: { name: $('#new-name').value } });
+      if (!res.ok) return toast(res.error, 'error');
+      saveAuth({ token: auth.token, user: res.user });
+      if (!state) $('#name').value = res.user.name;
+      toast(`Your username is now ${res.user.name}`, 'good');
+    } else if (e.target.id === 'delete-account') {
+      e.preventDefault();
+      const btn = e.target.querySelector('button');
+      if (btn.dataset.armed !== '1') { btn.dataset.armed = '1'; btn.textContent = 'Tap again to delete'; setTimeout(() => { btn.dataset.armed = ''; btn.textContent = 'Delete forever'; }, 4000); return; }
+      const res = await api('/api/me/delete', { method: 'POST', body: { password: $('#delete-pw').value } });
+      if (!res.ok) { btn.dataset.armed = ''; btn.textContent = 'Delete forever'; return toast(res.error, 'error'); }
+      saveAuth(null); setMyAvatar('', null); tellServerAboutLogin();
+      closeSheet('settings');
+      toast('Your account was deleted', 'info', 5000);
+    }
+  });
   document.addEventListener('change', async (e) => {
     if (e.target.id !== 'hide-account' || !auth || !auth.user) return;
     const hidden = e.target.checked;
@@ -1489,6 +1687,7 @@
     hidePassword();
     saveAuth({ token: res.token, user: res.user });
     syncIconWithAccount(res.user);
+    if (res.gifts && res.gifts.length) setTimeout(() => toast(`Unlocked: ${res.gifts.map((id) => (window.SliverThemes.premium().find((t) => t.id === id) || {}).name || id).join(', ')}. See Settings → Theme.`, 'good', 8000), 1200);
     tellServerAboutLogin();
     refreshFriends();
     closeSheet('auth');
@@ -1531,7 +1730,30 @@
     openSheet('boards');
     loadBoard(board || $('#board-select').value || 'overall');
   }
+  let friendsSort = 'rating';
+  async function loadFriendsBoard() {
+    $('#board-me').hidden = true;
+    $('#board-list').innerHTML = '<li class="lb-empty">Loading…</li>';
+    if (!(auth && auth.user)) { $('#board-note').textContent = ''; $('#board-list').innerHTML = '<li class="lb-empty">Log in to compare with your friends.</li>'; return; }
+    const res = await api('/api/leaderboard/friends');
+    if (!res.ok) { $('#board-list').innerHTML = `<li class="lb-empty">${esc(res.error)}</li>`; return; }
+    const list = friendsSort === 'wins' ? res.byWins : res.byRating;
+    $('#board-note').innerHTML = `You and your friends, by <button class="linkish${friendsSort === 'rating' ? ' on' : ''}" data-fsort="rating">ranked rating</button> or <button class="linkish${friendsSort === 'wins' ? ' on' : ''}" data-fsort="wins">casual wins</button>.`;
+    $('#board-list').innerHTML = list.length > 1 ? list.map((e, i) => `
+      <li class="${e.me ? 'me' : ''}${i < 3 ? ' top' + (i + 1) : ''}">
+        <span class="lb-rank">${i + 1}</span>
+        <button class="lb-name" data-open-profile="${esc(e.id)}">${iconPrefix(e.icon, e.avatar)}${esc(e.name)}${e.me ? ' (you)' : ''}</button>
+        <span class="lb-val">${friendsSort === 'wins'
+          ? `${fmt(e.wins)}<small> wins · ${pct(e.winRate)}</small>`
+          : `${fmt(e.rating)}<small> rating · ${fmt(e.wins)} wins</small>`}</span>
+      </li>`).join('') : '<li class="lb-empty">Add friends to see how you stack up. (Friends button, top right.)</li>';
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-fsort]');
+    if (b) { friendsSort = b.dataset.fsort; loadFriendsBoard(); }
+  });
   async function loadBoard(board) {
+    if (board === 'friends') { $('#board-select').value = 'friends'; return loadFriendsBoard(); }
     $('#board-list').innerHTML = '<li class="lb-empty">Loading…</li>';
     $('#board-me').hidden = true;
     const res = await api(`/api/leaderboard?board=${encodeURIComponent(board)}`);
@@ -1541,7 +1763,8 @@
       const sel = $('#board-select');
       const cats = [];
       for (const b of boardList) { let c = cats.find((x) => x.name === b.cat); if (!c) cats.push(c = { name: b.cat, items: [] }); c.items.push(b); }
-      sel.innerHTML = cats.map((c) => `<optgroup label="${esc(c.name)}">${c.items.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('')}</optgroup>`).join('');
+      sel.innerHTML = '<option value="friends">You and your friends</option>' +
+        cats.map((c) => `<optgroup label="${esc(c.name)}">${c.items.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('')}</optgroup>`).join('');
     }
     $('#board-select').value = res.board.id;
     const overall = res.board.id === 'overall';
@@ -1552,7 +1775,7 @@
     $('#board-list').innerHTML = res.entries.length ? res.entries.map((e) => `
       <li class="${e.id === meId ? 'me' : ''}${e.rank <= 3 ? ' top' + e.rank : ''}">
         <span class="lb-rank">${e.rank}</span>
-        ${e.id ? `<button class="lb-name" data-open-profile="${esc(e.id)}">${iconPrefix(e.icon)}${esc(e.name)} <span class="tag-no">#${esc(e.tag)}</span></button>`
+        ${e.id ? `<button class="lb-name" data-open-profile="${esc(e.id)}">${iconPrefix(e.icon, e.avatar)}${esc(e.name)} <span class="tag-no">#${esc(e.tag)}</span></button>`
           : `<span class="lb-name hidden-player">${esc(e.name)}</span>`}
         <span class="lb-val">${overall ? `${fmt(e.value)}<small> rating</small>` : `${fmt(e.value)}<small> · ${fmt(e.pp)} pp</small>`}</span>
       </li>`).join('') : '<li class="lb-empty">No ranked games here yet. Be the first!</li>';
@@ -1582,7 +1805,7 @@
     const res = await api(`/api/profile/${encodeURIComponent(id)}`);
     if (!res.ok) { $('#profile-body').innerHTML = `<p class="hint">${esc(res.error)}</p>`; return; }
     const p = res.profile, st = p.stats;
-    $('#profile-name').innerHTML = `${iconPrefix(p.icon)}${esc(p.name)} <span class="tag-no">#${esc(p.tag)}</span>`;
+    $('#profile-name').innerHTML = `${iconPrefix(p.icon, p.avatar)}${esc(p.name)} <span class="tag-no">#${esc(p.tag)}</span>`;
     const meU = auth && auth.user;
     const fs = meU && p.id !== meU.id ? friendState(p.id) : 'self';
     const frBtns = fs === 'self' ? '' : `<div class="acct-actions pf-friend">${
@@ -1615,8 +1838,70 @@
         : '<p class="hint">No ranked games yet.</p>'}
       ${p.recent.length ? `<h3>Recent games</h3><ul class="pf-list recent">${p.recent.map((r) => `
         <li><span class="pf-genre-txt">${esc(r.packName)}${mods(r) ? ` <i class="mods">${esc(mods(r))}</i>` : ''}<small>${ago(r.at)} · ${r.correct}/${r.songs} songs</small></span>
-        <span class="pf-score">${fmt(r.score)}<small> · ${fmt(r.pp)} pp</small></span></li>`).join('')}</ul>` : ''}`;
+        <span class="pf-score">${fmt(r.score)}<small> · ${fmt(r.pp)} pp</small></span></li>`).join('')}</ul>` : ''}
+      ${casualHtml(p.casual)}
+      ${p.admin ? `<h3>Admin</h3><div class="admin-box" id="pf-admin">${adminUserHtml(p.admin)}</div>` : ''}`;
   }
+  function casualHtml(c) {
+    if (!c) return '';
+    return `<h3>Casual games</h3>
+      ${c.games ? `<div class="tiles">
+        <div class="tile"><b>${fmt(c.games)}</b><span>Casual games</span></div>
+        <div class="tile"><b>${fmt(c.wins)}</b><span>Wins${c.multi ? ` (${pct(c.winRate)})` : ''}</span></div>
+        <div class="tile"><b>${pct(c.accuracy)}</b><span>Songs guessed</span></div>
+        <div class="tile"><b>${pct(c.firstTry)}</b><span>Right first try</span></div>
+        <div class="tile"><b>${fmt(c.avgPoints)}</b><span>Avg. game</span></div>
+        <div class="tile"><b>${fmt(c.best)}</b><span>Best game</span></div>
+      </div>` : '<p class="hint">No casual games yet. Games played to the end while logged in count here.</p>'}`;
+  }
+
+  // ---------- admin tools (accounts listed in ADMIN_EMAILS) ----------
+  function adminUserHtml(u) {
+    const T = window.SliverThemes;
+    const missing = T.premium().filter((t) => !u.themes.includes(t.id));
+    return `<p class="hint"><b>${esc(u.name)}</b> #${esc(u.tag)} · ${esc(u.email)} · joined ${new Date(u.created).toLocaleDateString()}${u.banned ? ` · <b class="bad">Banned</b>${u.banReason ? ` (${esc(u.banReason)})` : ''}` : ''}</p>
+      <p class="hint">Themes: ${u.themes.length ? u.themes.map((id) => `${esc((T.premium().find((t) => t.id === id) || {}).name || id)} <button class="linkish" data-admin="revoke" data-uid="${esc(u.id)}" data-theme="${esc(id)}">remove</button>`).join(', ') : 'none'}</p>
+      <div class="row admin-gift">
+        <select id="admin-theme-${esc(u.id)}" aria-label="Theme to gift"><option value="random">Random theme</option>${missing.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select>
+        <button class="btn small" data-admin="gift" data-uid="${esc(u.id)}">Gift</button>
+      </div>
+      <div class="acct-actions">
+        ${u.banned ? `<button class="btn small" data-admin="unban" data-uid="${esc(u.id)}">Unban</button>`
+          : `<button class="btn small danger" data-admin="ban" data-uid="${esc(u.id)}">Ban</button>`}
+        ${u.avatar ? `<button class="btn ghost small" data-admin="removePicture" data-uid="${esc(u.id)}">Remove their photo</button>` : ''}
+        <button class="btn ghost small" data-open-profile="${esc(u.id)}">Stats</button>
+      </div>`;
+  }
+  async function adminAction(body) {
+    const res = await api('/api/admin/user', { method: 'POST', body });
+    if (!res.ok) { toast(res.error, 'error'); return null; }
+    return res.user;
+  }
+  function showAdminUser(u) {
+    if ($('#admin-result').innerHTML.trim()) $('#admin-result').innerHTML = adminUserHtml(u);
+    if ($('#pf-admin')) $('#pf-admin').innerHTML = adminUserHtml(u);
+  }
+  $('#admin-find').onsubmit = async (e) => {
+    e.preventDefault();
+    const u = await adminAction({ action: 'view', query: $('#admin-query').value });
+    $('#admin-result').innerHTML = u ? adminUserHtml(u) : '';
+  };
+  document.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-admin]');
+    if (!b) return;
+    const action = b.dataset.admin, id = b.dataset.uid;
+    const body = { action, id };
+    if (action === 'gift') body.themeId = ($(`#admin-theme-${CSS.escape(id)}`) || {}).value || 'random';
+    if (action === 'revoke') body.themeId = b.dataset.theme;
+    if (action === 'ban') {
+      if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = 'Tap again to ban'; setTimeout(() => { b.dataset.armed = ''; b.textContent = 'Ban'; }, 4000); return; }
+      body.reason = prompt('Reason (shown to them, optional):', '') || '';
+    }
+    const u = await adminAction(body);
+    if (!u) return;
+    showAdminUser(u);
+    toast({ ban: 'Banned', unban: 'Unbanned', gift: 'Theme gifted', revoke: 'Theme removed', removePicture: 'Photo removed' }[action] || 'Done', 'good');
+  });
 
   // Buttons that open sheets can be anywhere (home, settings, results, leaderboards).
   document.addEventListener('click', (e) => {
@@ -1677,7 +1962,7 @@
       const mine = p.id === state.meId;
       const arm = (act) => plArmed === `${act}:${p.id}`;
       return `<li class="${p.connected ? '' : 'offline'}">
-        <span class="acct-av${avClass(p.icon)}">${avatar(p.icon, p.name)}</span>
+        <span class="acct-av${avClass(p.icon, p.avatar)}">${avatar(p.icon, p.name, p.avatar)}</span>
         <div class="pl-main"><b>${esc(p.name)}${mine ? ' (you)' : ''}</b>
           <small>${p.id === state.hostId ? 'Host · ' : ''}${fmt(p.score)} points${p.connected ? '' : ' · offline'}${p.loggedIn ? ' · logged in' : ''}</small></div>
         ${!mine && p.userId && auth && auth.user && friendState(p.userId) === null ? `<button class="btn small" data-fr-request="${esc(p.userId)}">Add friend</button>` : ''}
@@ -1804,7 +2089,7 @@
     $('#fr-mycode').textContent = d.code;
     const inRoom = !!(state && session);
     const row = (f, actions, sub) => `<li>
-        <span class="acct-av${avClass(f.icon)}">${avatar(f.icon, f.name)}</span>
+        <span class="acct-av${avClass(f.icon, f.avatar)}">${avatar(f.icon, f.name, f.avatar)}</span>
         <div class="pl-main"><button class="lb-name" data-open-profile="${esc(f.id)}">${esc(f.name)} <span class="tag-no">#${esc(f.tag)}</span></button>
           <small class="fr-st">${sub}</small></div>
         <div class="pl-actions">${actions}</div></li>`;
@@ -1871,7 +2156,7 @@
     if (!name) { closeSheet('friends'); return getName(); }
     rememberName(name);
     if (state) { await emit('leave'); goHome(); }
-    const res = await emit('join', { code, name, auth: authToken(), icon: myIcon });
+    const res = await emit('join', { code, name, auth: authToken(), icon: myIcon, avatar: myAvatar });
     if (!res.ok) return toast(res.error, 'error');
     closeSheet('friends'); closeSheet('profile');
     joined(res);
@@ -1900,6 +2185,16 @@
   });
 
   // Someone sent a request / accepted / removed you: refresh, and say so if there's news.
+  // A theme was bought, gifted or refunded: refresh your account.
+  socket.on('themesChanged', (m) => {
+    if (m && m.text) toast(m.text, 'good', 8000);
+    refreshMe();
+  });
+  // Banned or deleted while online.
+  socket.on('loggedOut', (m) => {
+    saveAuth(null); tellServerAboutLogin();
+    toast((m && m.text) || 'You were logged out', 'error', 8000);
+  });
   socket.on('friendsChanged', (m) => {
     if (m && m.text) toast(m.text, 'good', 5000);
     refreshFriends();
@@ -1910,7 +2205,7 @@
   socket.on('invite', (inv) => {
     if (!inv || !inv.code || (state && session && session.code === inv.code)) return;
     const pop = $('#invite-pop');
-    pop.innerHTML = `<span class="acct-av${avClass(inv.from.icon)}">${avatar(inv.from.icon, inv.from.name)}</span>
+    pop.innerHTML = `<span class="acct-av${avClass(inv.from.icon, inv.from.avatar)}">${avatar(inv.from.icon, inv.from.name, inv.from.avatar)}</span>
       <div class="ip-text"><b>${esc(inv.from.name)}</b> invited you to play<small>Room ${esc(inv.code)}${state ? ' · you\'ll leave this room' : ''}</small></div>
       <div class="acct-actions"><button class="btn small primary-ish" data-ip-join>Join</button><button class="btn small ghost" data-ip-no>Not now</button></div>`;
     pop.hidden = false;
@@ -1921,8 +2216,10 @@
     try { if (document.hidden && 'Notification' in window && Notification.permission === 'granted') new Notification(`${inv.from.name} invited you to Sliver`); } catch {}
   });
 
+  window.SliverThemes.setOwned(auth && auth.user ? auth.user.themes || [] : []);
   renderAccount();
   refreshMe().then(refreshFriends);
+  checkGuestPic();
 
   // Keyboard: space plays the clip during a round (when not typing).
   document.addEventListener('keydown', (e) => {

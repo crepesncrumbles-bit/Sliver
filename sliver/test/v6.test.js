@@ -326,8 +326,9 @@ const dz = (id, title, artist, rank, extra = {}) => ({ id, title, title_short: t
         localStorage: { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; } },
         document: { documentElement: { style: { setProperty() {} }, dataset: {} }, querySelector: () => null },
         CustomEvent: class { constructor(n, o) { this.type = n; this.detail = o && o.detail; } },
+        setTimeout, clearTimeout,
       };
-      ctx.window = { dispatchEvent: (e) => events.push(e) };
+      ctx.window = { dispatchEvent: (e) => events.push(e), SliverShop: require('../public/shop.js') };
       vm.createContext(ctx);
       vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/themes.js'), 'utf8'), ctx);
       const T = ctx.window.SliverThemes;
@@ -343,7 +344,7 @@ const dz = (id, title, artist, rank, extra = {}) => ({ id, title, title_short: t
       check(JSON.stringify(T.decode(` ${code.toLowerCase().replace(/-/g, ' ')} `)) === JSON.stringify(colors), 'pasting is forgiving (lowercase, spaces)');
       check(T.decode(code.slice(0, -1) + (code.endsWith('Z') ? 'Y' : 'Z')) === null && T.decode('hello') === null, 'typos are caught');
       const t = T.setCustom(colors);
-      check(t.id === 'custom' && T.current() === 'custom' && events.at(-1).detail.id === 'custom', 'using a code switches to "My theme"');
+      check(t.id === 'custom1' && T.current() === 'custom1' && events.at(-1).detail.id === 'custom1', 'using a code switches to "My theme 1"');
       const darkT = T.buildCustom({ page: '#000000', card: '#111111', accent: '#7C3AED', pop: '#FDE047' });
       check(darkT.dark && darkT.vars['--ink'] === '#F3F1FA' && T.contrast(darkT.vars['--ink'], '#111111') > 7, 'dark cards get light text');
       const lightT = T.buildCustom({ page: '#FFFFFF', card: '#FFFFFF', accent: '#FDE047', pop: '#1D4ED8' });

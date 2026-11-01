@@ -9,6 +9,7 @@
 const crypto = require('crypto');
 const packs = require('./packs');
 const ICONS = require('../public/icons.js');
+const SHOP = require('../public/shop.js');
 const cleanIcon = (i) => (ICONS.includes(i) ? i : '');
 
 const SESSION_DAYS = 60;
@@ -28,6 +29,10 @@ const K = {
   best: (id) => `ubest:${id}`,
   plays: (id) => `plays:${id}`,
   board: (b) => `lb:${b}`,
+  own: (id) => `own:${id}`,         // hash: premium theme id -> how they got it
+  pgrant: (e) => `pgrant:${e}`,     // list: themes bought with an email that has no account yet
+  avatar: (id) => `avatar:${id}`,   // the account's photo (base64), served at /api/avatar/u/<id>
+  bmc: (k) => `bmc:${k}`,           // Buy Me a Coffee events already handled
   fr: (id) => `fr:${id}`,       // hash: otherId -> "friend" | "in" (they asked me) | "out" (I asked them)
   blk: (id) => `blk:${id}`,     // hash: otherId -> when I blocked them
   fcode: (c) => `fcode:${c}`,   // friend code -> userId
@@ -46,6 +51,7 @@ const toObj = (flat) => {
   return o;
 };
 const int = (v) => parseInt(v || '0', 10) || 0;
+const avatarUrl = (u) => (u && u.avatarV ? `/api/avatar/u/${u.id}?v=${u.avatarV}` : '');
 const tagFor = (id) => String(parseInt(crypto.createHash('sha1').update(String(id)).digest('hex').slice(0, 8), 16) % 10000).padStart(4, '0');
 
 function scrypt(password, salt) {
@@ -82,19 +88,45 @@ function checkPassword(password) {
   return password;
 }
 
+// A small square photo, already shrunk by the browser. data:image/(jpeg|png|webp);base64,…
+const MAX_AVATAR_BYTES = 60 * 1024;
+function parseImage(dataUrl) {
+  const m = String(dataUrl || '').match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/);
+  if (!m) throw new AccountError('That picture didn\'t upload. Try a JPG or PNG.');
+  const buffer = Buffer.from(m[2], 'base64');
+  if (!buffer.length || buffer.length > MAX_AVATAR_BYTES) throw new AccountError('That picture is too big');
+  const magic = { jpeg: [0xff, 0xd8], png: [0x89, 0x50], webp: [0x52, 0x49] }[m[1]];
+  if (buffer[0] !== magic[0] || buffer[1] !== magic[1]) throw new AccountError('That file isn\'t a picture');
+  return { type: `image/${m[1]}`, buffer, b64: m[2] };
+}
+
 class Accounts {
   // mailer: optional. When set, sign-ups need a 6-digit code from their email,
   // and "Forgot password?" works.
-  constructor(store, mailer = null) {
+  // adminEmails: accounts with these emails can ban players and gift themes.
+  constructor(store, mailer = null, { adminEmails = [] } = {}) {
     this.store = store;
     this.mailer = mailer;
+    this.adminEmails = new Set((Array.isArray(adminEmails) ? adminEmails : String(adminEmails || '').split(','))
+      .map((e) => String(e).trim().toLowerCase()).filter(Boolean));
+  }
+
+  isAdmin(u) { return !!(u && u.email && this.adminEmails.has(String(u.email).toLowerCase())); }
+
+  // Everything your own device gets about your account.
+  async selfUser(u) {
+    const owned = Object.keys(toObj(await this.store.cmd('HGETALL', K.own(u.id))));
+    return {
+      ...this.publicUser(u), email: u.email, hidden: !!int(u.hidden),
+      themes: owned.filter((t) => SHOP.ids.includes(t)), admin: this.isAdmin(u),
+    };
   }
 
   get emailCodes() { return !!this.mailer; }
 
   publicUser(u) {
     if (!u || !u.id) return null;
-    return { id: u.id, name: u.name, tag: tagFor(u.id), rating: int(u.rating), games: int(u.games), icon: cleanIcon(u.icon) };
+    return { id: u.id, name: u.name, tag: tagFor(u.id), rating: int(u.rating), games: int(u.games), icon: cleanIcon(u.icon), avatar: avatarUrl(u) };
   }
 
   // Your own account settings: icon (one of ICONS, or '' for your initial) and
@@ -108,7 +140,185 @@ class Accounts {
     if (hidden !== undefined) ops.push(['HSET', K.user(userId), 'hidden', hidden ? 1 : 0]);
     if (ops.length) await this.store.pipeline(ops);
     const u = await this.getUser(userId);
-    return { user: { ...this.publicUser(u), email: u.email, hidden: !!int(u.hidden) } };
+    return { user: await this.selfUser(u) };
+  }
+
+  // ---------- your photo, name, deleting your account ----------
+  async setAvatar(userId, dataUrl) {
+    const img = parseImage(dataUrl);
+    const v = crypto.createHash('sha1').update(img.buffer).digest('hex').slice(0, 10);
+    await this.store.pipeline([['SET', K.avatar(userId), `${img.type};${img.b64}`], ['HSET', K.user(userId), 'avatarV', v]]);
+    return { user: await this.selfUser(await this.getUser(userId)) };
+  }
+
+  async clearAvatar(userId) {
+    await this.store.pipeline([['DEL', K.avatar(userId)], ['HSET', K.user(userId), 'avatarV', '']]);
+    const u = await this.getUser(userId);
+    return u ? { user: await this.selfUser(u) } : {};
+  }
+
+  async getAvatar(userId) {
+    if (!/^[\w-]{6,40}$/.test(String(userId))) return null;
+    const v = await this.store.cmd('GET', K.avatar(userId));
+    if (!v) return null;
+    const [type, b64] = String(v).split(';');
+    return { type, buffer: Buffer.from(b64, 'base64') };
+  }
+
+  async changeName(userId, name) {
+    name = checkName(name);
+    await this.store.cmd('HSET', K.user(userId), 'name', name);
+    return { user: await this.selfUser(await this.getUser(userId)) };
+  }
+
+  async checkPasswordFor(u, password) {
+    const got = await scrypt(password || '', u.salt);
+    const want = Buffer.from(u.hash, 'base64');
+    if (got.length !== want.length || !crypto.timingSafeEqual(got, want)) throw new AccountError('That password isn\'t right');
+  }
+
+  // Deletes the account and everything about it: stats, leaderboard places, friends, photo, themes.
+  async deleteAccount(userId, password) {
+    const u = await this.getUser(userId);
+    if (!u) throw new AccountError('Account not found');
+    await this.checkPasswordFor(u, password);
+    const [bests, fr] = await this.store.pipeline([['HGETALL', K.best(userId)], ['HGETALL', K.fr(userId)]]);
+    const ops = [
+      ['DEL', K.user(userId)], ['DEL', K.email(u.email)], ['DEL', K.avatar(userId)], ['DEL', K.own(userId)],
+      ['DEL', K.best(userId)], ['DEL', K.plays(userId)], ['DEL', K.fr(userId)], ['DEL', K.blk(userId)],
+      ['DEL', K.pgrant(u.email)], ['ZREM', K.board('overall'), userId],
+      ...Object.keys(toObj(bests)).map((p) => ['ZREM', K.board(p), userId]),
+      ...Object.keys(toObj(fr)).map((other) => ['HDEL', K.fr(other), userId]),
+    ];
+    if (u.fcode) ops.push(['DEL', K.fcode(u.fcode)]);
+    await this.store.pipeline(ops);
+    return { deleted: true, email: u.email };
+  }
+
+  // ---------- premium themes ----------
+  async ownedThemes(userId) {
+    return Object.keys(toObj(await this.store.cmd('HGETALL', K.own(userId)))).filter((t) => SHOP.ids.includes(t));
+  }
+
+  // themeId: a premium theme, or 'random' (one they don't own yet). Returns the theme given, or
+  // null if they already have it / have them all.
+  async grantTheme(userId, themeId, from = 'gift') {
+    const owned = await this.ownedThemes(userId);
+    if (themeId === 'random') {
+      const left = SHOP.ids.filter((t) => !owned.includes(t));
+      if (!left.length) return null;
+      themeId = left[crypto.randomInt(0, left.length)];
+    }
+    if (!SHOP.ids.includes(themeId)) throw new AccountError('No theme with that name');
+    if (owned.includes(themeId)) return null;
+    await this.store.cmd('HSET', K.own(userId), themeId, JSON.stringify({ from, at: Date.now() }));
+    return themeId;
+  }
+
+  async revokeTheme(userId, themeId) {
+    await this.store.cmd('HDEL', K.own(userId), themeId);
+  }
+
+  // Bought with an email: give it now if there's an account, else when that email signs up.
+  async grantByEmail(email, themeId, from) {
+    email = String(email || '').trim().toLowerCase();
+    const id = await this.store.cmd('GET', K.email(email));
+    if (id) return { userId: id, themeId: await this.grantTheme(id, themeId, from) };
+    await this.store.pipeline([['RPUSH', K.pgrant(email), JSON.stringify({ themeId, from })], ['EXPIRE', K.pgrant(email), 400 * 86400]]);
+    return { userId: null, themeId: null, pending: true };
+  }
+
+  async applyPendingGrants(userId, email) {
+    const list = await this.store.cmd('LRANGE', K.pgrant(email), 0, -1);
+    if (!list || !list.length) return [];
+    await this.store.cmd('DEL', K.pgrant(email));
+    const got = [];
+    for (const raw of list) {
+      try { const g = JSON.parse(raw); const t = await this.grantTheme(userId, g.themeId, g.from); if (t) got.push(t); } catch { /* skip bad entry */ }
+    }
+    return got;
+  }
+
+  // ---------- admin: ban / unban, find players ----------
+  async findUser(query) {
+    const q = String(query || '').trim();
+    if (!q) throw new AccountError('Type an email, friend code or player id');
+    let id = null;
+    if (q.includes('@')) id = await this.store.cmd('GET', K.email(q.toLowerCase()));
+    if (!id && /^[A-Za-z0-9]{6}$/.test(q)) id = await this.store.cmd('GET', K.fcode(q.toUpperCase()));
+    if (!id && /^[\w-]{6,40}$/.test(q)) id = (await this.getUser(q)) ? q : null;
+    if (!id) throw new AccountError('No player found');
+    return id;
+  }
+
+  async adminView(id) {
+    const u = await this.getUser(id);
+    if (!u) throw new AccountError('No player found');
+    return {
+      id, name: u.name, tag: tagFor(id), email: u.email, banned: !!int(u.banned), banReason: u.banReason || '',
+      themes: await this.ownedThemes(id), created: int(u.created), avatar: avatarUrl(u), hidden: !!int(u.hidden),
+    };
+  }
+
+  async ban(id, reason = '') {
+    const u = await this.getUser(id);
+    if (!u) throw new AccountError('No player found');
+    if (this.isAdmin(u)) throw new AccountError('You can\'t ban an admin');
+    const bests = toObj(await this.store.cmd('HGETALL', K.best(id)));
+    await this.store.pipeline([
+      ['HSET', K.user(id), 'banned', 1, 'banReason', String(reason).slice(0, 200), 'pv', int(u.pv) + 1], // logs them out everywhere
+      ['ZREM', K.board('overall'), id], ...Object.keys(bests).map((p) => ['ZREM', K.board(p), id]),
+    ]);
+    return this.adminView(id);
+  }
+
+  async unban(id) {
+    const u = await this.getUser(id);
+    if (!u) throw new AccountError('No player found');
+    const bests = toObj(await this.store.cmd('HGETALL', K.best(id)));
+    const ops = [['HSET', K.user(id), 'banned', 0, 'banReason', '']];
+    if (int(u.games)) ops.push(['ZADD', K.board('overall'), int(u.rating), id]);
+    for (const [p, score] of Object.entries(bests)) if (packs.byId.has(p)) ops.push(['ZADD', K.board(p), int(score), id]);
+    await this.store.pipeline(ops);
+    return this.adminView(id);
+  }
+
+  // ---------- casual (non-ranked) games ----------
+  // play: { songs, correct, firstTry, points, won, players }
+  async submitCasual(userId, play) {
+    if (!(await this.getUser(userId))) return null;
+    const pts = Math.max(0, Math.round(Number(play.points) || 0));
+    const ops = [
+      ['HINCRBY', K.user(userId), 'cGames', 1],
+      ['HINCRBY', K.user(userId), 'cSongs', int(play.songs)],
+      ['HINCRBY', K.user(userId), 'cCorrect', int(play.correct)],
+      ['HINCRBY', K.user(userId), 'cFirst', int(play.firstTry)],
+      ['HINCRBY', K.user(userId), 'cPoints', pts],
+    ];
+    if (play.players >= 2) ops.push(['HINCRBY', K.user(userId), 'cMulti', 1]);
+    if (play.won && play.players >= 2) ops.push(['HINCRBY', K.user(userId), 'cWins', 1]);
+    await this.store.pipeline(ops);
+    const best = int(await this.store.cmd('HGET', K.user(userId), 'cBest'));
+    if (pts > best) await this.store.cmd('HSET', K.user(userId), 'cBest', pts);
+    return true;
+  }
+
+  // ---------- you vs. your friends ----------
+  async friendsBoard(meId) {
+    const ids = [meId, ...(await this.friendIds(meId))];
+    const rows = await this.store.pipeline(ids.map((x) => ['HMGET', K.user(x), 'name', 'rating', 'icon', 'avatarV', 'games', 'cGames', 'cWins', 'cMulti', 'cPoints', 'banned']));
+    const list = ids.map((x, i) => {
+      const [name, rating, icon, avatarV, games, cGames, cWins, cMulti, cPoints, banned] = rows[i] || [];
+      if (!name || (int(banned) && x !== meId)) return null;
+      return {
+        id: x, name, tag: tagFor(x), icon: cleanIcon(icon), avatar: avatarUrl({ id: x, avatarV }), me: x === meId,
+        rating: int(rating), ranked: int(games), casual: int(cGames), wins: int(cWins),
+        winRate: int(cMulti) ? int(cWins) / int(cMulti) : 0, avgPoints: int(cGames) ? Math.round(int(cPoints) / int(cGames)) : 0,
+      };
+    }).filter(Boolean);
+    const byRating = [...list].sort((a, b) => b.rating - a.rating || b.wins - a.wins || a.name.localeCompare(b.name));
+    const byWins = [...list].sort((a, b) => b.wins - a.wins || b.winRate - a.winRate || a.name.localeCompare(b.name));
+    return { byRating, byWins };
   }
 
   async friendIds(userId) {
@@ -144,7 +354,8 @@ class Accounts {
       'id', id, 'name', name, 'email', email, 'salt', salt, 'hash', hash, 'created', Date.now(), 'pv', 0,
       'games', 0, 'songs', 0, 'correct', 0, 'firstTry', 0, 'heard10', 0, 'points', 0, 'best', 0, 'bestPack', '', 'rating', 0);
     const token = await this.newSession(id, 0);
-    return { token, user: { ...this.publicUser({ id, name, rating: 0, games: 0 }), email, hidden: false } };
+    const gifts = await this.applyPendingGrants(id, email);
+    return { token, user: await this.selfUser(await this.getUser(id)), gifts };
   }
 
   // Throttle: one code per email every RESEND_SECONDS.
@@ -246,8 +457,9 @@ class Accounts {
     const { salt, hash } = await this.hashPassword(password);
     const pv = int(u.pv) + 1;
     await this.store.pipeline([['HSET', K.user(id), 'salt', salt, 'hash', hash, 'pv', pv], ['DEL', K.reset(email)]]);
+    if (int(u.banned)) throw new AccountError(`This account is banned${u.banReason ? `: ${u.banReason}` : ''}.`);
     const token = await this.newSession(id, pv);
-    return { token, user: { ...this.publicUser(u), email: u.email, hidden: !!int(u.hidden) } };
+    return { token, user: await this.selfUser(await this.getUser(id)) };
   }
 
   async login({ email, password } = {}) {
@@ -264,8 +476,10 @@ class Accounts {
       }
       throw new AccountError('Wrong email or password');
     }
+    if (int(u.banned)) throw new AccountError(`This account is banned${u.banReason ? `: ${u.banReason}` : ''}.`);
     const token = await this.newSession(u.id, int(u.pv));
-    return { token, user: { ...this.publicUser(u), email: u.email, hidden: !!int(u.hidden) } };
+    const gifts = await this.applyPendingGrants(u.id, u.email);
+    return { token, user: await this.selfUser(gifts.length ? await this.getUser(u.id) : u), gifts };
   }
 
   async session(token) {
@@ -276,7 +490,8 @@ class Accounts {
     const u = await this.getUser(id);
     if (!u) return null;
     if (int(pv) !== int(u.pv)) return null; // password changed since this login
-    return { ...this.publicUser(u), email: u.email, hidden: !!int(u.hidden) };
+    if (int(u.banned)) return null;
+    return this.selfUser(u);
   }
 
   async logout(token) {
@@ -341,14 +556,14 @@ class Accounts {
     const flat = await this.store.cmd('ZREVRANGE', K.board(board), 0, TOP_N - 1, 'WITHSCORES');
     const rows = [];
     for (let i = 0; i < flat.length; i += 2) rows.push({ id: flat[i], value: Number(flat[i + 1]) });
-    const names = rows.length ? await this.store.pipeline(rows.map((r) => ['HMGET', K.user(r.id), 'name', 'rating', 'icon', 'hidden'])) : [];
+    const names = rows.length ? await this.store.pipeline(rows.map((r) => ['HMGET', K.user(r.id), 'name', 'rating', 'icon', 'hidden', 'avatarV'])) : [];
     const friends = await this.friendIds(meId);
     const entries = rows.map((r, i) => {
-      const [name, rating, icon, hidden] = names[i] || [];
+      const [name, rating, icon, hidden, avatarV] = names[i] || [];
       const masked = int(hidden) && r.id !== meId && !friends.has(r.id); // hidden account: no name, no link
       return {
         rank: i + 1, id: masked ? null : r.id, name: masked ? 'Hidden player' : name || 'Player', tag: masked ? '' : tagFor(r.id),
-        icon: masked ? '' : cleanIcon(icon), hidden: !!masked,
+        icon: masked ? '' : cleanIcon(icon), avatar: masked ? '' : avatarUrl({ id: r.id, avatarV }), hidden: !!masked,
         value: r.value, pp: board === 'overall' ? r.value : ppFor(r.value), rating: int(rating),
       };
     });
@@ -362,10 +577,11 @@ class Accounts {
     return { board: info, entries, me, total, boards: this.boards() };
   }
 
-  async profile(id, viewerId = null) {
+  async profile(id, viewerId = null, viewerIsAdmin = false) {
     const u = await this.getUser(id);
     if (!u) throw new AccountError('No player with that id');
-    if (int(u.hidden) && viewerId !== id && !(await this.areFriends(viewerId, id))) {
+    if (int(u.banned) && viewerId !== id && !viewerIsAdmin) throw new AccountError('That player isn\'t available');
+    if (int(u.hidden) && viewerId !== id && !viewerIsAdmin && !(await this.areFriends(viewerId, id))) {
       throw new AccountError(`${u.name} keeps their stats private`);
     }
     const bests = toObj(await this.store.cmd('HGETALL', K.best(id)));
@@ -385,7 +601,16 @@ class Accounts {
       .filter(Boolean).map((r) => ({ ...r, packName: (packs.byId.get(r.packId) || {}).name || r.packId }));
     const games = int(u.games), songs = int(u.songs), correct = int(u.correct);
     return {
-      id: u.id, name: u.name, tag: tagFor(u.id), icon: cleanIcon(u.icon), hidden: !!int(u.hidden), created: int(u.created),
+      id: u.id, name: u.name, tag: tagFor(u.id), icon: cleanIcon(u.icon), avatar: avatarUrl(u), hidden: !!int(u.hidden), created: int(u.created),
+      casual: {
+        games: int(u.cGames), wins: int(u.cWins), multi: int(u.cMulti), songs: int(u.cSongs), correct: int(u.cCorrect),
+        winRate: int(u.cMulti) ? int(u.cWins) / int(u.cMulti) : 0,
+        accuracy: int(u.cSongs) ? int(u.cCorrect) / int(u.cSongs) : 0,
+        firstTry: int(u.cCorrect) ? int(u.cFirst) / int(u.cCorrect) : 0,
+        avgPoints: int(u.cGames) ? Math.round(int(u.cPoints) / int(u.cGames)) : 0,
+        best: int(u.cBest),
+      },
+      ...(viewerIsAdmin ? { admin: await this.adminView(id) } : {}),
       rating: int(u.rating), globalRank: gRank === null ? null : int(gRank) + 1, players: int(gTotal),
       stats: {
         games, songs, correct,
@@ -491,8 +716,8 @@ class Accounts {
     const [frFlat, blkFlat] = await this.store.pipeline([['HGETALL', K.fr(me)], ['HGETALL', K.blk(me)]]);
     const fr = toObj(frFlat), blk = toObj(blkFlat);
     const ids = [...new Set([...Object.keys(fr), ...Object.keys(blk)])];
-    const info = ids.length ? await this.store.pipeline(ids.map((x) => ['HMGET', K.user(x), 'name', 'rating', 'icon'])) : [];
-    const who = new Map(ids.map((x, i) => [x, { id: x, name: (info[i] && info[i][0]) || null, tag: tagFor(x), rating: int(info[i] && info[i][1]), icon: cleanIcon(info[i] && info[i][2]) }]));
+    const info = ids.length ? await this.store.pipeline(ids.map((x) => ['HMGET', K.user(x), 'name', 'rating', 'icon', 'avatarV'])) : [];
+    const who = new Map(ids.map((x, i) => [x, { id: x, name: (info[i] && info[i][0]) || null, tag: tagFor(x), rating: int(info[i] && info[i][1]), icon: cleanIcon(info[i] && info[i][2]), avatar: avatarUrl({ id: x, avatarV: info[i] && info[i][3] }) }]));
     const pick = (state) => Object.keys(fr).filter((x) => fr[x] === state && who.get(x).name).map((x) => who.get(x));
     const friends = pick('friend').map((f) => ({ ...f, ...online(f.id) }))
       .sort((a, b) => (b.online - a.online) || a.name.localeCompare(b.name));
@@ -506,4 +731,4 @@ class Accounts {
   }
 }
 
-module.exports = { Accounts, AccountError, ppFor, ratingFrom, tagFor, ICONS };
+module.exports = { Accounts, AccountError, ppFor, ratingFrom, tagFor, ICONS, parseImage, SHOP };
