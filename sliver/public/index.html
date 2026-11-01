@@ -130,6 +130,7 @@
           </button>
         </div>
         <p class="mode-mult" id="mode-mult"></p>
+        <label class="check casual-only speedrun-opt"><input type="checkbox" id="set-speedrun" /> <span><b>⚡ Speedrun</b> Move on as soon as you're done with a song. No waiting for the others.</span></label>
         <div class="settings">
           <label class="field casual-only"><span>Songs</span><select id="set-rounds"></select></label>
           <label class="field casual-only"><span>Time per song</span><select id="set-time"></select></label>
@@ -151,7 +152,8 @@
     <section id="screen-loading" class="screen" hidden>
       <div class="card center loading-card">
         <div class="eq big" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
-        <p>Cueing up the next song…</p>
+        <p id="loading-text">Cueing up the next song…</p>
+        <div id="loading-extra"></div>
       </div>
     </section>
 
@@ -244,6 +246,7 @@
       <div class="card">
         <ol id="final-board" class="board"></ol>
       </div>
+      <div class="card sr-songs" id="sr-songs" hidden></div>
       <div class="host-only stack">
         <button id="btn-again" class="btn primary big">Play again</button>
         <button id="btn-lobby" class="btn ghost">Change songs or mode</button>

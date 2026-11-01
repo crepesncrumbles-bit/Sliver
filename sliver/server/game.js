@@ -77,7 +77,7 @@ class Room {
     this.settings = {
       rounds: 5, roundTime: 0, maxGuesses: 0, hard: false, chaos: false,
       listenLen: LISTEN_AFTER, maxLen: GUESS_CLIP, ranked: false, rankedPack: null,
-      hostOnlySongs: false,
+      hostOnlySongs: false, speedrun: false,
     };
     this.game = null; // frozen copy of the settings while a game runs
     this.rankedPool = null; // { packId, tracks } songs for ranked play
@@ -112,6 +112,7 @@ class Room {
     };
     this.players.set(p.id, p);
     if (!this.hostId) this.hostId = p.id;
+    if (this.game && this.game.speedrun && this.phase === 'round') { p.srIdx = 0; p.srDone = false; this.srBegin(p); }
     return p;
   }
 
@@ -349,6 +350,7 @@ class Room {
     if (typeof s.hostOnlySongs === 'boolean') st.hostOnlySongs = s.hostOnlySongs;
     if (typeof s.hard === 'boolean') st.hard = s.hard;
     if (typeof s.chaos === 'boolean') st.chaos = s.chaos;
+    if (typeof s.speedrun === 'boolean') st.speedrun = s.speedrun;
     if (s.mode !== undefined) { // older clients: one mode at a time
       st.hard = s.mode === 'hard'; st.chaos = s.mode === 'chaos';
     }
@@ -429,11 +431,13 @@ class Room {
       maxLen: GUESS_CLIP,
       listenLen: LISTEN_AFTER,
       roundTime: ranked ? RANKED_ROUND_TIME : st.roundTime,
+      speedrun: !ranked && !!st.speedrun,
       entrants,
       history: [],
     };
     this.poolVersion++;
     if (this.opts.onStat) { this.opts.onStat('games'); if (ranked) this.opts.onStat('ranked'); }
+    if (this.game.speedrun) return this.startSpeedrun();
     await this.nextRound();
   }
 
@@ -447,21 +451,7 @@ class Room {
     this.reveal = null;
     this.broadcast();
 
-    let unused = game.pool.filter((t) => !this.usedTrackKeys.has(t.poolId));
-    if (!unused.length) { this.usedTrackKeys.clear(); unused = [...game.pool]; }
-
-    let clip = null, track = null;
-    for (let attempt = 0; attempt < 8 && unused.length; attempt++) {
-      const pick = unused.splice(pickIndex(unused), 1)[0];
-      this.usedTrackKeys.add(pick.poolId);
-      try {
-        clip = await this.loadClip(pick);
-        track = pick;
-        break;
-      } catch (err) {
-        console.warn(`  skipped "${pick.title}": ${err.message}`);
-      }
-    }
+    const { clip, track } = await this.pickSong(game);
     if (gid !== this.gameId || this.phase !== 'loading') return; // host ended the game meanwhile
     if (!track) {
       this.phase = 'lobby';
@@ -491,6 +481,150 @@ class Room {
     this.phase = 'round';
     if (roundTimeMs) this.timers.round = setTimeout(() => this.endRound(), roundTimeMs + 300);
     this.broadcast();
+  }
+
+  // A random unused song from the game's pool, with its audio loaded. { track: null } if none loads.
+  async pickSong(game) {
+    let unused = game.pool.filter((t) => !this.usedTrackKeys.has(t.poolId));
+    if (!unused.length) { this.usedTrackKeys.clear(); unused = [...game.pool]; }
+    for (let attempt = 0; attempt < 8 && unused.length; attempt++) {
+      const pick = unused.splice(pickIndex(unused), 1)[0];
+      this.usedTrackKeys.add(pick.poolId);
+      try {
+        return { clip: await this.loadClip(pick), track: pick };
+      } catch (err) {
+        console.warn(`  skipped "${pick.title}": ${err.message}`);
+      }
+    }
+    return { clip: null, track: null };
+  }
+
+  // ---------- speedrun: everyone plays the same songs, each at their own pace ----------
+  // When you're done with a song you move straight on; the room's results come when everyone
+  // has finished every song (or the host ends it).
+  async startSpeedrun() {
+    const game = this.game;
+    const gid = this.gameId;
+    game.sr = []; // index -> promise of a round-like object
+    this.phase = 'loading';
+    this.round = null;
+    this.reveal = null;
+    for (const p of this.players.values()) { p.srIdx = 0; p.srDone = false; p.srStart = null; }
+    this.broadcast();
+    const first = await this.srRound(0);
+    if (gid !== this.gameId) return;
+    if (!first) {
+      this.phase = 'lobby';
+      this.game = null;
+      this.poolVersion++;
+      this.broadcast();
+      this.io.to(this.code).emit('toast', { kind: 'error', text: 'Couldn\'t load any song audio. Try other songs.' });
+      return;
+    }
+    this.phase = 'round';
+    this.roundNum = 1;
+    for (const p of this.players.values()) this.srBegin(p);
+    this.broadcast();
+    // Load the rest one after another in the background, so moving on is instant.
+    (async () => { for (let i = 1; i < game.rounds && gid === this.gameId; i++) await this.srRound(i); })().catch(() => {});
+  }
+
+  // Song i of the speedrun (loads it once). Resolves to null if it couldn't load.
+  srRound(i) {
+    const game = this.game;
+    if (!game || !game.sr) return Promise.resolve(null);
+    if (!game.sr[i]) {
+      game.sr[i] = (async () => {
+        if (i > 0) await this.srRound(i - 1); // keep the pick order stable
+        const { clip, track } = await this.pickSong(game);
+        if (!track) return null;
+        if (this.opts.onStat) this.opts.onStat('songs');
+        const r = {
+          num: i + 1, nonce: id(10), track, clip, ...this.roundTwist(), maxLen: game.maxLen,
+          firstId: null, startedAt: Date.now(), endsAt: null, results: new Map(),
+        };
+        game.srLoaded = game.srLoaded || [];
+        game.srLoaded[i] = r;
+        return r;
+      })();
+    }
+    return game.sr[i];
+  }
+
+  srCurrent(p) {
+    const g = this.game;
+    return g && g.speedrun && g.srLoaded && p && !p.srDone ? g.srLoaded[p.srIdx] || null : null;
+  }
+
+  // Start the player's current song (their own timer, if the room has one).
+  srBegin(p) {
+    const r = this.srCurrent(p);
+    if (!r) return;
+    const game = this.game;
+    p.srStart = Date.now();
+    clearTimeout(p.srTimer);
+    if (game.roundTime) {
+      p.srEndsAt = Date.now() + game.roundTime * 1000;
+      const idx = p.srIdx, gid = this.gameId;
+      p.srTimer = setTimeout(() => {
+        if (gid !== this.gameId || p.srIdx !== idx || p.srDone) return;
+        const res = this.resultFor(p.id, r);
+        if (res.status === 'playing') { res.status = 'timeout'; this.broadcast(); }
+      }, game.roundTime * 1000 + 300);
+    } else p.srEndsAt = null;
+  }
+
+  // The player moves on to their next song (only once they're done with this one).
+  async srNext(playerId) {
+    const p = this.players.get(playerId);
+    const game = this.game;
+    if (!p || !game || !game.speedrun || this.phase !== 'round') throw new Error('Not in a speedrun');
+    if (p.srDone) return;
+    const cur = this.srCurrent(p);
+    if (cur && this.resultFor(p.id, cur).status === 'playing') throw new Error('Finish this song first');
+    clearTimeout(p.srTimer);
+    if (p.srIdx + 1 >= game.rounds) {
+      p.srDone = true;
+      this.srMaybeFinish();
+      this.broadcast();
+      return;
+    }
+    p.srIdx++;
+    p.srWaiting = true;
+    this.broadcast();
+    const gid = this.gameId;
+    const next = await this.srRound(p.srIdx);
+    if (gid !== this.gameId) return;
+    p.srWaiting = false;
+    if (!next) { p.srDone = true; this.srMaybeFinish(); this.broadcast(); return; }
+    this.roundNum = Math.max(this.roundNum, p.srIdx + 1);
+    this.srBegin(p);
+    this.broadcast();
+  }
+
+  srMaybeFinish() {
+    if (this.phase !== 'round' || !this.game || !this.game.speedrun) return;
+    const active = [...this.players.values()].filter((p) => p.connected);
+    if (active.length && active.every((p) => p.srDone)) this.srFinish();
+  }
+
+  // Wrap up: anything unplayed counts as missed, then straight to the results.
+  srFinish() {
+    const game = this.game;
+    if (!game || !game.speedrun) return;
+    for (const p of this.players.values()) clearTimeout(p.srTimer);
+    const rounds = (game.srLoaded || []).filter(Boolean);
+    game.history = rounds.map((r) => ({
+      title: r.track.title,
+      artist: r.track.artist,
+      results: new Map([...this.players.values()].map((p) => {
+        const x = r.results.get(p.id) || { status: 'timeout', points: 0, maxHeard: 0, guesses: [] };
+        if (x.status === 'playing') x.status = 'timeout';
+        return [p.id, { status: x.status, points: x.points, heard: x.maxHeard, guesses: x.guesses.length }];
+      })),
+    }));
+    game.srSongs = rounds.map((r) => ({ title: r.track.title, artist: r.track.artist, cover: r.track.cover, link: r.track.link }));
+    this.finish();
   }
 
   // Hard: starts somewhere random + type the title. Chaos: a random twist. Both can be on.
@@ -568,11 +702,18 @@ class Room {
     return fetchPreview(track.sourceId);
   }
 
-  resultFor(playerId) {
-    let r = this.round.results.get(playerId);
+  // The round this player is on: the shared one, or in a speedrun their own current song.
+  roundOf(playerId) {
+    if (this.game && this.game.speedrun) return this.srCurrent(this.players.get(playerId));
+    return this.round;
+  }
+
+  resultFor(playerId, round = this.roundOf(playerId)) {
+    if (!round) return { status: 'waiting', guesses: [], maxHeard: 0, points: 0 };
+    let r = round.results.get(playerId);
     if (!r) {
       r = { status: 'playing', guesses: [], maxHeard: 0, points: 0 };
-      this.round.results.set(playerId, r);
+      round.results.set(playerId, r);
     }
     return r;
   }
@@ -582,18 +723,20 @@ class Room {
     const r = this.resultFor(playerId);
     if (r.status !== 'playing') return;
     const s = Number(seconds);
-    if (Number.isFinite(s)) r.maxHeard = Math.max(r.maxHeard, Math.min(this.round.maxLen || GUESS_CLIP, Math.max(0, s)));
+    if (Number.isFinite(s)) r.maxHeard = Math.max(r.maxHeard, Math.min(this.roundOf(playerId).maxLen || GUESS_CLIP, Math.max(0, s)));
   }
 
   guess(playerId, poolId) {
     if (this.phase !== 'round') throw new Error('No song is playing right now');
-    if (this.round.typed) throw new Error('Hard mode: type the song title');
+    const round = this.roundOf(playerId);
+    if (!round) throw new Error('Your next song is still loading');
+    if (round.typed) throw new Error('Hard mode: type the song title');
     const r = this.resultFor(playerId);
     if (r.status !== 'playing') throw new Error('You\'re done for this round');
     const picked = this.gamePool[Number(poolId)];
     if (!picked) throw new Error('Pick a song from the list');
     if (r.guesses.some((g) => g.poolId === picked.poolId)) throw new Error('You already guessed that one');
-    const answer = this.round.track;
+    const answer = round.track;
     const correct = picked.poolId === answer.poolId ||
       (norm(picked.title) === norm(answer.title) && norm(picked.artist) === norm(answer.artist));
     return this.recordGuess(playerId, r, { poolId: picked.poolId, title: picked.title, artist: picked.artist, correct });
@@ -607,29 +750,32 @@ class Room {
     const typed = String(text || '').trim().slice(0, 120);
     if (norm(typed).length < 1) throw new Error('Type a song title');
     if (r.guesses.some((g) => norm(g.title) === norm(typed))) throw new Error('You already guessed that');
-    const correct = titleMatches(typed, this.round.track);
+    const round = this.roundOf(playerId);
+    if (!round) throw new Error('Your next song is still loading');
+    const correct = titleMatches(typed, round.track);
     return this.recordGuess(playerId, r, { title: typed, artist: '', correct, typed: true });
   }
 
   recordGuess(playerId, r, entry) {
+    const round = this.roundOf(playerId);
     r.guesses.push(entry);
     const max = this.game ? this.game.maxGuesses : this.settings.maxGuesses;
     if (entry.correct) {
       r.status = 'correct';
       const wrong = r.guesses.length - 1;
       const base = pointsForLength(r.maxHeard) - wrong * WRONG_PENALTY;
-      r.points = Math.max(0, Math.round(base * (this.round.mult || 1)));
+      r.points = Math.max(0, Math.round(base * (round.mult || 1)));
       // Multiplayer bonus: first to get the song. Not in ranked (scores there are compared
       // across all games, so they can't depend on who else was in the room).
-      if (!this.round.firstId && this.players.size >= 2 && !(this.game && this.game.ranked)) {
-        this.round.firstId = playerId;
+      if (!round.firstId && this.players.size >= 2 && !(this.game && this.game.ranked)) {
+        round.firstId = playerId;
         r.bonus = FIRST_BONUS;
         r.points += FIRST_BONUS;
       }
       const p = this.players.get(playerId);
       if (p) {
         p.score += r.points;
-        this.io.to(this.code).emit('gotIt', { playerId, name: p.name, icon: p.icon || '', avatar: p.avatar || '', points: r.points, heard: r.maxHeard, first: !!r.bonus });
+        this.io.to(this.code).emit('gotIt', { playerId, name: p.name, icon: p.icon || '', avatar: p.avatar || '', points: r.points, heard: r.maxHeard, first: !!r.bonus, num: round.num });
       }
     } else if (max && r.guesses.length >= max) {
       r.status = 'out';
@@ -649,12 +795,14 @@ class Room {
 
   maybeEndRound() {
     if (this.phase !== 'round') return;
+    if (this.game && this.game.speedrun) return this.srMaybeFinish(); // each player moves on by themselves
     const active = [...this.players.values()].filter((p) => p.connected);
     if (active.length && active.every((p) => this.resultFor(p.id).status !== 'playing')) this.endRound();
   }
 
   endRound() {
     if (this.phase !== 'round') return;
+    if (this.game && this.game.speedrun) return this.srFinish(); // host "end now" ends the speedrun
     this.clearTimers();
     for (const p of this.players.values()) {
       const r = this.resultFor(p.id);
@@ -702,7 +850,7 @@ class Room {
     this.phase = 'results';
     this.round = null;
     const game = this.game;
-    this.lastGame = game ? { ranked: game.ranked, packId: game.packId, hard: game.hard, chaos: game.chaos } : null;
+    this.lastGame = game ? { ranked: game.ranked, packId: game.packId, hard: game.hard, chaos: game.chaos, speedrun: !!game.speedrun, songs: game.srSongs || null } : null;
     this.game = null;
     this.poolVersion++;
     this.broadcast();
@@ -778,9 +926,18 @@ class Room {
   clearTimers() {
     clearTimeout(this.timers.round);
     clearTimeout(this.timers.reveal);
+    for (const p of this.players.values()) clearTimeout(p.srTimer);
   }
 
   touch() { this.lastActive = Date.now(); }
+
+  // The clip for a nonce: the shared round's, or any speedrun song's.
+  clipFor(nonce) {
+    if (this.round && this.round.nonce === nonce) return this.round.clip;
+    const list = (this.game && this.game.srLoaded) || [];
+    const r = list.find((x) => x && x.nonce === nonce);
+    return r ? r.clip : null;
+  }
 
   // ---------- state to clients ----------
   publicState(forPlayerId) {
@@ -793,7 +950,7 @@ class Room {
       hostId: this.hostId,
       meId: forPlayerId,
       settings: this.settings,
-      game: g ? { ranked: g.ranked, packId: g.packId, hard: g.hard, chaos: g.chaos, rounds: g.rounds, listenLen: g.listenLen, maxLen: g.maxLen } : null,
+      game: g ? { ranked: g.ranked, packId: g.packId, hard: g.hard, chaos: g.chaos, speedrun: !!g.speedrun, rounds: g.rounds, listenLen: g.listenLen, maxLen: g.maxLen } : null,
       lastGame: this.phase === 'results' ? this.lastGame || null : null,
       sources: this.sources.map(({ key, name, by, byId, packId, count }) => ({ key, name, by, byId, packId, count })),
       packs: packs.publicPacks(),
@@ -813,28 +970,37 @@ class Room {
           avatar: p.avatar || '',
           loggedIn: !!p.userId,
           userId: p.hidden ? null : p.userId || null,
-          roundStatus: this.round && this.phase === 'round' ? this.resultFor(p.id).status : null,
+          roundStatus: this.phase === 'round' && (g && g.speedrun ? !p.srDone && this.srCurrent(p) : this.round) ? this.resultFor(p.id).status : null,
+          progress: g && g.speedrun && this.phase === 'round' ? (p.srDone ? g.rounds : p.srIdx) : null,
+          finished: !!(g && g.speedrun && p.srDone),
         })),
       round: null,
       reveal: this.phase === 'reveal' ? this.reveal : null,
     };
-    if (this.round && this.phase === 'round' && me) {
+    const sr = !!(g && g.speedrun);
+    const myRound = me && this.phase === 'round' ? this.roundOf(me.id) : null;
+    if (sr && me && this.phase === 'round') state.speedrun = { done: !!me.srDone, waiting: !!me.srWaiting || (!me.srDone && !myRound), idx: me.srIdx, total: g.rounds };
+    if (myRound && me) {
       const r = this.resultFor(me.id);
+      const R = myRound;
       state.round = {
-        num: this.round.num,
+        speedrun: sr,
+        // In a speedrun you see the answer as soon as you're done with a song.
+        answer: sr && r.status !== 'playing' ? { title: R.track.title, artist: R.track.artist, cover: R.track.cover, link: R.track.link } : null,
+        num: R.num,
         total: g ? g.rounds : this.settings.rounds,
-        offset: this.round.offset,
-        mode: this.round.mode,
-        hard: this.round.hard,
-        chaos: this.round.chaos,
+        offset: R.offset,
+        mode: R.mode,
+        hard: R.hard,
+        chaos: R.chaos,
         ranked: !!(g && g.ranked),
-        maxLen: this.round.maxLen,
+        maxLen: R.maxLen,
         listenLen: g ? g.listenLen : LISTEN_AFTER,
-        twist: this.round.twist,
-        typed: this.round.typed,
-        mult: this.round.mult,
-        clipUrl: `/api/clip/${this.code}/${this.round.nonce}`,
-        endsAt: this.round.endsAt,
+        twist: R.twist,
+        typed: R.typed,
+        mult: R.mult,
+        clipUrl: `/api/clip/${this.code}/${R.nonce}`,
+        endsAt: sr ? me.srEndsAt || null : R.endsAt,
         my: { status: r.status, guesses: r.guesses, maxHeard: r.maxHeard, points: r.points, bonus: r.bonus || 0 },
       };
     }

@@ -411,14 +411,14 @@ const server = http.createServer((req, res) => {
   const clip = p.match(/^\/api\/clip\/([A-Za-z]{4})\/([\w-]+)$/);
   if (clip) {
     const room = rooms.get(clip[1]);
-    const round = room && room.round;
-    if (!round || round.nonce !== clip[2] || !round.clip) { res.writeHead(404); return res.end(); }
+    const c = room && room.clipFor(clip[2]);
+    if (!c) { res.writeHead(404); return res.end(); }
     res.writeHead(200, {
-      'Content-Type': round.clip.contentType,
-      'Content-Length': round.clip.buffer.length,
+      'Content-Type': c.contentType,
+      'Content-Length': c.buffer.length,
       'Cache-Control': 'private, max-age=600',
     });
-    return res.end(round.clip.buffer);
+    return res.end(c.buffer);
   }
 
   if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); return res.end(); }
@@ -665,6 +665,12 @@ io.on('connection', (socket) => {
   });
 
   socket.on('giveUp', () => room && player && room.giveUp(player.id));
+
+  // Speedrun: on to your next song.
+  socket.on('srNext', async (_, ack) => {
+    if (!need(ack)) return;
+    try { await room.srNext(player.id); ack && ack({ ok: true }); } catch (err) { fail(ack, err); }
+  });
 
   socket.on('next', async (_, ack) => {
     if (!hostOnly(ack)) return;

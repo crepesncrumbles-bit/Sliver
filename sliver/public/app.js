@@ -235,7 +235,7 @@
     const el = document.createElement('div');
     el.className = 'pop-msg';
     el.style.background = POP_COLORS[popN++ % POP_COLORS.length];
-    el.innerHTML = `<span class="dot">${g.first ? '★' : '♪'}</span><span>${iconPrefix(g.icon, g.avatar)}<b>${esc(g.name)}</b> got the song${g.first ? ' first' : ''}</span>${g.points ? `<span class="pts">+${fmt(g.points)}</span>` : ''}`;
+    el.innerHTML = `<span class="dot">${g.first ? '★' : '♪'}</span><span>${iconPrefix(g.icon, g.avatar)}<b>${esc(g.name)}</b> got ${state.game && state.game.speedrun && g.num ? `song ${g.num}` : 'the song'}${g.first ? ' first' : ''}</span>${g.points ? `<span class="pts">+${fmt(g.points)}</span>` : ''}`;
     const box = $('#gotit');
     box.appendChild(el);
     while (box.children.length > 3) box.firstChild.remove();
@@ -576,7 +576,8 @@
     if ($('#btn-end').hidden) disarmEnd();
     document.body.classList.toggle('in-game', ['loading', 'round', 'reveal'].includes(phase));
     if (phase === 'lobby') renderLobby();
-    else if (phase === 'loading') show('loading');
+    else if (phase === 'loading') { $('#loading-text').textContent = 'Cueing up the next song…'; $('#loading-extra').innerHTML = ''; show('loading'); }
+    else if (phase === 'round' && state.speedrun && !state.round) renderSrWait();
     else if (phase === 'round') renderRound(prev);
     else if (phase === 'reveal') renderReveal();
     else if (phase === 'results') renderResults();
@@ -664,13 +665,14 @@
       el.setAttribute('aria-pressed', on);
     });
     $('#mods-title').textContent = ranked ? 'Mods' : 'Mode';
+    $('#set-speedrun').checked = !!st.speedrun;
     $('#mode-mult').textContent = st.hard && st.chaos ? 'Hard + Chaos together: 2× points'
       : st.hard || st.chaos ? 'Tap Classic to turn it off, or add the other one too.' : 'Hard and Chaos can be on at the same time.';
     const modeName = st.hard && st.chaos ? 'Hard + Chaos' : st.hard ? 'Hard' : st.chaos ? 'Chaos' : 'Classic';
     const packName = (id) => ((state.packs || []).find((x) => x.id === id) || {}).name || 'no genre picked yet';
     $('#guest-mode').textContent = ranked
       ? `Ranked: ${packName(st.rankedPack)}. ${modeName}. 5 songs.`
-      : `Mode: ${modeName}. ${st.rounds} songs.`;
+      : `Mode: ${modeName}${st.speedrun ? ', Speedrun' : ''}. ${st.rounds} songs.`;
     const me = state.players.find((p) => p.id === state.meId);
     $('#guest-login').hidden = !(ranked && me && !me.loggedIn);
 
@@ -811,6 +813,7 @@
       emit('settings', m === 'classic' ? { hard: false, chaos: false } : { [m]: !st[m] });
     }
   });
+  $('#set-speedrun').onchange = (e) => emit('settings', { speedrun: e.target.checked });
   $('#set-rounds').onchange = (e) => emit('settings', { rounds: e.target.value });
   $('#set-time').onchange = (e) => emit('settings', { roundTime: e.target.value });
   $('#set-guesses').onchange = (e) => emit('settings', { maxGuesses: e.target.value });
@@ -1107,6 +1110,23 @@
     btn.title = loading ? 'Loading the song…' : done ? 'Replay' : 'Play';
   }
 
+  // Speedrun: loading your next song, or you're finished and waiting for the others.
+  function renderSrWait() {
+    stopAudio();
+    roundKey = null;
+    const sr = state.speedrun;
+    show('loading');
+    if (!sr.done) {
+      $('#loading-text').textContent = 'Cueing up your next song…';
+      $('#loading-extra').innerHTML = '';
+      return;
+    }
+    const me = state.players.find((p) => p.id === state.meId);
+    $('#loading-text').innerHTML = `<b>You're done!</b> ${me ? `${fmt(me.score)} points.` : ''} Waiting for everyone to finish…`;
+    $('#loading-extra').innerHTML = `<ul class="sr-wait">${state.players.filter((p) => p.connected).map((p) =>
+      `<li class="${p.finished ? 'fin' : ''}"><span>${iconPrefix(p.icon, p.avatar)}${esc(p.name)}</span><span>${p.finished ? '✓ done' : `${p.progress + 1} / ${sr.total}`}</span></li>`).join('')}</ul>`;
+  }
+
   // ---------- round ----------
   let myHeard = 0;
   let timerInt = null;
@@ -1185,9 +1205,10 @@
       hideSuggestions();
       buildWave(key);
       celebrated = false;
+      resetGiveUp(); resetSkip();
       loadClip(r.clipUrl).catch(() => {});
     }
-    $('#round-label').textContent = `${r.ranked ? 'Ranked · ' : ''}Song ${r.num} of ${r.total}`;
+    $('#round-label').textContent = `${r.ranked ? 'Ranked · ' : r.speedrun ? '⚡ Speedrun · ' : ''}Song ${r.num} of ${r.total}`;
     const tws = [];
     if (r.hard) tws.push({ name: 'Hard', blurb: 'Starts mid-song. Type the title yourself.' });
     if (r.twist) tws.push(TWISTS[r.twist]);
@@ -1221,12 +1242,19 @@
         'gave-up': `<div class="verdict">Skipped</div>`,
         timeout: `<div class="verdict">${r.endsAt ? 'Time\'s up' : 'Song over'}</div>`,
       }[my.status] || '';
-      if (my.status === 'correct' && !celebrated) { celebrated = true; requestAnimationFrame(() => confetti($('#done-card'))); }
+      // Confetti is for whoever gets the song first (or you, playing alone).
+      const solo = state.players.filter((p) => p.connected).length < 2;
+      if (my.status === 'correct' && (my.bonus || solo) && !celebrated) { celebrated = true; requestAnimationFrame(() => confetti($('#done-card'))); }
       if ($('#done-card').dataset.status !== my.status) {
         $('#done-card').dataset.status = my.status;
-        $('#done-card').innerHTML = msg +
-          `<button class="btn listen" data-listen>Play ${listenLen()} seconds</button><div class="listen-bar"><span></span></div>` +
-          '<p>Here\'s the song while everyone else finishes.</p>';
+        const a = r.answer;
+        const last = r.num >= r.total;
+        $('#done-card').innerHTML = msg + (r.speedrun && a
+          ? `<div class="sr-answer"><span class="cov"${a.cover ? ` style="background-image:url('${esc(encodeURI(a.cover))}')"` : ''}></span><span><b>${esc(a.title)}</b><small>${esc(a.artist)}</small></span></div>` +
+            `<button class="btn listen" data-listen>Play ${listenLen()} seconds</button><div class="listen-bar"><span></span></div>` +
+            `<button class="btn primary big sr-next" data-sr-next>${last ? 'Finish ✓' : 'Next song →'}</button>`
+          : `<button class="btn listen" data-listen>Play ${listenLen()} seconds</button><div class="listen-bar"><span></span></div>` +
+            '<p>Here\'s the song while everyone else finishes.</p>');
         // Hear the song right after your guess. Your own device only.
         toggleListen();
       }
@@ -1235,8 +1263,9 @@
     const amHost = state.hostId === state.meId;
     $('#round-players').innerHTML = state.players.filter((p) => p.connected).map((p) => {
       const icon = { correct: '✓ ', out: '', 'gave-up': '', timeout: '' }[p.roundStatus] ?? '';
-      const inner = `${icon}${iconPrefix(p.icon, p.avatar)}${esc(p.name)}${p.id === state.hostId ? ' <small>host</small>' : ''}`;
-      return `<li class="${p.roundStatus || ''}">${amHost && p.id !== state.meId ? `<button data-player-menu="${esc(p.id)}">${inner}</button>` : inner}</li>`;
+      const prog = r.speedrun ? `<span class="prog">${p.finished ? 'done' : `${(p.progress || 0) + 1}/${r.total}`}</span>` : '';
+      const inner = `${r.speedrun ? '' : icon}${iconPrefix(p.icon, p.avatar)}${esc(p.name)}${p.id === state.hostId ? ' <small>host</small>' : ''}${prog}`;
+      return `<li class="${r.speedrun ? (p.finished ? 'correct' : '') : p.roundStatus || ''}">${amHost && p.id !== state.meId ? `<button data-player-menu="${esc(p.id)}">${inner}</button>` : inner}</li>`;
     }).join('');
 
     clearInterval(timerInt);
@@ -1253,9 +1282,30 @@
     timerInt = setInterval(tickTimer, 250);
   }
 
-  $('#btn-giveup').onclick = () => socket.emit('giveUp');
+  // Giving up / ending the song: tap twice (a double-click works) so it can't happen by accident.
+  function confirmTwice(btn, armedText, action) {
+    const label = btn.textContent;
+    let timer = null;
+    const reset = () => { clearTimeout(timer); timer = null; btn.classList.remove('armed'); btn.textContent = label; };
+    btn.addEventListener('click', () => {
+      if (timer) { reset(); action(); return; }
+      btn.classList.add('armed');
+      btn.textContent = armedText;
+      timer = setTimeout(reset, 2500);
+    });
+    return reset;
+  }
+  const resetGiveUp = confirmTwice($('#btn-giveup'), 'Tap again to give up', () => socket.emit('giveUp'));
+  const resetSkip = confirmTwice($('#btn-skip'), 'Tap again to end the song', () => emit('next'));
   document.addEventListener('click', (e) => { if (e.target.closest('[data-listen]')) toggleListen(); });
-  $('#btn-skip').onclick = () => emit('next');
+  document.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-sr-next]');
+    if (!b || b.disabled) return;
+    b.disabled = true;
+    stopAudio();
+    const res = await emit('srNext');
+    if (!res.ok) { b.disabled = false; toast(res.error, 'error'); }
+  });
 
   // ---------- autocomplete ----------
   const gi = $('#guess-input');
@@ -1374,7 +1424,16 @@
     }
   }
 
-  // A small burst of confetti from the edges of a box, in the current theme's colors.
+  // Confetti shapes per theme. Each kind: rect, dot, petal, bubble, spark, bar, or a glyph.
+  const CONFETTI_STYLE = {
+    halloween: ['🎃', '🦇', 'rect', 'dot'], christmas: ['❄︎', '★', 'rect', 'dot'], valentine: ['♥︎', '♥︎', 'rect'],
+    cottoncandy: ['♥︎', '★', 'dot', 'dot'], easter: ['egg', 'egg', 'dot', 'rect'], stpatricks: ['☘︎', '☘︎', 'rect'],
+    july4: ['★', '★', 'rect', 'bar'], newyear: ['★', 'spark', 'rect', 'bar'], thanksgiving: ['petal', 'rect', 'dot'],
+    sakura: ['petal', 'petal', 'petal', 'dot'], lagoon: ['bubble', 'bubble', 'dot'], aurora: ['✦', 'bar', 'dot'],
+    nebula: ['✦', '★', 'spark', 'dot'], midnight: ['✦', 'dot', 'rect'], synthwave: ['bar', 'bar', 'spark'], neon: ['bar', 'spark', 'dot'],
+    ember: ['spark', 'spark', 'dot'], storm: ['⚡︎', 'bar', 'dot'], blackgold: ['spark', 'rect', 'dot', '✦'], mono: ['rect', 'dot'],
+  };
+  // A burst of confetti from the edges of a box, in the current theme's colors and shapes.
   function confetti(target) {
     if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const box = $('#confetti');
@@ -1382,12 +1441,16 @@
     const r = el && !el.hidden ? el.getBoundingClientRect() : null;
     if (!r || !r.width) return;
     const css = getComputedStyle(document.documentElement);
-    const colors = ['--accent', '--pop', '--brand', '--mint', '--accent-hover', '--pop-soft']
+    const theme = document.documentElement.dataset.theme || '';
+    let colors = ['--accent', '--pop', '--brand', '--mint', '--accent-hover', '--pop-soft']
       .map((v) => css.getPropertyValue(v).trim()).filter(Boolean);
+    if (theme === 'blackgold') colors = ['#F5D77A', '#E2B33C', '#FFF1C1', '#B8862B'];
+    if (theme === 'mono') colors = ['#111', '#fff', '#888'];
+    const kinds = CONFETTI_STYLE[theme] || ['rect', 'rect', 'dot'];
     const pieces = [];
     const N = 46;
     for (let i = 0; i < N; i++) {
-      // Start on the box's border, fly outward a little, then fall and fade.
+      // Start on the box's border, fly outward a little, then drift down and fade.
       const side = i % 4, t = Math.random();
       const x = side === 0 ? r.left + t * r.width : side === 1 ? r.right : side === 2 ? r.left + t * r.width : r.left;
       const y = side === 0 ? r.top : side === 1 ? r.top + t * r.height : side === 2 ? r.bottom : r.top + t * r.height;
@@ -1396,17 +1459,28 @@
       const dist = 26 + Math.random() * 46;
       const dx = ((x - cx) / len) * dist + (Math.random() - 0.5) * 20;
       const dy = ((y - cy) / len) * dist + (Math.random() - 0.5) * 20;
-      const i_ = document.createElement('i');
+      const p = document.createElement('i');
+      const color = colors[i % colors.length];
+      const kind = kinds[Math.floor(Math.random() * kinds.length)];
       const sz = 5 + Math.random() * 5;
-      i_.style.cssText = `left:${x}px;top:${y}px;width:${sz}px;height:${sz * (Math.random() < 0.5 ? 1 : 1.6)}px;background:${colors[i % colors.length]};border-radius:${Math.random() < 0.35 ? '50%' : '2px'}`;
-      box.appendChild(i_);
-      pieces.push(i_);
-      const rot = Math.round(Math.random() * 540 - 270);
-      i_.animate([
+      let st = `left:${x}px;top:${y}px;`;
+      if (kind === 'rect') st += `width:${sz}px;height:${sz * 1.6}px;background:${color};border-radius:2px`;
+      else if (kind === 'dot') st += `width:${sz}px;height:${sz}px;background:${color};border-radius:50%`;
+      else if (kind === 'petal') st += `width:${sz * 1.4}px;height:${sz}px;background:${color};border-radius:0 100% 0 100%`;
+      else if (kind === 'egg') st += `width:${sz * 1.1}px;height:${sz * 1.45}px;background:${color};border-radius:50% 50% 50% 50% / 60% 60% 40% 40%`;
+      else if (kind === 'bubble') st += `width:${sz * 1.5}px;height:${sz * 1.5}px;border:2px solid ${color};border-radius:50%;background:rgba(255,255,255,.15)`;
+      else if (kind === 'spark') st += `width:${sz * 0.7}px;height:${sz * 0.7}px;background:${color};border-radius:50%;box-shadow:0 0 ${sz}px ${sz * 0.4}px ${color}`;
+      else if (kind === 'bar') st += `width:3px;height:${sz * 2.4}px;background:${color};border-radius:2px;box-shadow:0 0 6px ${color}`;
+      else { p.className = 'g'; p.textContent = kind; st += `font-size:${12 + Math.random() * 8}px;color:${color}`; }
+      p.style.cssText = st;
+      box.appendChild(p);
+      pieces.push(p);
+      const rot = kind === 'bubble' ? 0 : Math.round(Math.random() * 540 - 270);
+      p.animate([
         { transform: 'translate(-50%,-50%) scale(.4) rotate(0deg)', opacity: 1 },
         { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(1) rotate(${rot / 2}deg)`, opacity: 1, offset: 0.45 },
         { transform: `translate(calc(-50% + ${dx * 1.15}px), calc(-50% + ${dy * 1.15 + 34}px)) scale(.95) rotate(${rot * 0.8}deg)`, opacity: 1, offset: 0.75 },
-        { transform: `translate(calc(-50% + ${dx * 1.25}px), calc(-50% + ${dy * 1.25 + 70}px)) scale(.85) rotate(${rot}deg)`, opacity: 0 },
+        { transform: `translate(calc(-50% + ${dx * 1.25}px), calc(-50% + ${dy * 1.25 + (kind === 'bubble' ? -40 : 70)}px)) scale(.85) rotate(${rot}deg)`, opacity: 0 },
       ], { duration: 2400 + Math.random() * 900, delay: Math.random() * 250, easing: 'cubic-bezier(.15,.7,.3,1)', fill: 'forwards' });
     }
     setTimeout(() => pieces.forEach((p) => p.remove()), 3800);
@@ -1470,6 +1544,11 @@
     $('#winner').innerHTML = tied.length > 1 ? `${tied.map((p) => iconPrefix(p.icon, p.avatar) + esc(p.name)).join(' & ')} tie` : iconPrefix(top.icon, top.avatar) + esc(top.name);
     $('#final-board').innerHTML = ps.map((p) =>
       `<li><span class="b-name">${iconPrefix(p.icon, p.avatar)}${esc(p.name)}</span><span class="b-score">${fmt(p.score)}</span></li>`).join('');
+    const lg = state.lastGame;
+    $('#sr-songs').hidden = !(lg && lg.speedrun && lg.songs && lg.songs.length);
+    if (!$('#sr-songs').hidden) {
+      $('#sr-songs').innerHTML = `<h3>⚡ The songs</h3><ol>${lg.songs.map((x) => `<li>${esc(x.title)} <small>${esc(x.artist)}</small></li>`).join('')}</ol>`;
+    }
     renderRankedResult();
   }
   $('#btn-again').onclick = () => { unlockAudio(); emit('start').then((r) => !r.ok && toast(r.error, 'error')); };

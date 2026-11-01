@@ -736,7 +736,7 @@ body.in-game #decor-front { display: none; }
 .admin-gift select { flex: 1; min-width: 0; }
 .bad { color: var(--bad-ink); }
 .linkish.on { font-weight: 800; text-decoration: underline; }
-.amode-box { display: flex; flex-direction: column; gap: 6px; max-width: 100%; }
+.amode-box { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; flex: 1 1 100%; min-width: 0; }
 .mini-label.hl { background: var(--pop); color: var(--pop-ink); border-radius: 8px; padding: 3px 8px; margin-right: 4px; }
 .amode-note { margin: 0; font-size: 13px; color: var(--ink-2); line-height: 1.4; }
 :root[data-fx="sakura"] .brand h1, :root[data-fx="cottoncandy"] .brand h1, :root[data-fx="lagoon"] .brand h1, :root[data-fx="aurora"] .brand h1, :root[data-fx="blackgold"] .brand h1 { filter: drop-shadow(0 2px 0 rgba(40, 0, 30, .35)) drop-shadow(0 4px 14px rgba(40, 0, 30, .35)); }
@@ -757,3 +757,22 @@ body.in-game #decor-front { display: none; }
 .pack-cat i { font-style: normal; transition: transform .2s; color: var(--ink-2); }
 .pack-cat.open i { transform: rotate(180deg); }
 .pack-cat + .pack-row { margin: 10px 0 6px; }
+
+/* Speedrun */
+.speedrun-opt { margin: 4px 0 14px; align-items: flex-start; }
+.speedrun-opt span b { display: block; }
+.speedrun-opt span { font-size: 14px; line-height: 1.4; }
+.sr-answer { display: flex; align-items: center; gap: 12px; text-align: left; margin: 12px 0 4px; padding: 10px; border-radius: var(--r-ctl); background: var(--paper-2); }
+.sr-answer .cov { width: 52px; height: 52px; border-radius: 10px; background: var(--accent) center/cover; flex: none; }
+.sr-answer b { display: block; }
+.sr-answer small { color: var(--ink-2); }
+.sr-next { width: 100%; margin-top: 12px; }
+.sr-wait { list-style: none; padding: 0; margin: 14px 0 0; display: grid; gap: 6px; text-align: left; }
+.sr-wait li { display: flex; justify-content: space-between; padding: 8px 12px; border-radius: 10px; background: var(--paper-2); font-weight: 700; }
+.sr-wait li.fin { color: var(--mint-ink); background: var(--good-bg); }
+.sr-songs h3 { font-family: var(--display); margin: 0 0 8px; font-size: 16px; }
+.sr-songs ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.sr-songs small { color: var(--ink-2); }
+#round-players .prog { font-size: 11px; opacity: .75; margin-left: 4px; }
+.btn.armed { background: var(--bad-bg); color: var(--bad-ink); border-color: var(--bad-ink); }
+.confetti i.g { width: auto !important; height: auto !important; background: none !important; line-height: 1; font-style: normal; text-shadow: 0 1px 2px rgba(0,0,0,.18); }
