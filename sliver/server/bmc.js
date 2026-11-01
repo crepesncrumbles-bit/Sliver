@@ -53,7 +53,7 @@ function read(evt) {
 async function handleEvent(evt, { accounts, store, allowTest = false, notify = () => {} }) {
   const e = read(evt);
   if (!e.live && !allowTest) return { ignored: 'test event' };
-  const base = e.type.replace(/\.(created|refunded|updated|started)$/, '');
+  const base = e.type.replace(/[._](created|refunded|updated|started|purchased)$/, '');
   const recKey = `bmc:grant:${base}:${e.id}`;
 
   if (e.refunded) {
@@ -66,8 +66,9 @@ async function handleEvent(evt, { accounts, store, allowTest = false, notify = (
     return { revoked: g.themes || [] };
   }
 
-  const coffee = /^donation|^recurring_donation|^membership/.test(base);
-  const extra = /^extra_purchase/.test(base);
+  // Coffees show as "Support created" in BMC's dashboard; the event may be named donation.* or support.*.
+  const coffee = /^(donation|support|one_time_support|payment|recurring_donation|membership)/.test(base);
+  const extra = /^(extra|shop|product)/.test(base);
   let want = [];
   if (extra) want = e.themes.length ? e.themes : (e.amount === null || e.amount >= SHOP.PRICE ? ['random'] : []);
   else if (coffee) want = e.amount !== null && e.amount >= SHOP.COFFEE_MIN ? ['random'] : [];
