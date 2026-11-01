@@ -243,16 +243,36 @@
   });
 
   // ---------- settings (themes) ----------
-  function renderThemes() {
+  // ---- your themes: favorites and your own order (kept on this device) ----
+  const store = {
+    get(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  };
+  let themeFavs = new Set(store.get('sliver.themeFavs', []));
+  let themeOrder = store.get('sliver.themeOrder', []);
+  let arranging = false, thTab = 'mine';
+  function myThemes() {
     const T = window.SliverThemes;
-    const cur = T.current();
     const slotThemes = [0, 1, 2].map((i) => T.slotTheme(i)).filter(Boolean);
     const ownedPremium = T.premium().filter((t) => T.owns(t.id));
     const list = T.available().concat(ownedPremium, slotThemes);
-    renderShop();
-    $('#theme-grid').innerHTML = list.map((t) => {
-      const v = t.vars;
-      return `<button class="theme${t.id === cur ? ' on' : ''}" data-theme-id="${t.id}" role="radio" aria-checked="${t.id === cur}">
+    const rank = (t) => { const i = themeOrder.indexOf(t.id); return i < 0 ? 1e6 + list.indexOf(t) : i; };
+    return list.slice().sort((a, b) => rank(a) - rank(b));
+  }
+  function moveTheme(id, to) { // to: id to land in front of, or +1/-1 step
+    const ids = myThemes().map((t) => t.id);
+    const from = ids.indexOf(id);
+    if (from < 0) return;
+    ids.splice(from, 1);
+    let at = typeof to === 'number' ? Math.max(0, Math.min(ids.length, from + to)) : ids.indexOf(to);
+    if (at < 0) at = ids.length;
+    ids.splice(at, 0, id);
+    themeOrder = ids; store.set('sliver.themeOrder', ids);
+    renderThemes();
+  }
+  function themeCard(t, cur) {
+    const T = window.SliverThemes, v = t.vars, fav = themeFavs.has(t.id);
+    return `<button class="theme${t.id === cur ? ' on' : ''}" data-theme-id="${t.id}" role="radio" aria-checked="${t.id === cur}"${arranging ? ' draggable="true"' : ''}>
         <span class="sw" style="background:${v['--page']}">
           <span class="sw-card" style="background:${v['--paper']}"></span>
           <span class="sw-disc" style="background:${v['--pop']};box-shadow:0 0 0 2px ${v['--stroke']}"></span>
@@ -260,11 +280,37 @@
           <span class="sw-bar" style="top:40px;right:34px;background:${v['--line']}"></span>
         </span>
         ${t.deco ? `<span class="sw-deco" aria-hidden="true">${t.deco}</span>` : ''}
-        <span class="name">${t.name}</span>
+        <span class="fav${fav ? ' on' : ''}" data-fav="${t.id}" role="button" aria-label="${fav ? 'Remove from favorites' : 'Add to favorites'}" title="${fav ? 'Unfavorite' : 'Favorite'}">${fav ? '★' : '☆'}</span>
+        <span class="moves"><span data-move="-1" aria-label="Move earlier">‹</span><span data-move="1" aria-label="Move later">›</span></span>
+        <span class="name">${esc(t.name)}</span>
         ${t.season ? `<span class="season">Until ${T.seasonEnds(t)}</span>` : t.premium ? '<span class="season premium-tag">Premium</span>' : ''}
       </button>`;
-    }).join('');
   }
+  function renderThemes() {
+    const T = window.SliverThemes;
+    const cur = T.current();
+    renderShop();
+    const all = myThemes();
+    const favs = all.filter((t) => themeFavs.has(t.id)), rest = all.filter((t) => !themeFavs.has(t.id));
+    $('#settings').classList.toggle('arranging', arranging);
+    $('#th-arrange').setAttribute('aria-pressed', String(arranging));
+    $('#th-arrange').textContent = arranging ? 'Done' : 'Arrange';
+    $('#th-hint').textContent = arranging ? 'Drag themes (or use ‹ ›) to reorder.' : 'Tap ☆ to favorite. Favorites stay on top.';
+    const grid = (list) => `<div class="theme-grid" role="radiogroup" aria-label="Themes">${list.map((t) => themeCard(t, cur)).join('')}</div>`;
+    // The outer #theme-grid holds the groups (favorites, then everything else).
+    $('#theme-grid').className = 'theme-groups';
+    $('#theme-grid').innerHTML = (favs.length && !arranging ? `<div class="th-group">★ Favorites</div>${grid(favs)}<div class="th-group">All themes</div>${grid(rest)}` : grid(arranging ? all : all));
+    document.querySelectorAll('[data-th-tab]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.thTab === thTab)));
+    document.querySelectorAll('[data-th-panel]').forEach((p) => { p.hidden = p.dataset.thPanel !== thTab; });
+  }
+  document.querySelectorAll('[data-th-tab]').forEach((b) => { b.onclick = () => { thTab = b.dataset.thTab; arranging = false; renderThemes(); }; });
+  $('#th-arrange').onclick = () => { arranging = !arranging; renderThemes(); };
+  // Drag and drop to reorder (mouse); the ‹ › buttons do the same on phones.
+  let dragId = null;
+  $('#theme-grid').addEventListener('dragstart', (e) => { const c = e.target.closest('[data-theme-id]'); if (!c || !arranging) return; dragId = c.dataset.themeId; c.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', dragId); } catch {} });
+  $('#theme-grid').addEventListener('dragover', (e) => { if (!dragId) return; const c = e.target.closest('[data-theme-id]'); e.preventDefault(); document.querySelectorAll('.drop-here').forEach((x) => x.classList.remove('drop-here')); if (c && c.dataset.themeId !== dragId) c.classList.add('drop-here'); });
+  $('#theme-grid').addEventListener('drop', (e) => { if (!dragId) return; e.preventDefault(); const c = e.target.closest('[data-theme-id]'); const id = dragId; dragId = null; if (c && c.dataset.themeId !== id) moveTheme(id, c.dataset.themeId); else renderThemes(); });
+  $('#theme-grid').addEventListener('dragend', () => { dragId = null; document.querySelectorAll('.dragging, .drop-here').forEach((x) => x.classList.remove('dragging', 'drop-here')); });
   let setTab = 'sound';
   function showSetTab(name) {
     setTab = name;
@@ -284,8 +330,18 @@
   $('#btn-settings-close').onclick = closeSettings;
   $('#btn-settings-done').onclick = closeSettings;
   $('#settings').addEventListener('click', (e) => {
+    const fv = e.target.closest('[data-fav]');
+    if (fv) {
+      const id = fv.dataset.fav;
+      themeFavs.has(id) ? themeFavs.delete(id) : themeFavs.add(id);
+      store.set('sliver.themeFavs', [...themeFavs]);
+      renderThemes();
+      return;
+    }
+    const mv = e.target.closest('[data-move]');
+    if (mv) { const c = mv.closest('[data-theme-id]'); if (c) moveTheme(c.dataset.themeId, Number(mv.dataset.move)); return; }
     const t = e.target.closest('[data-theme-id]');
-    if (t) { window.SliverThemes.set(t.dataset.themeId); renderThemes(); renderCustomTheme(); }
+    if (t && !arranging) { window.SliverThemes.set(t.dataset.themeId); renderThemes(); renderCustomTheme(); }
     const ic = e.target.closest('[data-icon]');
     if (ic) setMyIcon(ic.dataset.icon);
   });

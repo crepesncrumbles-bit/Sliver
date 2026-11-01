@@ -784,3 +784,26 @@ body.in-game #decor-front { display: none; }
 /* While drawing on the background (Sakura), don't select text or scroll. */
 .fx-drawing, .fx-drawing body { user-select: none; -webkit-user-select: none; }
 .fx-drawing body { touch-action: none; }
+
+/* Themes tab: sections, favorites, arranging */
+.th-seg { display: flex; width: 100%; margin: 12px 0 12px; }
+.th-seg .mini-btn { flex: 1; }
+.th-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.th-bar .hint { margin: 0; font-size: 13px; }
+.th-group { font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); margin: 4px 0 8px; }
+.theme .fav { position: absolute; top: 4px; right: 4px; z-index: 2; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: rgba(0,0,0,.38); color: #fff; font-size: 15px; line-height: 1; cursor: pointer; }
+.theme .fav.on { background: var(--pop); color: var(--pop-ink); }
+.theme .fav:hover { transform: scale(1.1); }
+.arranging .theme { cursor: grab; animation: th-jiggle .35s ease-in-out infinite alternate; }
+.arranging .theme:nth-child(2n) { animation-delay: .17s; }
+@keyframes th-jiggle { from { transform: rotate(-.6deg); } to { transform: rotate(.6deg); } }
+.arranging .theme.dragging { opacity: .4; }
+.arranging .theme.drop-here { border-color: var(--accent); border-style: dashed; }
+.theme .moves { display: none; position: absolute; left: 4px; top: 4px; z-index: 2; gap: 4px; }
+.arranging .theme .moves { display: flex; }
+.arranging .theme .fav { display: none; }
+.theme .moves span { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: var(--inverse); color: var(--inverse-ink); font-weight: 800; cursor: pointer; }
+#th-arrange[aria-pressed="true"] { background: var(--inverse); color: var(--inverse-ink); }
+.shop h4, .custom-theme h4 { margin-top: 0; }
+@media (prefers-reduced-motion: reduce) { .arranging .theme { animation: none; } }
+.theme .sw-deco { margin: -30px 0 0 6px; } /* bottom-left of the swatch, clear of the ☆ */
