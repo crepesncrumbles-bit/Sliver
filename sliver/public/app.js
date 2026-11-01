@@ -2044,6 +2044,7 @@
     tellServerAboutLogin();
     refreshFriends();
     closeSheet('auth');
+    closeSheet('settings'); // wherever you logged in from (even inside Settings), you land on the page itself
     setAuthMode('login');
     toast(msg, 'good');
   }
