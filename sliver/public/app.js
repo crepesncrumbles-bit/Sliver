@@ -115,6 +115,9 @@
 
   // ---------- home ----------
   $('#name').value = savedName();
+  // Logged in: your name starts as your account username (you can still type something else).
+  let nameEdited = false;
+  $('#name').addEventListener('input', () => { nameEdited = true; });
   const params = new URLSearchParams(location.search);
   if (params.get('room')) $('#join-code').value = params.get('room').toUpperCase();
 
@@ -1316,7 +1319,7 @@
     const b = e.target.closest('[data-jump]');
     if (!b) return;
     const s = Number(b.dataset.jump);
-    setLen(s); updateReadout(); playClip(s);
+    setLen(s); updateReadout(); // just moves the slider; nothing plays (or costs points) until you press play
   });
   $('#btn-plus-tenth').onclick = () => plus(0.1);
 
@@ -1822,7 +1825,7 @@
          </details>`
       : `<p class="hint">Only needed for ranked games and leaderboards.</p>
          <div class="acct-actions"><button class="btn small" data-open-auth="signup">Sign up</button><button class="btn small" data-open-auth="login">Log in</button></div>`;
-    if (u && !$('#name').value.trim()) $('#name').value = u.name;
+    if (u && (!nameEdited || !$('#name').value.trim())) $('#name').value = u.name;
     $('#admin-panel').hidden = !(u && u.admin);
     renderMyIconButton();
     $('#btn-friends').hidden = !u;
