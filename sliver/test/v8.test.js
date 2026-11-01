@@ -66,6 +66,18 @@ const io = { to: (to) => ({ emit: (e, d) => events.push({ to, e, d }) }) };
     r2.clearTimers();
   }
 
+  console.log('admins see hidden accounts in rooms');
+  {
+    const r3 = new RoomManager(io).create();
+    const shy = r3.addPlayer('Shy', { id: 'h1' }), boss = r3.addPlayer('Boss', { id: 'h2' }), pal = r3.addPlayer('Pal', { id: 'h3' });
+    r3.setAccount(shy.id, { id: 'u-shy', hidden: true });
+    r3.setAccount(boss.id, { id: 'u-boss', admin: true });
+    r3.setAccount(pal.id, { id: 'u-pal' });
+    const seenBy = (pid) => r3.publicState(pid).players.find((x) => x.id === shy.id);
+    check(seenBy(pal.id).userId === null && !seenBy(pal.id).hiddenAcct, 'a normal player can\'t see the hidden account');
+    check(seenBy(boss.id).userId === 'u-shy' && seenBy(boss.id).hiddenAcct, 'an admin sees it (marked hidden)');
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

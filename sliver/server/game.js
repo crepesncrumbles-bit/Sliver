@@ -134,6 +134,7 @@ class Room {
     if (!p) return;
     p.userId = user ? user.id : null;
     p.hidden = !!(user && user.hidden); // hidden accounts: others don't see which account this is
+    p.isAdmin = !!(user && user.admin); // admins can see hidden accounts
     if (user && user.avatar) p.avatar = cleanAvatar(user.avatar);
   }
 
@@ -973,7 +974,8 @@ class Room {
           icon: p.icon || '',
           avatar: p.avatar || '',
           loggedIn: !!p.userId,
-          userId: p.hidden ? null : p.userId || null,
+          userId: p.hidden && !(me && me.isAdmin) ? null : p.userId || null,
+          hiddenAcct: !!(p.hidden && me && me.isAdmin),
           roundStatus: this.phase === 'round' && (g && g.speedrun ? !p.srDone && this.srCurrent(p) : this.round) ? this.resultFor(p.id).status : null,
           progress: g && g.speedrun && this.phase === 'round' ? (p.srDone ? g.rounds : p.srIdx) : null,
           finished: !!(g && g.speedrun && p.srDone),

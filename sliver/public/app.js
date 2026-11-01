@@ -2017,7 +2017,7 @@
     $('#board-list').innerHTML = res.entries.length ? res.entries.map((e) => `
       <li class="${e.id === meId ? 'me' : ''}${e.rank <= 3 ? ' top' + e.rank : ''}">
         <span class="lb-rank">${e.rank}</span>
-        ${e.id ? `<button class="lb-name" data-open-profile="${esc(e.id)}">${iconPrefix(e.icon, e.avatar)}${esc(e.name)} <span class="tag-no">#${esc(e.tag)}</span></button>`
+        ${e.id ? `<button class="lb-name" data-open-profile="${esc(e.id)}">${iconPrefix(e.icon, e.avatar)}${esc(e.name)} <span class="tag-no">#${esc(e.tag)}</span>${e.hiddenAcct ? ' <span class="hid-tag" title="Hidden account (only admins see this)">🙈</span>' : ''}</button>`
           : `<span class="lb-name hidden-player">${esc(e.name)}</span>`}
         <span class="lb-val">${overall ? `${fmt(e.value)}<small> rating</small>` : `${fmt(e.value)}<small> · ${fmt(e.pp)} pp</small>`}</span>
       </li>`).join('') : '<li class="lb-empty">No ranked games here yet. Be the first!</li>';
@@ -2205,7 +2205,7 @@
       const arm = (act) => plArmed === `${act}:${p.id}`;
       return `<li class="${p.connected ? '' : 'offline'}">
         <span class="acct-av${avClass(p.icon, p.avatar)}">${avatar(p.icon, p.name, p.avatar)}</span>
-        <div class="pl-main"><b>${esc(p.name)}${mine ? ' (you)' : ''}</b>
+        <div class="pl-main"><b>${esc(p.name)}${mine ? ' (you)' : ''}${p.hiddenAcct ? ' <span class="hid-tag" title="Hidden account (only admins see this)">🙈 hidden</span>' : ''}</b>
           <small>${p.id === state.hostId ? 'Host · ' : ''}${fmt(p.score)} points${p.connected ? '' : ' · offline'}${p.loggedIn ? ' · logged in' : ''}</small></div>
         ${!mine && p.userId && auth && auth.user && friendState(p.userId) === null ? `<button class="btn small" data-fr-request="${esc(p.userId)}">Add friend</button>` : ''}
         ${!mine && p.userId && friendState(p.userId) === 'out' ? '<span class="fr-st">Request sent</span>' : ''}

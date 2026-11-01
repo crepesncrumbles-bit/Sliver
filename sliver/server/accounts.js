@@ -551,7 +551,8 @@ class Accounts {
       .concat(packs.RANKED.map((p) => ({ id: p.id, name: p.name, cat: p.cat })));
   }
 
-  async leaderboard(board = 'overall', meId = null) {
+  // viewerIsAdmin: admins see hidden accounts too (flagged hiddenAcct so the page can mark them).
+  async leaderboard(board = 'overall', meId = null, viewerIsAdmin = false) {
     if (board !== 'overall' && !(packs.byId.get(board) || {}).ranked) throw new AccountError('Unknown leaderboard');
     const flat = await this.store.cmd('ZREVRANGE', K.board(board), 0, TOP_N - 1, 'WITHSCORES');
     const rows = [];
@@ -560,10 +561,11 @@ class Accounts {
     const friends = await this.friendIds(meId);
     const entries = rows.map((r, i) => {
       const [name, rating, icon, hidden, avatarV] = names[i] || [];
-      const masked = int(hidden) && r.id !== meId && !friends.has(r.id); // hidden account: no name, no link
+      const masked = int(hidden) && r.id !== meId && !friends.has(r.id) && !viewerIsAdmin; // hidden account: no name, no link
       return {
         rank: i + 1, id: masked ? null : r.id, name: masked ? 'Hidden player' : name || 'Player', tag: masked ? '' : tagFor(r.id),
         icon: masked ? '' : cleanIcon(icon), avatar: masked ? '' : avatarUrl({ id: r.id, avatarV }), hidden: !!masked,
+        hiddenAcct: !!(viewerIsAdmin && int(hidden)),
         value: r.value, pp: board === 'overall' ? r.value : ppFor(r.value), rating: int(rating),
       };
     });

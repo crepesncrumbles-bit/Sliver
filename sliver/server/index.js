@@ -131,7 +131,7 @@ async function handleApi(req, res, p, url) {
     }
     if (p === '/api/leaderboard') {
       const me = await accounts.session(bearer(req));
-      const out = await accounts.leaderboard(url.searchParams.get('board') || 'overall', me && me.id);
+      const out = await accounts.leaderboard(url.searchParams.get('board') || 'overall', me && me.id, !!(me && me.admin));
       return sendJson(res, 200, { ok: true, ...out });
     }
     if (p.startsWith('/api/friends')) return await handleFriends(req, res, p);
