@@ -154,13 +154,21 @@ async function getJsonRetry(url) {
   }
 }
 
+// Most fans first. An artist whose name is exactly what you typed only jumps ahead when they're
+// reasonably popular too, so "kendrick" gives Kendrick Lamar, not some small artist called "Kendrick".
+const squashName = (s) => normText(s).replace(/ /g, '');
+function rankArtists(list, q, fansOf = (a) => a.nb_fan || a.fans || 0) {
+  const want = squashName(q);
+  const top = Math.max(0, ...list.map(fansOf));
+  const exact = (a) => squashName(a.name) === want && fansOf(a) >= top * 0.02;
+  return list.slice().sort((a, b) => (exact(b) - exact(a)) || fansOf(b) - fansOf(a));
+}
+
 async function findArtist(q, artistId) {
   if (artistId && /^\d+$/.test(String(artistId))) return getJson(`${API}/artist/${artistId}`);
   if (!q) throw new Error('Type an artist name');
-  const found = await getJson(`${API}/search/artist?q=${encodeURIComponent(q)}&limit=5`);
-  const nq = normText(q).replace(/ /g, '');
-  const list = found.data || [];
-  return list.find((a) => normText(a.name).replace(/ /g, '') === nq) || list[0] || null;
+  const found = await getJson(`${API}/search/artist?q=${encodeURIComponent(q)}&limit=15`);
+  return rankArtists(found.data || [], q)[0] || null;
 }
 
 async function artistSongs(artist, { top = 0 } = {}) {
@@ -296,16 +304,13 @@ async function searchArtists(query) {
   if (q.length < 2) return [];
   const hit = artistSearchCache.get(q);
   if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.list;
-  const data = await getJson(`${API}/search/artist?q=${encodeURIComponent(q)}&limit=8`);
-  const exact = normText(q).replace(/ /g, '');
-  const list = (data.data || []).map((a) => ({
+  const data = await getJson(`${API}/search/artist?q=${encodeURIComponent(q)}&limit=15`);
+  const list = rankArtists((data.data || []).map((a) => ({
     id: String(a.id), name: a.name, picture: a.picture_small || a.picture_medium || null, fans: a.nb_fan || 0,
-  }))
-    // Most popular first; an exact name match still comes first.
-    .sort((a, b) => ((normText(b.name).replace(/ /g, '') === exact) - (normText(a.name).replace(/ /g, '') === exact)) || b.fans - a.fans);
+  })), q);
   artistSearchCache.set(q, { at: Date.now(), list });
   if (artistSearchCache.size > 500) artistSearchCache.delete(artistSearchCache.keys().next().value);
   return list;
 }
 
-module.exports = { searchArtists, loadDeezerSource, fetchPreview, parseDeezerInput, searchDeezer, loadDeezerPlaylistSearch, loadDeezerArtist, addItunesSongs, sameSong, squashTitle, MAX_TRACKS, TOP_N_SONGS };
+module.exports = { rankArtists, searchArtists, loadDeezerSource, fetchPreview, parseDeezerInput, searchDeezer, loadDeezerPlaylistSearch, loadDeezerArtist, addItunesSongs, sameSong, squashTitle, MAX_TRACKS, TOP_N_SONGS };

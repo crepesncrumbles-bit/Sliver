@@ -92,6 +92,7 @@ const dz = (id, title, artist, rank, extra = {}) => ({ id, title, title_short: t
       check(list.map((a) => a.name).join('|') === 'Amr Diab|Amro|Amr Mostafa|Amr Diab Tribute', 'sorted by fans');
       const exact = await deezer.searchArtists('Amr Mostafa');
       check(exact[0].name === 'Amr Mostafa', 'an exact name match still comes first');
+      deezer.rankArtists && check(deezer.rankArtists([{ name: 'Kendrick', nb_fan: 900 }, { name: 'Kendrick Lamar', nb_fan: 9000000 }, { name: 'Kendrick Scott', nb_fan: 5000 }], 'kendrick')[0].name === 'Kendrick Lamar', 'a tiny artist with the exact name doesn\'t beat a huge one ("kendrick" → Kendrick Lamar)');
     }
 
     // ----------------------------------------------------------------

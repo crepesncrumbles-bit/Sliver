@@ -477,7 +477,7 @@
       const data = await shrinkImage(file);
       const url = await uploadPic(data);
       setMyAvatar(url, auth && auth.user ? null : data);
-      toast('Picture updated', 'good');
+      toast('Icon updated', 'good');
     } catch (err) { toast(err.message || 'Upload failed', 'error'); }
   };
   $('#pic-remove').onclick = async () => {
@@ -632,9 +632,11 @@
       const more = long ? (open
         ? `<button class="pack more" data-cat-toggle="${esc(c.name)}">Show fewer</button>`
         : `<button class="pack more" data-cat-toggle="${esc(c.name)}">+ ${c.packs.length - shown.length} more</button>`) : '';
-      return `<h3>${esc(c.name)}</h3><div class="pack-row">${shown.map((pk) =>
+      const fold = !expandedCats.has(c.name);
+      const nOn = c.packs.filter((pk) => added.has(pk.id)).length;
+      return `<button type="button" class="pack-cat${fold ? '' : ' open'}" data-cat-fold="${esc(c.name)}" aria-expanded="${!fold}"><span>${esc(c.name)}</span>${nOn ? `<em>${nOn} added</em>` : ''}<i aria-hidden="true">▾</i></button>${fold ? '' : `<div class="pack-row">${shown.map((pk) =>
         `<button class="pack${added.has(pk.id) ? ' on' : ''}${busyPacks.has(pk.id) ? ' busy' : ''}" data-pack="${esc(pk.id)}" aria-pressed="${added.has(pk.id)}">${esc(pk.name)}</button>`
-      ).join('')}${more}</div>`;
+      ).join('')}${more}</div>`}`;
     }).join('');
 
     // ---- game type, mode, settings ----
@@ -762,6 +764,16 @@
   $('#btn-clear').onclick = () => emit('clearPool');
   const busyPacks = new Set();
   const openCats = new Set();
+  // Pack categories (genres, artists…) start folded; we remember which ones you open.
+  const expandedCats = new Set((() => { try { return JSON.parse(localStorage.getItem('sliver.openPackCats') || '[]'); } catch { return []; } })());
+  document.addEventListener('click', (e) => {
+    const t = e.target.closest('[data-cat-fold]');
+    if (!t) return;
+    const c = t.dataset.catFold;
+    expandedCats.has(c) ? expandedCats.delete(c) : expandedCats.add(c);
+    try { localStorage.setItem('sliver.openPackCats', JSON.stringify([...expandedCats])); } catch {}
+    if (state && state.phase === 'lobby') renderLobby();
+  });
   document.addEventListener('click', (e) => {
     const t = e.target.closest('[data-cat-toggle]');
     if (!t) return;
@@ -1209,7 +1221,7 @@
         'gave-up': `<div class="verdict">Skipped</div>`,
         timeout: `<div class="verdict">${r.endsAt ? 'Time\'s up' : 'Song over'}</div>`,
       }[my.status] || '';
-      if (my.status === 'correct' && !celebrated) { celebrated = true; confetti(); }
+      if (my.status === 'correct' && !celebrated) { celebrated = true; requestAnimationFrame(() => confetti($('#done-card'))); }
       if ($('#done-card').dataset.status !== my.status) {
         $('#done-card').dataset.status = my.status;
         $('#done-card').innerHTML = msg +
@@ -1362,16 +1374,41 @@
     }
   }
 
-  function confetti() {
+  // A small burst of confetti from the edges of a box, in the current theme's colors.
+  function confetti(target) {
     if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const box = $('#confetti');
-    const colors = ['#FFD43B', '#FF4F9A', '#2FD6A0', '#FFFFFF', '#8FA0FF'];
-    box.innerHTML = Array.from({ length: 70 }, () => {
-      const left = Math.random() * 100, dx = (Math.random() - 0.5) * 220, rot = Math.round(Math.random() * 720 - 360);
-      const delay = Math.random() * 0.25, dur = 1 + Math.random() * 0.8;
-      return `<i style="left:${left}%;background:${colors[Math.floor(Math.random() * colors.length)]};--dx:${dx}px;--rot:${rot}deg;animation-delay:${delay}s;animation-duration:${dur}s"></i>`;
-    }).join('');
-    setTimeout(() => { box.innerHTML = ''; }, 2400);
+    const el = target || $('#done-card');
+    const r = el && !el.hidden ? el.getBoundingClientRect() : null;
+    if (!r || !r.width) return;
+    const css = getComputedStyle(document.documentElement);
+    const colors = ['--accent', '--pop', '--brand', '--mint', '--accent-hover', '--pop-soft']
+      .map((v) => css.getPropertyValue(v).trim()).filter(Boolean);
+    const pieces = [];
+    const N = 46;
+    for (let i = 0; i < N; i++) {
+      // Start on the box's border, fly outward a little, then fall and fade.
+      const side = i % 4, t = Math.random();
+      const x = side === 0 ? r.left + t * r.width : side === 1 ? r.right : side === 2 ? r.left + t * r.width : r.left;
+      const y = side === 0 ? r.top : side === 1 ? r.top + t * r.height : side === 2 ? r.bottom : r.top + t * r.height;
+      const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      const len = Math.hypot(x - cx, y - cy) || 1;
+      const dist = 26 + Math.random() * 46;
+      const dx = ((x - cx) / len) * dist + (Math.random() - 0.5) * 20;
+      const dy = ((y - cy) / len) * dist + (Math.random() - 0.5) * 20;
+      const i_ = document.createElement('i');
+      const sz = 5 + Math.random() * 5;
+      i_.style.cssText = `left:${x}px;top:${y}px;width:${sz}px;height:${sz * (Math.random() < 0.5 ? 1 : 1.6)}px;background:${colors[i % colors.length]};border-radius:${Math.random() < 0.35 ? '50%' : '2px'}`;
+      box.appendChild(i_);
+      pieces.push(i_);
+      const rot = Math.round(Math.random() * 540 - 270);
+      i_.animate([
+        { transform: 'translate(-50%,-50%) scale(.4) rotate(0deg)', opacity: 1 },
+        { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(1) rotate(${rot / 2}deg)`, opacity: 1, offset: 0.45 },
+        { transform: `translate(calc(-50% + ${dx * 1.15}px), calc(-50% + ${dy * 1.15 + 34}px)) scale(.9) rotate(${rot}deg)`, opacity: 0 },
+      ], { duration: 900 + Math.random() * 500, delay: Math.random() * 120, easing: 'cubic-bezier(.15,.7,.3,1)', fill: 'forwards' });
+    }
+    setTimeout(() => pieces.forEach((p) => p.remove()), 1800);
   }
 
   // ---------- reveal ----------

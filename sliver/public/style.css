@@ -330,7 +330,7 @@ input[type=range]::-moz-range-thumb { width: 8px; height: 52px; border-radius: 6
 @keyframes shake { 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
 
 .confetti { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 60; }
-.confetti i { position: absolute; top: -12px; width: 9px; height: 14px; border-radius: 2px; animation: fall 1.4s cubic-bezier(.2, .6, .4, 1) forwards; }
+.confetti i { position: fixed; display: block; will-change: transform, opacity; }
 @keyframes fall { to { transform: translate(var(--dx), 105vh) rotate(var(--rot)); opacity: .9; } }
 
 @media (prefers-reduced-motion: reduce) {
@@ -748,3 +748,12 @@ body.in-game #decor-front { display: none; }
 .set-panel > h3:first-child { margin-top: 10px; }
 .set-panel { min-height: 160px; }
 @media (max-width: 420px) { .set-tabs .seg-btn { font-size: 12px; } }
+
+/* Folding pack categories */
+.pack-cat { display: flex; align-items: center; gap: 8px; width: 100%; margin: 8px 0 0; padding: 11px 14px; font: inherit; font-family: var(--display); font-weight: 700; font-size: 16px; color: var(--ink); background: var(--paper-2); border: 0; border-radius: var(--r-ctl); cursor: pointer; text-align: left; }
+.pack-cat:first-child { margin-top: 0; }
+.pack-cat span { flex: 1; }
+.pack-cat em { font-style: normal; font-family: inherit; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 99px; background: var(--inverse); color: var(--inverse-ink); }
+.pack-cat i { font-style: normal; transition: transform .2s; color: var(--ink-2); }
+.pack-cat.open i { transform: rotate(180deg); }
+.pack-cat + .pack-row { margin: 10px 0 6px; }
