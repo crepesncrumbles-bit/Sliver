@@ -1405,10 +1405,11 @@
       i_.animate([
         { transform: 'translate(-50%,-50%) scale(.4) rotate(0deg)', opacity: 1 },
         { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(1) rotate(${rot / 2}deg)`, opacity: 1, offset: 0.45 },
-        { transform: `translate(calc(-50% + ${dx * 1.15}px), calc(-50% + ${dy * 1.15 + 34}px)) scale(.9) rotate(${rot}deg)`, opacity: 0 },
-      ], { duration: 900 + Math.random() * 500, delay: Math.random() * 120, easing: 'cubic-bezier(.15,.7,.3,1)', fill: 'forwards' });
+        { transform: `translate(calc(-50% + ${dx * 1.15}px), calc(-50% + ${dy * 1.15 + 34}px)) scale(.95) rotate(${rot * 0.8}deg)`, opacity: 1, offset: 0.75 },
+        { transform: `translate(calc(-50% + ${dx * 1.25}px), calc(-50% + ${dy * 1.25 + 70}px)) scale(.85) rotate(${rot}deg)`, opacity: 0 },
+      ], { duration: 2400 + Math.random() * 900, delay: Math.random() * 250, easing: 'cubic-bezier(.15,.7,.3,1)', fill: 'forwards' });
     }
-    setTimeout(() => pieces.forEach((p) => p.remove()), 1800);
+    setTimeout(() => pieces.forEach((p) => p.remove()), 3800);
   }
 
   // ---------- reveal ----------
