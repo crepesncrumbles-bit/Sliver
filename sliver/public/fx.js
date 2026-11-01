@@ -22,7 +22,7 @@
   }
   function resize() {
     if (!canvas) return;
-    DPR = Math.min(1.5, window.devicePixelRatio || 1);
+    DPR = light ? 1 : Math.min(1.5, window.devicePixelRatio || 1);
     W = window.innerWidth; H = window.innerHeight;
     canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
     canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
@@ -32,9 +32,12 @@
   }
   const density = () => Math.max(0.45, Math.min(1.6, (W * H) / (1366 * 768)));
 
+  // Phones and small screens: 30 fps and 1x resolution, so the background never slows the game down.
+  const light = (window.matchMedia && matchMedia('(pointer: coarse)').matches) || (navigator.hardwareConcurrency || 8) <= 4;
   function frame(now) {
     raf = 0;
     if (!scene) return;
+    if (light && last && now - last < 31) { if (!reduce && !document.hidden) raf = requestAnimationFrame(frame); return; }
     const dt = Math.min(0.05, (now - (last || now)) / 1000);
     last = now;
     scene.draw(dt, (now - t0) / 1000);
@@ -480,31 +483,44 @@
           const black = isBlack(m);
           const wi = whites.indexOf(black ? m - 1 : m);
           const x = black ? (wi + 1) * whiteW - whiteW * 0.31 : wi * whiteW;
-          keys.push({ m, black, x, w: black ? whiteW * 0.62 : whiteW, glow: 0, held: false, f: 440 * Math.pow(2, (m - 69) / 12) });
+          keys.push({ m, black, x, w: black ? whiteW * 0.62 : whiteW, glow: 0, held: false, off: 0, last: -9, col: hue(m), f: 440 * Math.pow(2, (m - 69) / 12) });
         }
         dust = Array.from({ length: Math.round(40 * density()) }, () => ({ x: rand(0, W), y: rand(0, kbY), r: rand(0.6, 1.8), v: rand(4, 14), p: rand(0, TAU) }));
       };
       const hue = (m) => { const k = (m - LO) / (HI - LO); return `hsl(${Math.round(38 + k * 190)}, 85%, ${68 - k * 6}%)`; };
+      let now = 0;
+      const MAX_BARS = 70;
       function press(k, amt) {
         k.glow = Math.max(k.glow, amt);
-        if (!k.held) { k.held = true; bars.push({ k, y: kbY, h: 0, growing: true, a: Math.min(1, 0.45 + amt) }); }
+        k.off = 0;
+        // A new note only if this key wasn't just played, and never more than MAX_BARS on screen.
+        if (!k.held && now - k.last > 0.18 && bars.length < MAX_BARS) { bars.push({ k, y: kbY, h: 0, growing: true, a: Math.min(1, 0.45 + amt) }); k.last = now; }
+        k.held = true;
       }
+      // A key lets go only after it's been quiet for a moment (the analysis flickers frame to frame).
+      function release(k, dt) { k.off += dt; if (k.off > 0.12) k.held = false; }
+      let lastListen = 0, heard = false;
       function listen(dt) {
+        if (now - lastListen < 1 / 30) return heard; // analyse at most 30 times a second
+        const step = now - lastListen;
+        lastListen = now;
         const A = window.SliverAudio && window.SliverAudio.spectrum && window.SliverAudio.spectrum();
+        heard = !!A;
         if (!A) return false;
+        dt = step;
         const { data, rate, size } = A;
         const vals = keys.map((k) => {
           const b = Math.round((k.f * size) / rate);
           return Math.max(data[b] || 0, data[b - 1] || 0, data[b + 1] || 0) / 255;
         });
         const loud = Math.max(...vals);
-        if (loud < 0.12) { keys.forEach((k) => { k.held = false; }); return true; }
+        if (loud < 0.12) { keys.forEach((k) => release(k, dt)); return true; }
         const mean = vals.reduce((x, y) => x + y, 0) / vals.length;
         keys.forEach((k, i) => {
           const v = vals[i];
           const peak = v >= (vals[i - 1] || 0) && v >= (vals[i + 1] || 0);
           const on = peak && v > mean * 1.15 + 0.06 && v > loud * 0.72;
-          if (on) press(k, Math.min(1, (v - mean) * 2.2 + 0.35)); else k.held = false;
+          if (on) press(k, Math.min(1, (v - mean) * 2.2 + 0.35)); else release(k, dt);
         });
         return true;
       }
@@ -526,7 +542,9 @@
           ctx.fillStyle = grad(0, H, [[0, '#07070C'], [0.6, '#0F0F1A'], [1, '#17131F']]);
           ctx.fillRect(0, 0, W, H);
           glowDot(W * 0.5, -H * 0.15, H * 0.9, 'rgba(232,194,122,.10)');
-          for (const d of dust) { d.y -= d.v * dt; if (d.y < 0) { d.y = kbY; d.x = rand(0, W); } glowDot(d.x + Math.sin(t * 0.4 + d.p) * 10, d.y, d.r * 3, 'rgba(255,240,210,.5)', 0.5); }
+          now = t;
+          ctx.fillStyle = 'rgba(255,240,210,.35)';
+          for (const d of dust) { d.y -= d.v * dt; if (d.y < 0) { d.y = kbY; d.x = rand(0, W); } ctx.fillRect(d.x + Math.sin(t * 0.4 + d.p) * 10, d.y, d.r, d.r); }
           if (!listen(dt)) idle(dt);
           // rising notes
           ctx.globalCompositeOperation = 'lighter';
@@ -536,12 +554,14 @@
             if (b.growing && b.k.held) b.h += speed * dt; else { b.growing = false; b.y -= speed * dt; }
             b.a -= dt * 0.07;
             const x = b.k.x + b.k.w * 0.12, w = b.k.w * 0.76, top = b.y - b.h;
+            const hgt = Math.max(4, b.h);
+            ctx.fillStyle = b.k.col;
+            ctx.globalAlpha = Math.max(0, b.a) * 0.25; // soft halo (cheap: a wider, fainter bar)
+            ctx.fillRect(x - 4, top - 4, w + 8, hgt + 8);
             ctx.globalAlpha = Math.max(0, b.a);
-            ctx.shadowColor = hue(b.k.m); ctx.shadowBlur = 16;
-            ctx.fillStyle = hue(b.k.m);
-            rr(x, top, w, Math.max(4, b.h), Math.min(6, w / 2)); ctx.fill();
+            rr(x, top, w, hgt, Math.min(6, w / 2)); ctx.fill();
           }
-          ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+          ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
           // felt strip + keyboard
           ctx.fillStyle = '#5A0F1C'; ctx.fillRect(0, kbY - 5, W, 5);
           for (const k of keys) {
@@ -550,7 +570,7 @@
             const press = k.glow * 3;
             ctx.fillStyle = grad(kbY, H, [[0, '#FFFDF6'], [1, '#E9E2D0']]);
             ctx.fillRect(k.x + 0.5, kbY + press, k.w - 1, kbH - press);
-            if (k.glow > 0.02) { ctx.globalAlpha = k.glow * 0.85; ctx.fillStyle = hue(k.m); ctx.fillRect(k.x + 0.5, kbY + press, k.w - 1, kbH - press); ctx.globalAlpha = 1; glowDot(k.x + k.w / 2, kbY, k.w * 1.6, hue(k.m), k.glow * 0.7); }
+            if (k.glow > 0.02) { ctx.globalAlpha = k.glow * 0.85; ctx.fillStyle = k.col; ctx.fillRect(k.x + 0.5, kbY + press, k.w - 1, kbH - press); ctx.globalAlpha = 1; if (k.glow > 0.15) glowDot(k.x + k.w / 2, kbY, k.w * 1.6, k.col, k.glow * 0.7); }
             ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.fillRect(k.x + k.w - 1, kbY, 1, kbH);
           }
           for (const k of keys) {
@@ -558,7 +578,7 @@
             const bh = kbH * 0.62, press = k.glow * 2;
             ctx.fillStyle = grad(kbY, kbY + bh, [[0, '#2A2A30'], [1, '#0B0B0E']]);
             ctx.fillRect(k.x, kbY + press, k.w, bh);
-            if (k.glow > 0.02) { ctx.globalAlpha = k.glow; ctx.fillStyle = hue(k.m); ctx.fillRect(k.x, kbY + press, k.w, bh); ctx.globalAlpha = 1; glowDot(k.x + k.w / 2, kbY, k.w * 2.2, hue(k.m), k.glow * 0.7); }
+            if (k.glow > 0.02) { ctx.globalAlpha = k.glow; ctx.fillStyle = k.col; ctx.fillRect(k.x, kbY + press, k.w, bh); ctx.globalAlpha = 1; if (k.glow > 0.15) glowDot(k.x + k.w / 2, kbY, k.w * 2.2, k.col, k.glow * 0.7); }
           }
           ctx.fillStyle = grad(kbY, kbY + 14, [[0, 'rgba(0,0,0,.45)'], [1, 'rgba(0,0,0,0)']]);
           ctx.fillRect(0, kbY, W, 14);

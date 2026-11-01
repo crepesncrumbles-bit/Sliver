@@ -48,6 +48,24 @@ const io = { to: (to) => ({ emit: (e, d) => events.push({ to, e, d }) }) };
   room.endRound();
   check(room.phase === 'results', '"End this song now" ends the speedrun for everyone');
 
+  console.log('no repeats within a room');
+  {
+    const r2 = new RoomManager(io).create();
+    r2.addPlayer('Solo', { id: 's9' });
+    r2.sources.push({ key: 'demo', name: 'Demo', tracks: Array.from({ length: 6 }, (_, i) => ({ source: 'demo', sourceId: String(i), title: `Tune ${i}`, artist: 'Band' })) });
+    r2.rebuildPool();
+    r2.updateSettings({ rounds: 3 });
+    const seen = [];
+    for (let g = 0; g < 2; g++) {
+      await r2.start();
+      for (let k = 0; k < 3; k++) { seen.push(r2.round.track.title); r2.endRound(); await r2.nextRound(); }
+    }
+    check(new Set(seen).size === 6, `6 songs over two 3-song games, no repeats (${seen.join(', ')})`);
+    await r2.start();
+    check(r2.round && r2.round.track, 'once all are played, it starts over instead of getting stuck');
+    r2.clearTimers();
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

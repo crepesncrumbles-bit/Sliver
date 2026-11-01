@@ -92,6 +92,7 @@ class Room {
     this.round = null;
     this.reveal = null;
     this.usedTrackKeys = new Set();
+    this.played = new Set(); // every song played in this room (title|artist), kept between games
     this.timers = { round: null, reveal: null };
     this.lastActive = Date.now();
   }
@@ -485,11 +486,14 @@ class Room {
 
   // A random unused song from the game's pool, with its audio loaded. { track: null } if none loads.
   async pickSong(game) {
-    let unused = game.pool.filter((t) => !this.usedTrackKeys.has(t.poolId));
-    if (!unused.length) { this.usedTrackKeys.clear(); unused = [...game.pool]; }
+    // No repeats for as long as the room is open: songs played in earlier games are skipped too.
+    // Only once every song in the list has been played does it start over.
+    const songKey = (t) => `${norm(t.title)}|${norm(t.artist)}`;
+    let unused = game.pool.filter((t) => !this.played.has(songKey(t)));
+    if (!unused.length) { for (const t of game.pool) this.played.delete(songKey(t)); unused = [...game.pool]; }
     for (let attempt = 0; attempt < 8 && unused.length; attempt++) {
       const pick = unused.splice(pickIndex(unused), 1)[0];
-      this.usedTrackKeys.add(pick.poolId);
+      this.played.add(songKey(pick));
       try {
         return { clip: await this.loadClip(pick), track: pick };
       } catch (err) {

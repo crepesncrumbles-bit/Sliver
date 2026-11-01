@@ -837,12 +837,23 @@
   function unlockAudio() {
     if (!ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
-      try { ctx = new AC({ latencyHint: 'playback' }); } catch { ctx = new AC(); }
+      // Phones: "interactive" so a tap plays right away ("playback" adds a noticeable delay there).
+      // Computers keep "playback" (bigger buffers, no crackle while screen-sharing).
+      const phone = window.matchMedia && matchMedia('(pointer: coarse)').matches;
+      try { ctx = new AC({ latencyHint: phone ? 'interactive' : 'playback' }); } catch { ctx = new AC(); }
     }
     if (ctx.state === 'suspended') ctx.resume();
     if (clip.data && !clip.buffer && !clip.decoding) decodeClip(clip);
     return ctx;
   }
+
+  // Start the audio engine on your first tap anywhere, so every song is decoded as soon as it
+  // arrives instead of when you press play.
+  const firstTap = () => { try { unlockAudio(); } catch {} };
+  window.addEventListener('pointerdown', firstTap, { once: true, capture: true });
+  window.addEventListener('keydown', firstTap, { once: true, capture: true });
+  // Phones suspend audio when the app is in the background; wake it up when you come back.
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && ctx && ctx.state !== 'running') ctx.resume().catch(() => {}); });
 
   function analyze(buf) {
     const chans = [];
