@@ -2148,6 +2148,38 @@
     if ($('#admin-result').innerHTML.trim()) $('#admin-result').innerHTML = adminUserHtml(u);
     if ($('#pf-admin')) $('#pf-admin').innerHTML = adminUserHtml(u);
   }
+  // Every account in a dropdown; typing filters it (name, #tag, email or id).
+  let adminUsers = null, adminLoadedAt = 0;
+  async function loadAdminUsers() {
+    if (adminUsers && Date.now() - adminLoadedAt < 30000) return adminUsers;
+    const res = await api('/api/admin/users');
+    if (res.ok) { adminUsers = res.users; adminLoadedAt = Date.now(); }
+    return adminUsers || [];
+  }
+  async function renderAdminList() {
+    const list = await loadAdminUsers();
+    const q = $('#admin-query').value.trim().toLowerCase().replace(/^#/, '');
+    const hits = (q ? list.filter((u) => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q) || u.tag.includes(q) || u.id.toLowerCase().startsWith(q)) : list).slice(0, 60);
+    const ul = $('#admin-list');
+    ul.hidden = false;
+    ul.innerHTML = `<li class="group">${q ? `${hits.length}${hits.length === 60 ? '+' : ''} match${hits.length === 1 ? '' : 'es'}` : `All players (${list.length})`}</li>` + (hits.length ? hits.map((u) => `
+      <li class="artist" data-admin-pick="${esc(u.id)}">
+        <span class="acct-av${avClass(u.icon, u.avatar)}">${avatar(u.icon, u.name, u.avatar)}</span>
+        <div><div>${esc(u.name)} <span class="tag-no">#${esc(u.tag)}</span>${u.banned ? ' <span class="hid-tag" style="background:var(--red)">banned</span>' : ''}${u.hidden ? ' <span class="hid-tag">🙈</span>' : ''}</div><div class="s-artist">${esc(u.email)}</div></div>
+      </li>`).join('') : '<li class="group">No players match</li>');
+  }
+  $('#admin-query').addEventListener('focus', renderAdminList);
+  $('#admin-query').addEventListener('input', renderAdminList);
+  $('#admin-query').addEventListener('blur', () => setTimeout(() => { $('#admin-list').hidden = true; }, 180));
+  $('#admin-list').addEventListener('mousedown', async (e) => {
+    const li = e.target.closest('[data-admin-pick]');
+    if (!li) return;
+    e.preventDefault();
+    $('#admin-list').hidden = true;
+    const u = await adminAction({ action: 'view', id: li.dataset.adminPick });
+    $('#admin-result').innerHTML = u ? adminUserHtml(u) : '';
+    adminUsers = null; // refresh next time (bans etc.)
+  });
   $('#admin-find').onsubmit = async (e) => {
     e.preventDefault();
     const u = await adminAction({ action: 'view', query: $('#admin-query').value });

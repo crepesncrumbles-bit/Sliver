@@ -340,8 +340,11 @@
       <div id="settings-account" class="settings-account"></div>
       <div id="admin-panel" class="admin-panel" hidden>
         <h3>Admin</h3>
-        <form id="admin-find" class="row" autocomplete="off">
-          <input id="admin-query" placeholder="Email, friend code or player id" aria-label="Find a player" />
+        <form id="admin-find" class="row admin-search" autocomplete="off">
+          <div class="artist-box">
+            <input id="admin-query" placeholder="Search players: name, #tag, email…" aria-label="Find a player" />
+            <ul id="admin-list" class="suggestions admin-list" hidden></ul>
+          </div>
           <button class="btn small" type="submit">Find</button>
         </form>
         <div id="admin-result"></div>

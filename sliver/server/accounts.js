@@ -251,6 +251,22 @@ class Accounts {
     return id;
   }
 
+  // Every account, for the admin's searchable list (newest first).
+  async listUsers() {
+    const ids = [];
+    let cursor = '0';
+    do {
+      const [next, keys] = await this.store.cmd('SCAN', cursor, 'MATCH', 'user:*', 'COUNT', 500);
+      for (const k of keys || []) ids.push(String(k).slice(5));
+      cursor = String(next);
+    } while (cursor !== '0' && ids.length < 20000);
+    const rows = ids.length ? await this.store.pipeline(ids.map((id) => ['HMGET', K.user(id), 'name', 'email', 'banned', 'hidden', 'created', 'icon', 'avatarV'])) : [];
+    return ids.map((id, i) => {
+      const [name, email, banned, hidden, created, icon, avatarV] = rows[i] || [];
+      return { id, name: name || 'Player', tag: tagFor(id), email: email || '', banned: !!int(banned), hidden: !!int(hidden), created: int(created), icon: cleanIcon(icon), avatar: avatarUrl({ id, avatarV }) };
+    }).filter((u) => u.email || u.name).sort((a, b) => b.created - a.created);
+  }
+
   async adminView(id) {
     const u = await this.getUser(id);
     if (!u) throw new AccountError('No player found');

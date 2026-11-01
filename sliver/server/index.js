@@ -172,6 +172,11 @@ async function handleApi(req, res, p, url) {
       return sendJson(res, 200, { ok: true, ...out });
     }
     if (p === '/api/admin/user') return await handleAdminUser(req, res);
+    if (p === '/api/admin/users') {
+      const me = await accounts.session(bearer(req));
+      if (!me || !me.admin) return sendJson(res, 403, { ok: false, error: 'Admins only' });
+      return sendJson(res, 200, { ok: true, users: await accounts.listUsers() });
+    }
     if (p === '/api/admin/stats') return await handleAdmin(req, res, url);
     const prof = p.match(/^\/api\/profile\/([\w-]{6,40})$/);
     if (prof) {
@@ -378,7 +383,7 @@ async function handleFriends(req, res, p) {
   return sendJson(res, 200, { ok: true, ...out, ...(await accounts.friends(me.id, presence)) });
 }
 
-const API_PATHS = /^\/api\/(signup|signup\/verify|signup\/resend|reset\/start|reset\/finish|login|logout|me|leaderboard|profile\/[\w-]+|artists|me\/(settings|avatar|name|delete)|avatar\/guest|leaderboard\/friends|admin\/(stats|user)|bmc\/webhook|friends(\/(request|accept|remove|block|unblock))?)$/;
+const API_PATHS = /^\/api\/(signup|signup\/verify|signup\/resend|reset\/start|reset\/finish|login|logout|me|leaderboard|profile\/[\w-]+|artists|me\/(settings|avatar|name|delete)|avatar\/guest|leaderboard\/friends|admin\/(stats|user|users)|bmc\/webhook|friends(\/(request|accept|remove|block|unblock))?)$/;
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');

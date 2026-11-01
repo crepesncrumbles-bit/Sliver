@@ -105,6 +105,16 @@ const io = { to: (to) => ({ emit: (e, d) => events.push({ to, e, d }) }) };
     global.fetch = realFetch;
   }
 
+  console.log('admin: list of every account');
+  {
+    const { Accounts } = require('../server/accounts');
+    const { MiniRedis } = require('../server/store');
+    const st = new MiniRedis(); const acc = new Accounts(st, null, { adminEmails: 'boss@x.co' });
+    for (const [n, e] of [['Boss', 'boss@x.co'], ['Zed', 'zed@x.co'], ['Amy', 'amy@x.co']]) await acc.signup({ name: n, email: e, password: 'secret1' });
+    const list = await acc.listUsers();
+    check(list.length === 3 && list.every((u) => u.id && u.tag && u.email) && list.some((u) => u.name === 'Zed'), `lists every account with name, #tag and email (${list.map((u) => u.name).join(', ')})`);
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

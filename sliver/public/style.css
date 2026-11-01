@@ -833,3 +833,10 @@ body.in-game #decor-front { display: none; }
 .pf-big { flex: none; width: 140px !important; height: 140px !important; border-radius: 50%; overflow: hidden; display: grid !important; place-items: center; font-size: 64px !important; box-shadow: 0 0 0 4px var(--paper), 0 0 0 6px var(--line); margin: -6px 4px 8px 0; }
 .pf-big img { width: 100%; height: 100%; object-fit: cover; }
 @media (max-width: 480px) { .pf-big { width: 88px !important; height: 88px !important; font-size: 40px !important; } }
+
+.admin-search .artist-box { flex: 1; position: relative; }
+.admin-list { max-height: 360px; }
+.admin-list .acct-av { width: 34px; height: 34px; flex: none; }
+.admin-list li.artist { display: flex; align-items: center; gap: 10px; }
+.admin-list li.artist .acct-av { display: grid; place-items: center; border-radius: 50%; overflow: hidden; font-size: 16px; }
+.admin-list li.artist .acct-av img { width: 100%; height: 100%; object-fit: cover; }
