@@ -529,78 +529,153 @@
       };
     },
 
-    // Northern lights rippling over mountains under the stars.
+    // Northern lights over mountains under the stars. Constellation hunt: a few bright stars appear
+    // in the open sky; tap them in order (the next one pulses) and glowing lines join them. Finish
+    // the shape and it lights up with its name, the aurora flares, and a new one appears.
+    // Tapping elsewhere makes the lights flare with a shower of sparkles.
     aurora() {
       let stars = [];
-      const reset = () => { stars = Array.from({ length: Math.round(140 * density()) }, () => ({ x: rand(0, W), y: rand(0, H * 0.75), r: rand(0.4, 1.6), p: rand(0, TAU), v: rand(0.5, 2) })); };
-      reset();
+      const reset = () => { stars = Array.from({ length: Math.round(140 * density()) }, () => ({ x: rand(0, W), y: rand(0, H * 0.75), r: rand(0.4, 1.6), p: rand(0, TAU), v: rand(0.5, 2) })); con = null; nextCon = 0.6; };
       const bands = [
         { hue: 150, y: 0.28, amp: 70, f: 0.004, s: 0.25, h: 170 },
         { hue: 175, y: 0.36, amp: 55, f: 0.006, s: -0.18, h: 130 },
         { hue: 275, y: 0.22, amp: 80, f: 0.003, s: 0.12, h: 120 },
       ];
-      let surge = 0, surgeX = 0, low = null, lctx = null, redraw = false;
-      let ox = 0, oy = 0, tx = 0, ty = 0, grab = null, held = 0; // where you've dragged the lights to
-      // Each band's colour fade is drawn once into a tiny sprite and stretched per column
-      // (much cheaper than building a gradient for every column every frame).
+      // Star patterns (0..1 box), joined in the order listed; extra links close shapes.
+      const SHAPES = [
+        { name: 'The Fox', pts: [[0.1, 0.2], [0.25, 0.05], [0.3, 0.3], [0.45, 0.45], [0.75, 0.5], [0.95, 0.75], [0.6, 0.8], [0.4, 0.95]] },
+        { name: 'The Whale', pts: [[0.05, 0.5], [0.25, 0.3], [0.55, 0.28], [0.8, 0.45], [0.95, 0.25], [0.97, 0.65], [0.8, 0.55], [0.5, 0.72], [0.2, 0.68]], close: true },
+        { name: 'The Owl', pts: [[0.3, 0.05], [0.5, 0.25], [0.7, 0.05], [0.8, 0.45], [0.7, 0.85], [0.5, 0.95], [0.3, 0.85], [0.2, 0.45]], close: true },
+        { name: 'The Deer', pts: [[0.2, 0.05], [0.3, 0.2], [0.4, 0.05], [0.35, 0.35], [0.5, 0.5], [0.85, 0.5], [0.9, 0.9], [0.55, 0.9], [0.5, 0.5]] },
+        { name: 'The Wolf', pts: [[0.15, 0.1], [0.3, 0.25], [0.05, 0.4], [0.35, 0.45], [0.6, 0.4], [0.9, 0.55], [0.75, 0.85], [0.45, 0.8]] },
+        { name: 'The Crown', pts: [[0.05, 0.8], [0.15, 0.2], [0.35, 0.6], [0.5, 0.1], [0.65, 0.6], [0.85, 0.2], [0.95, 0.8]], close: true },
+        { name: 'The Kite', pts: [[0.5, 0.0], [0.85, 0.35], [0.5, 0.75], [0.15, 0.35], [0.5, 0.0], [0.5, 0.75], [0.55, 0.95]] },
+      ];
+      let con = null, nextCon = 0.6, found = 0, shapeIx = Math.floor(Math.random() * SHAPES.length);
+      try { found = Number(localStorage.getItem('sliver.aurora.found')) || 0; } catch {}
+      function newCon() {
+        const sh = SHAPES[shapeIx++ % SHAPES.length];
+        // Put it in open sky beside the cards on wide screens, in the top band on narrow ones.
+        const side = W > 1000 ? (W - 600) / 2 : W;
+        const size = Math.max(150, Math.min(260, side - 60, H * 0.35));
+        let x0, y0;
+        if (W > 1000) { x0 = Math.random() < 0.5 ? rand(24, Math.max(24, side - size - 24)) : W - side + rand(24, Math.max(24, side - size - 24)); y0 = rand(70, Math.max(80, H * 0.55 - size)); }
+        else { x0 = rand(16, Math.max(16, W - size - 16)); y0 = rand(70, Math.max(80, H * 0.3)); }
+        con = { name: sh.name, close: !!sh.close, pts: sh.pts.map(([u, v]) => ({ x: x0 + u * size, y: y0 + v * size * 0.8, p: rand(0, TAU) })), next: 0, born: 0, done: 0, size };
+      }
+      let surge = 0, surgeX = 0, low = null, lctx = null, redraw = false, now = 0;
       for (const b of bands) {
         const c = document.createElement('canvas'); c.width = 1; c.height = 128;
         const g = c.getContext('2d'), lg = g.createLinearGradient(0, 0, 0, 128);
         lg.addColorStop(0, `hsla(${b.hue + 40},90%,65%,0)`); lg.addColorStop(0.55, `hsla(${b.hue},90%,60%,.10)`); lg.addColorStop(0.86, `hsla(${b.hue - 10},95%,70%,.24)`); lg.addColorStop(1, `hsla(${b.hue - 10},95%,70%,0)`);
         g.fillStyle = lg; g.fillRect(0, 0, 1, 128); b.sprite = c;
       }
+      function flare(x, y, n) {
+        surge = 1; surgeX = x;
+        burst(x, y, n, (i, a) => { const v = rand(60, 200); return { kind: 'glow', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, drag: 1.8, g: 25, s: rand(1.2, 2.6), decay: rand(0.5, 0.9), add: true, c: pick(['#6EE7B7', '#34D399', '#A78BFA', '#67E8F9']) }; });
+      }
+      function drawCon(t) {
+        if (!con) return;
+        const age = now - con.born, fadeIn = Math.min(1, age / 0.8);
+        const out = con.done ? Math.max(0, 1 - (now - con.done - 2.2) / 1) : 1;
+        const a = fadeIn * out;
+        if (a <= 0) return;
+        ctx.lineCap = 'round';
+        // the lines you've made
+        const upto = con.done ? con.pts.length : con.next;
+        ctx.globalCompositeOperation = 'lighter';
+        for (let i = 1; i < upto; i++) {
+          const p = con.pts[i - 1], q = con.pts[i];
+          ctx.strokeStyle = `rgba(110,231,183,${0.28 * a})`; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+          ctx.strokeStyle = `rgba(220,255,245,${0.9 * a})`; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+        }
+        if (con.done && con.close) { const p = con.pts[con.pts.length - 1], q = con.pts[0]; ctx.strokeStyle = `rgba(220,255,245,${0.9 * a})`; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke(); }
+        // hint: a faint dotted line to the next star
+        if (!con.done && con.next > 0) {
+          const p = con.pts[con.next - 1], q = con.pts[con.next];
+          ctx.setLineDash([3, 7]); ctx.strokeStyle = `rgba(200,240,255,${0.25 * a})`; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke(); ctx.setLineDash([]);
+        }
+        // the stars
+        con.pts.forEach((s, i) => {
+          const lit = con.done || i < con.next, nextOne = !con.done && i === con.next;
+          const tw = 0.75 + 0.25 * Math.sin(t * 3 + s.p);
+          const r = lit ? 3.2 : nextOne ? 3 + Math.sin(t * 6) * 0.8 : 2.4;
+          glowDot(s.x, s.y, r * (nextOne ? 7 : 5), lit ? 'rgba(110,231,183,.55)' : 'rgba(186,230,253,.45)', a * tw);
+          ctx.fillStyle = `rgba(255,255,255,${a})`; ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, TAU); ctx.fill();
+          if (nextOne) { ctx.strokeStyle = `rgba(167,243,208,${a * (0.5 + 0.5 * Math.sin(t * 6))})`; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(s.x, s.y, 12 + Math.sin(t * 6) * 2, 0, TAU); ctx.stroke(); }
+        });
+        ctx.globalCompositeOperation = 'source-over';
+        if (con.done) {
+          const k = Math.min(1, (now - con.done) / 0.6);
+          const cx = con.pts.reduce((s, p) => s + p.x, 0) / con.pts.length, top = Math.min(...con.pts.map((p) => p.y));
+          ctx.globalAlpha = a * k; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+          ctx.font = 'italic 600 20px Georgia, serif'; ctx.fillStyle = '#E6FFF6'; ctx.fillText(`✦ ${con.name} ✦`, cx, top - 18 - (1 - k) * 10);
+          ctx.globalAlpha = 1; ctx.textAlign = 'left';
+        }
+      }
+      reset();
       return {
         resize: reset,
         hover: () => true,
-        // Tap: the lights flare up around where you tapped, with a shower of green/violet sparkles.
+        targets: () => (con && !con.done ? con.pts.slice(con.next).map((p) => [p.x, p.y]) : []),
         tap(x, y) {
-          surge = 1; surgeX = x - ox;
-          burst(x, y, 18, (i, a) => { const v = rand(60, 200); return { kind: 'glow', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, drag: 1.8, g: 25, s: rand(1.2, 2.6), decay: rand(0.5, 0.9), add: true, c: pick(['#6EE7B7', '#34D399', '#A78BFA', '#67E8F9']) }; });
+          if (con && !con.done) {
+            const s = con.pts[con.next];
+            if (Math.hypot(x - s.x, y - s.y) < 26) {
+              con.next++;
+              burst(s.x, s.y, 8, (i, a) => ({ kind: 'glow', x: s.x, y: s.y, vx: Math.cos(a) * 70, vy: Math.sin(a) * 70, drag: 2.5, s: rand(1, 1.8), decay: 1.4, add: true, c: pick(['#A7F3D0', '#FFFFFF', '#C4B5FD']) }));
+              if (con.next >= con.pts.length) {
+                con.done = now; found++;
+                try { localStorage.setItem('sliver.aurora.found', String(found)); } catch {}
+                for (const p of con.pts) ring(p.x, p.y, 'rgba(167,243,208,.9)', { s: 3, grow: 90, decay: 2, w: 1.5, add: true });
+                flare(con.pts[0].x, con.pts[0].y, 26);
+              }
+              return true;
+            }
+            if (con.pts.some((p, i) => i > con.next && Math.hypot(x - p.x, y - p.y) < 26)) { // wrong star: the next one blinks at you
+              ring(s.x, s.y, 'rgba(253,164,175,.9)', { s: 4, grow: 60, decay: 3, w: 1.5, add: true });
+              return true;
+            }
+          }
+          flare(x, y, 18);
           return true;
         },
-        cursor: 'grab',
-        // Hold and drag: the lights follow you around the sky, glowing brighter while you hold them.
-        dragStart(x, y) { grab = { x, y, ox: tx, oy: ty }; document.documentElement.style.cursor = 'grabbing'; },
-        dragMove(x, y) {
-          if (!grab) return;
-          tx = grab.ox + (x - grab.x); ty = Math.max(-H * 0.2, Math.min(H * 0.5, grab.oy + (y - grab.y)));
-          if (Math.random() < 0.5) emit({ kind: 'glow', x: x + rand(-30, 30), y: y + rand(-20, 20), vx: rand(-20, 20), vy: rand(-30, 10), s: rand(1, 2.2), decay: 0.9, add: true, c: pick(['#6EE7B7', '#A78BFA', '#67E8F9']) });
-        },
-        dragEnd() { grab = null; document.documentElement.style.cursor = ''; },
         draw(dt, t) {
+          now = t;
           surge = Math.max(0, surge - dt * 0.45);
-          held += ((grab ? 1 : 0) - held) * Math.min(1, dt * 4);
-          ox += (tx - ox) * Math.min(1, dt * 5); oy += (ty - oy) * Math.min(1, dt * 5); // eases after your pointer, like it has weight
+          if (!con || (con.done && now - con.done > 3.3)) { if (con) con = null; nextCon -= dt; if (nextCon <= 0) { newCon(); con.born = now; nextCon = 1.2; } }
           ctx.fillStyle = grad(0, H, [[0, '#020617'], [0.6, '#0B1430'], [1, '#111C3A']]);
           ctx.fillRect(0, 0, W, H);
           for (const s of stars) { ctx.globalAlpha = 0.35 + 0.65 * Math.abs(Math.sin(t * s.v + s.p)); ctx.fillStyle = '#E0F2FE'; ctx.fillRect(s.x, s.y, s.r, s.r); }
           ctx.globalAlpha = 1;
-          // The lights are soft anyway, so they're drawn at quarter size and scaled up (much lighter).
           const Q = 3;
           if (!low || low.width !== Math.ceil(W / Q) || low.height !== Math.ceil(H / Q)) { low = document.createElement('canvas'); low.width = Math.ceil(W / Q); low.height = Math.ceil(H / Q); lctx = low.getContext('2d'); }
-          redraw = !redraw || surge > 0 || grab; // the lights move slowly: redraw them every other frame
+          redraw = !redraw || surge > 0;
           if (redraw) {
-          lctx.setTransform(1, 0, 0, 1, 0, 0); lctx.clearRect(0, 0, low.width, low.height);
-          lctx.globalCompositeOperation = 'lighter'; lctx.setTransform(1 / Q, 0, 0, 1 / Q, 0, 0);
-          for (const b of bands) {
-            for (let x = -10; x < W + 10; x += 3) {
-              const X = x - ox;
-              const y = H * b.y + oy + Math.sin(X * b.f + t * b.s * 2) * b.amp + Math.sin(X * b.f * 2.7 - t * b.s * 3) * b.amp * 0.35;
-              const boost = (surge ? 1 + surge * 1.4 * Math.exp(-(((X - surgeX) / (W * 0.25)) ** 2)) : 1) + held * 0.5;
-              const h = b.h * (0.6 + 0.4 * Math.sin(X * 0.01 + t * 0.8 + b.hue)) * boost;
-              lctx.globalAlpha = Math.min(1, boost);
-              lctx.drawImage(b.sprite, x, y - h, 4, h + 34);
+            lctx.setTransform(1, 0, 0, 1, 0, 0); lctx.clearRect(0, 0, low.width, low.height);
+            lctx.globalCompositeOperation = 'lighter'; lctx.setTransform(1 / Q, 0, 0, 1 / Q, 0, 0);
+            for (const b of bands) {
+              for (let x = -10; x < W + 10; x += 3) {
+                const y = H * b.y + Math.sin(x * b.f + t * b.s * 2) * b.amp + Math.sin(x * b.f * 2.7 - t * b.s * 3) * b.amp * 0.35;
+                const boost = surge ? 1 + surge * 1.4 * Math.exp(-(((x - surgeX) / (W * 0.25)) ** 2)) : 1;
+                const h = b.h * (0.6 + 0.4 * Math.sin(x * 0.01 + t * 0.8 + b.hue)) * boost;
+                lctx.globalAlpha = Math.min(1, boost);
+                lctx.drawImage(b.sprite, x, y - h, 4, h + 34);
+              }
             }
-          }
           }
           ctx.globalCompositeOperation = 'lighter';
           ctx.drawImage(low, 0, 0, W, H);
           ctx.globalAlpha = 1;
           ctx.globalCompositeOperation = 'source-over';
+          drawCon(t);
           ctx.fillStyle = '#050A18';
           ctx.beginPath(); ctx.moveTo(0, H);
           for (let x = 0; x <= W; x += 40) ctx.lineTo(x, H - 60 - Math.abs(Math.sin(x * 0.006) * 120) - Math.abs(Math.sin(x * 0.017 + 1) * 40));
           ctx.lineTo(W, H); ctx.fill();
+          ctx.font = '600 12px ui-monospace, Menlo, monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+          ctx.fillStyle = 'rgba(2,6,23,.55)'; ctx.fillRect(14, H - 40, 200, 26);
+          ctx.fillStyle = '#A7F3D0'; ctx.fillText(`✦ ${found} constellation${found === 1 ? '' : 's'} found`, 24, H - 22);
         },
       };
     },
@@ -711,6 +786,7 @@
     synthwave() {
       const CRUISE = 0, MAX = 600;
       let lastTap = -9, tapCombo = 0, clock = 0;
+      let posts = 0;
       let speed = 0, trip = 0, pos = 0, sunPulse = 0, nextKm = 1, flash = 0, best = 0, odo = 0, saveT = 0;
       try { best = Number(localStorage.getItem('sliver.synth.best')) || 0; odo = Number(localStorage.getItem('sliver.synth.odo')) || 0; } catch {}
       const save = () => { try { localStorage.setItem('sliver.synth.best', String(best)); localStorage.setItem('sliver.synth.odo', String(odo)); } catch {} };
@@ -752,7 +828,8 @@
           if (trip >= nextKm) { pops.push({ text: `${nextKm} KM!`, life: 1 }); nextKm++; flash = 1; }
           saveT += dt; if (saveT > 3) { saveT = 0; save(); }
           sunPulse = Math.max(0, sunPulse - dt * 2); flash = Math.max(0, flash - dt * 2);
-          pos += dt * 0.6 * (speed / 120);
+          pos += dt * speed / 38; // grid lines per second scale with your speed (300 km/h ≈ 8 a second)
+          posts += dt * speed / 160;
           const horizon = H * 0.58;
           const rumble = speed > MAX * 0.6 ? (speed / MAX - 0.6) * 6 : 0;
           ctx.save(); if (rumble) ctx.translate(rand(-rumble, rumble), rand(-rumble, rumble));
@@ -780,16 +857,34 @@
           const fast = (speed - CRUISE) / (MAX - CRUISE);
           ctx.strokeStyle = fast > 0.5 ? 'rgba(253,224,71,.8)' : 'rgba(34,211,238,.75)'; ctx.lineWidth = 1.4;
           const sp = pos % 1;
+          const blur = Math.min(1, speed / 360); // at speed, near lines smear into motion-blurred bands
           for (let i = 0; i < 18; i++) {
             const z = (i + 1 - sp) / 18;
             const y = horizon + Math.pow(z, 2.2) * (H - horizon);
             ctx.globalAlpha = Math.min(1, z * 1.6);
+            ctx.lineWidth = 1.4 + blur * z * z * 10;
+            if (blur > 0.05 && z > 0.4) ctx.globalAlpha *= 1 - blur * 0.45;
             ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
           }
+          ctx.lineWidth = 1.4;
           ctx.globalAlpha = 1;
           for (let i = -16; i <= 16; i++) { ctx.beginPath(); ctx.moveTo(cx + i * (W / 60), horizon); ctx.lineTo(cx + i * (W / 6), H); ctx.stroke(); }
           ctx.fillStyle = grad(horizon - 2, horizon + 30, [[0, 'rgba(255,46,151,.55)'], [1, 'rgba(255,46,151,0)']]);
           ctx.fillRect(0, horizon - 2, W, 32);
+          // neon posts along both sides of the road whip past (they're what really sells the speed)
+          for (let i = 0; i < 7; i++) {
+            const z = ((i / 7) + posts) % 1, zz = Math.pow(z, 2.4);
+            const y = horizon + zz * (H - horizon), hgt = 8 + zz * 190, off = 40 + zz * W * 0.62, w = 1.5 + zz * 9;
+            const a = Math.min(1, z * 2.2);
+            for (const d of [-1, 1]) {
+              const x = cx + d * off;
+              ctx.globalAlpha = a * 0.35; ctx.fillStyle = d < 0 ? '#22D3EE' : '#FF2E97'; ctx.fillRect(x - w * 1.6, y - hgt, w * 3.2, hgt);
+              ctx.globalAlpha = a; ctx.fillRect(x - w / 2, y - hgt, w, hgt);
+              ctx.fillStyle = '#FFFFFF'; ctx.fillRect(x - w / 4, y - hgt, w / 2, hgt * 0.9);
+              if (blur > 0.3) { ctx.globalAlpha = a * blur * 0.35; ctx.fillStyle = d < 0 ? '#22D3EE' : '#FF2E97'; ctx.fillRect(x - w / 2 - d * w * 4 * blur, y - hgt, w * 4 * blur, hgt); }
+            }
+          }
+          ctx.globalAlpha = 1;
           // speed lines at high speed
           if (fast > 0.2) {
             ctx.strokeStyle = `rgba(255,255,255,${fast * 0.35})`; ctx.lineWidth = 1; ctx.beginPath();
@@ -1389,7 +1484,7 @@
       return {
         resize: reset,
         hover: () => true,
-        cursor: 'crosshair',
+        cursor: `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40"><g fill="none" stroke-linecap="round"><circle cx="20" cy="20" r="14" stroke="#000" stroke-opacity=".55" stroke-width="4"/><circle cx="20" cy="20" r="14" stroke="#FF2847" stroke-width="2"/><path d="M20 12v16M12 20h16" stroke="#000" stroke-opacity=".55" stroke-width="4"/><path d="M20 12v16M12 20h16" stroke="#FFE4E8" stroke-width="1.6"/></g></svg>')}") 20 20, crosshair`,
         targets: () => nearSeen.filter((n) => n.b.fig && n.b.fig.state === 'up' && n.x > 0 && n.x < W).map((n) => [n.x + n.b.fig.fx, n.top]),
         // Sniper: tap a rooftop figure. Headshot = lightning flash, blood burst, they collapse.
         // Body shot = blood, and they're knocked off the building. A miss sparks off the wall.
