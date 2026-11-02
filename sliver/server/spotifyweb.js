@@ -229,4 +229,28 @@ async function spotifyPlays(track) {
 
 function _reset() { tokenCache = null; hashes = { at: 0, map: {}, loading: null }; playsCache.clear(); }
 
-module.exports = { extractToken, rememberToken, anonToken, morePlaylistTracks, spotifyPlays, collectTracks, toSliverTrack, _reset };
+// Diagnostics: what the web player's queries return from this server (no secrets).
+async function _probe(q) {
+  const out = {};
+  try { const token = await anonToken(); out.token = !!token;
+    for (const op of ['searchDesktop', 'searchArtists', 'searchTracks', 'queryArtistOverview', 'getTrack', 'queryArtistDiscographyAll']) out['hash_' + op] = !!(await opHash(op));
+    const d = await pathfinder('searchDesktop', { searchTerm: q, offset: 0, limit: 10, numberOfTopResults: 5, includeAudiobooks: false, includeArtistHasConcertsField: false, includePreReleases: false, includeLocalConcertsField: false }, token);
+    const s = d.searchV2 || {};
+    out.searchKeys = Object.keys(s);
+    const a = (s.artists && s.artists.items) || [];
+    out.artists = a.slice(0, 3).map((x) => { const v = x.data || x; return { uri: v.uri, name: v.profile && v.profile.name, img: !!(v.visuals && v.visuals.avatarImage) }; });
+    const tr = (s.tracksV2 && s.tracksV2.items) || [];
+    out.trackSample = JSON.stringify(tr[0] || null).slice(0, 600);
+    const uri = out.artists[0] && out.artists[0].uri;
+    if (uri) {
+      try { const o = await pathfinder('queryArtistOverview', { uri, locale: '', includePrerelease: false }, token);
+        const top = (o.artistUnion && o.artistUnion.discography && o.artistUnion.discography.topTracks && o.artistUnion.discography.topTracks.items) || [];
+        out.topTracks = top.slice(0, 12).map((x) => ({ name: x.track && x.track.name, plays: x.track && x.track.playcount }));
+        out.followers = o.artistUnion && o.artistUnion.stats && o.artistUnion.stats.followers;
+      } catch (e) { out.overviewErr = e.message; }
+    }
+  } catch (e) { out.err = e.message; }
+  return out;
+}
+
+module.exports = { _probe, extractToken, rememberToken, anonToken, morePlaylistTracks, spotifyPlays, collectTracks, toSliverTrack, _reset };

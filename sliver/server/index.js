@@ -436,6 +436,12 @@ const server = http.createServer((req, res) => {
   }
 
   // Quick check of the music services this server depends on (no secrets, nothing stored).
+  if (p === '/diag/spotify') {
+    require('./spotifyweb')._probe(String(url.searchParams.get('q') || 'drake').slice(0, 40)).then((o) => {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(o, null, 1));
+    });
+    return;
+  }
   if (p === '/diag') {
     const probe = async (u) => { try { const r = await fetch(u, { headers: { 'User-Agent': 'Mozilla/5.0' } }); return r.status; } catch (e) { return 'fail: ' + e.message; } };
     Promise.all([
