@@ -2023,6 +2023,7 @@
   $('#btn-next').onclick = () => { unlockAudio(); emit('next'); };
 
   // ---------- results ----------
+  let podiumKey = null;
   function renderResults() {
     show('results');
     const lgw = (state.lastGame && state.lastGame.watchers) || [];
@@ -2042,6 +2043,9 @@
           <b class="pod-name">${esc(p.name)}${p.id === state.meId ? ' <small>(you)</small>' : ''}</b><span class="pod-score">${fmt(p.score)}</span></div>
           <div class="pod-block"><span>${n}</span></div></div>` : '<div class="pod pod-empty"></div>';
       $('#podium').innerHTML = `<div class="pod-row">${place(ps[1], 2)}${place(ps[0], 1)}${place(ps[2], 3)}</div>`;
+      // Confetti over the podium once per game's results (after the blocks rise).
+      const podKey = `${state.code}:${ps.map((p) => p.id + p.score).join()}`;
+      if (podKey !== podiumKey) { podiumKey = podKey; setTimeout(() => { if (state && state.phase === 'results') confetti($('#podium')); }, 900); }
     }
     $('#final-board').closest('.card').hidden = !rest.length;
     $('#final-board').style.counterReset = `rank ${multi ? 3 : 0}`;
@@ -2212,18 +2216,16 @@
   }
   function tellServerAboutLogin() { if (socket.connected) emit('auth', { token: authToken() }); }
 
-  // Two big buttons on the home screen: your themes, and the shop. Each shows a little preview.
+  // Two buttons on the home screen: your themes, and the shop.
+  const ICON_THEMES = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 0 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.4A4.6 4.6 0 0 0 21 9.8C21 6 17 3 12 3Zm-5.5 9a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm3-4a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm3 4a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Z"/></svg>';
+  const ICON_SHOP = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7V6a5 5 0 0 1 10 0v1h2.2c.5 0 .9.4 1 .9l1 12A1 1 0 0 1 20.2 21H3.8a1 1 0 0 1-1-1.1l1-12c.1-.5.5-.9 1-.9H7Zm2 0h6V6a3 3 0 0 0-6 0v1Zm-1 4a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm8 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"/></svg>';
   function looksTiles() {
     const T = window.SliverThemes;
-    const cur = T.currentTheme();
-    const prem = T.premium();
-    const left = prem.filter((t) => !T.owns(t.id));
-    const feat = left[Math.floor(Date.now() / 86400000) % Math.max(1, left.length)] || prem[0];
-    const dots = (v) => `<span class="lt-sw" style="background:${v['--page']}"><i style="background:${v['--paper']}"></i><i style="background:${v['--accent']}"></i><i style="background:${v['--pop']}"></i></span>`;
+    const left = T.premium().filter((t) => !T.owns(t.id));
     const n = myThemes().length;
     return `<div class="looks-tiles">
-      <button type="button" class="look-tile" data-open-looks="mine">${cur && cur.vars ? dots(cur.vars) : ''}<span><b>Themes</b><small>${n} to pick from</small></span></button>
-      <button type="button" class="look-tile shop-tile" data-open-looks="shop">${feat ? dots(feat.vars) : ''}<span><b>Shop ✨</b><small>${left.length ? `${left.length} animated` : 'You have them all!'}</small></span></button>
+      <button type="button" class="look-tile" data-open-looks="mine"><span class="lt-ic">${ICON_THEMES}</span><span><b>Themes</b><small>${n} to pick from</small></span></button>
+      <button type="button" class="look-tile" data-open-looks="shop"><span class="lt-ic">${ICON_SHOP}</span><span><b>Shop</b><small>${left.length ? `${left.length} animated` : 'You have them all!'}</small></span></button>
     </div>`;
   }
   function renderAccount() {
@@ -2234,19 +2236,12 @@
           <span class="acct-av${avClass(myIcon, myAvatar)}">${avatar(myIcon, u.name, myAvatar)}</span>
           <div class="acct-main"><div class="acct-name">${esc(u.name)} <span class="tag-no">#${esc(u.tag)}</span></div>
           <div class="acct-sub">Rating <b>${fmt(u.rating)}</b> · ${fmt(u.games)} ranked game${u.games === 1 ? '' : 's'}</div></div>
+          <button class="btn ghost small acct-stats" data-open-profile="${esc(u.id)}">My stats</button>
         </div>
-        <div class="acct-actions">
-          <button class="btn small" data-open-friends>Friends${friendsData && friendsData.incoming.length ? ` <span class="badge inline">${friendsData.incoming.length}</span>` : ''}</button>
-          <button class="btn small" data-open-profile="${esc(u.id)}">My stats</button>
-          <button class="btn small" data-open-boards>Leaderboards</button>
-        </div>${looksTiles()}`;
+        ${looksTiles()}`;
     } else {
-      box.innerHTML = `<div class="acct-pitch"><b>Ranked play</b><span>Log in to put your scores on the leaderboards.</span></div>
-        <div class="acct-actions">
-          <button class="btn small primary-ish" data-open-auth="signup">Sign up</button>
-          <button class="btn small" data-open-auth="login">Log in</button>
-          <button class="btn ghost small" data-open-boards>Leaderboards</button>
-        </div>${looksTiles()}`;
+      // Log in, Sign up and the leaderboards are already top right: just themes and the shop here.
+      box.innerHTML = looksTiles();
     }
     $('#settings-account').innerHTML = u
       ? `<p class="hint">Logged in as <b>${esc(u.name)}</b> #${esc(u.tag)} (${esc(u.email || '')})</p>
