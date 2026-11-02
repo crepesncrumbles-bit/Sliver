@@ -450,7 +450,7 @@
       ${saved[i] ? `<i class="slot-dot" style="background:${saved[i].accent}"></i>` : ''}${esc(T.slotName(i))}${saved[i] ? (inUse === `custom${i + 1}` ? ' <small>✓</small>' : '') : ' <small>(empty)</small>'}</button>`).join('');
     const nameEl = $('#ct-name');
     if (document.activeElement !== nameEl) nameEl.value = T.slotName(slot) === `Slot ${slot + 1}` ? '' : T.slotName(slot);
-    nameEl.placeholder = `Slot ${slot + 1}`;
+    nameEl.placeholder = `✏️ Name this theme (Slot ${slot + 1})`;
     const using = inUse === `custom${slot + 1}`;
     $('#ct-use').hidden = false;
     const c = customColors();

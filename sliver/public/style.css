@@ -958,3 +958,6 @@ html:has(body.ui-hidden), body.ui-hidden { touch-action: none; overflow: hidden;
 .ctp-card { display: flex; align-items: center; gap: 10px; height: 100%; border-radius: 10px; padding: 0 12px; box-shadow: 0 3px 0 rgba(0,0,0,.18); }
 .ctp-btn { display: block; width: 46%; height: 18px; border-radius: 8px; }
 .ctp-pop { display: block; width: 18px; height: 18px; border-radius: 50%; }
+/* Inputs in the Create box sat on the same grey as the box and looked like plain text. */
+.custom-theme input:not([type=color]) { background: var(--surface); border-color: var(--line); }
+.custom-theme input:not([type=color]):focus { border-color: var(--brand); }
