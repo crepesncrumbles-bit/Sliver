@@ -961,3 +961,10 @@ html:has(body.ui-hidden), body.ui-hidden { touch-action: none; overflow: hidden;
 /* Inputs in the Create box sat on the same grey as the box and looked like plain text. */
 .custom-theme input:not([type=color]) { background: var(--surface); border-color: var(--line); }
 .custom-theme input:not([type=color]):focus { border-color: var(--brand); }
+
+/* Create tab: slots look like the theme cards in Mine */
+.slot-grid { margin-bottom: 12px; }
+.slot-card .slot-new { display: grid; place-items: center; border: 2px dashed var(--line); background: var(--paper-2); color: var(--ink-2); font-weight: 800; font-size: 14px; }
+.slot-card.on .name::after { content: none; }
+.slot-card .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.slot-card .season { color: var(--ink-2); }

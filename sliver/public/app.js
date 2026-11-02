@@ -446,17 +446,27 @@
     const T = window.SliverThemes;
     const saved = T.slots();
     const inUse = String(T.current());
-    $('#slot-seg').innerHTML = [0, 1, 2].map((i) => `<button type="button" class="mini-btn" role="tab" data-slot="${i}" aria-pressed="${i === slot}">
-      ${saved[i] ? `<i class="slot-dot" style="background:${saved[i].accent}"></i>` : ''}${esc(T.slotName(i))}${saved[i] ? (inUse === `custom${i + 1}` ? ' <small>✓</small>' : '') : ' <small>(empty)</small>'}</button>`).join('');
+    // The three slots, drawn like the theme cards in Mine (tap one to edit it).
+    $('#slot-seg').innerHTML = [0, 1, 2].map((i) => {
+      const v = T.buildCustom(saved[i] || T.DEFAULT_CUSTOM).vars;
+      const using = inUse === `custom${i + 1}`;
+      return `<button type="button" class="theme slot-card${i === slot ? ' on' : ''}${saved[i] ? '' : ' empty'}" data-slot="${i}" aria-pressed="${i === slot}">
+        ${saved[i] ? `<span class="sw" style="background:${v['--page']}">
+          <span class="sw-card" style="background:${v['--paper']}"></span>
+          <span class="sw-disc" style="background:${v['--pop']};box-shadow:0 0 0 2px ${v['--stroke']}"></span>
+          <span class="sw-bar" style="top:28px;background:${v['--accent']}"></span>
+          <span class="sw-bar" style="top:40px;right:34px;background:${v['--line']}"></span>
+        </span>` : '<span class="sw slot-new">+ New</span>'}
+        <span class="name">${esc(T.slotName(i))}</span>
+        <span class="season">${using ? '✓ In use' : saved[i] ? 'Saved' : 'Empty'}</span>
+      </button>`;
+    }).join('');
     const nameEl = $('#ct-name');
     if (document.activeElement !== nameEl) nameEl.value = T.slotName(slot) === `Slot ${slot + 1}` ? '' : T.slotName(slot);
     nameEl.placeholder = `✏️ Name this theme (Slot ${slot + 1})`;
     const using = inUse === `custom${slot + 1}`;
     $('#ct-use').hidden = false;
     const c = customColors();
-    // Preview of this slot's colours (without switching the app to it).
-    $('#ct-preview').innerHTML = `<span class="ctp-page" style="background:${c.page}"><span class="ctp-card" style="background:${c.card}">
-      <span class="ctp-btn" style="background:${c.accent}"></span><span class="ctp-pop" style="background:${c.pop}"></span></span></span>`;
     $('#ct-use').disabled = using;
     $('#ct-use').textContent = using ? '✓ Using this theme' : 'Use this theme';
     for (const [k, sel] of Object.entries(CT)) $(sel).value = c[k].toLowerCase();
