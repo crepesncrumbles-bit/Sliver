@@ -429,6 +429,19 @@ const server = http.createServer((req, res) => {
       '<noscript><a href="' + dest + '">Sliver has moved to ' + PUBLIC_HOST + '</a></noscript>');
   }
 
+  // Quick check of the music services this server depends on (no secrets, nothing stored).
+  if (p === '/diag') {
+    const probe = async (u) => { try { const r = await fetch(u, { headers: { 'User-Agent': 'Mozilla/5.0' } }); return r.status; } catch (e) { return 'fail: ' + e.message; } };
+    Promise.all([
+      probe('https://api.deezer.com/search/artist?q=adele&limit=1'),
+      probe('https://api.deezer.com/track/3135556'),
+      probe('https://itunes.apple.com/search?term=adele&entity=musicArtist&limit=1'),
+    ]).then(([dzSearch, dzTrack, itunes]) => {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ commit: (process.env.RENDER_GIT_COMMIT || '').slice(0, 7), dzSearch, dzTrack, itunes }));
+    });
+    return;
+  }
   if (p === '/healthz') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
   if (API_PATHS.test(p)) return handleApi(req, res, p, url);
 
