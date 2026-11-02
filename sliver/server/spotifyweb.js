@@ -232,37 +232,28 @@ function _reset() { tokenCache = null; hashes = { at: 0, map: {}, loading: null 
 // Diagnostics: what the web player's queries return from this server (no secrets).
 async function _probe(q) {
   const out = {};
-  try { const token = await anonToken(); out.token = !!token;
-    try {
-      const r = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(q)}&type=artist,track&limit=5`, { headers: { 'User-Agent': UA, Authorization: `Bearer ${token}` } });
-      out.webApiStatus = r.status;
-      if (r.ok) { const j = await r.json(); out.webApiArtists = ((j.artists && j.artists.items) || []).map((x) => ({ id: x.id, name: x.name, img: !!(x.images && x.images.length), followers: x.followers && x.followers.total, pop: x.popularity })); out.webApiTrackPop = ((j.tracks && j.tracks.items) || []).map((t) => [t.name, t.popularity]); }
-      else out.webApiBody = (await r.text()).slice(0, 200);
-    } catch (e) { out.webApiErr = e.message; }
-    try {
-      const res = await fetch('https://open.spotify.com/', { headers: { 'User-Agent': UA } });
-      const html = await res.text();
-      const urls = [...new Set([...html.matchAll(/https:\/\/open\.spotifycdn\.com\/cdn\/build\/web-player\/[\w.~-]+\.js/g)].map((m) => m[0]))];
-      out.jsFiles = urls.length;
-      out.searchOpsInFiles = [];
-      for (const u of urls) { const js = await (await fetch(u, { headers: { 'User-Agent': UA } })).text(); const ops = [...js.matchAll(/"(search\w*|queryArtist\w*)","query","[0-9a-f]{64}"/g)].map((m) => m[1]); if (ops.length) out.searchOpsInFiles.push([u.split('/').pop(), ops.slice(0, 12)]); }
-      out.chunkHints = (html.match(/web-player\/[\w.~-]+\.js/g) || []).length;
-    } catch (e) { out.scanErr = e.message; }
-    for (const op of ['searchDesktop', 'searchArtists', 'searchTracks', 'queryArtistOverview', 'getTrack', 'queryArtistDiscographyAll']) out['hash_' + op] = !!(await opHash(op));
-    const d = await pathfinder('searchDesktop', { searchTerm: q, offset: 0, limit: 10, numberOfTopResults: 5, includeAudiobooks: false, includeArtistHasConcertsField: false, includePreReleases: false, includeLocalConcertsField: false }, token);
-    const s = d.searchV2 || {};
-    out.searchKeys = Object.keys(s);
-    const a = (s.artists && s.artists.items) || [];
-    out.artists = a.slice(0, 3).map((x) => { const v = x.data || x; return { uri: v.uri, name: v.profile && v.profile.name, img: !!(v.visuals && v.visuals.avatarImage) }; });
-    const tr = (s.tracksV2 && s.tracksV2.items) || [];
-    out.trackSample = JSON.stringify(tr[0] || null).slice(0, 600);
-    const uri = out.artists[0] && out.artists[0].uri;
-    if (uri) {
-      try { const o = await pathfinder('queryArtistOverview', { uri, locale: '', includePrerelease: false }, token);
-        const top = (o.artistUnion && o.artistUnion.discography && o.artistUnion.discography.topTracks && o.artistUnion.discography.topTracks.items) || [];
-        out.topTracks = top.slice(0, 12).map((x) => ({ name: x.track && x.track.name, plays: x.track && x.track.playcount }));
-        out.followers = o.artistUnion && o.artistUnion.stats && o.artistUnion.stats.followers;
-      } catch (e) { out.overviewErr = e.message; }
+  try {
+    const token = await anonToken();
+    const hash = await opHash('searchSuggestions');
+    out.hash = !!hash;
+    const d = await pathfinder('searchSuggestions', { query: q, limit: 30, numberOfTopResults: 30, offset: 0, includeAudiobooks: false, includeAuthors: false, includeEpisodeContentRatingsV2: false }, token);
+    const raw = JSON.stringify(d);
+    out.size = raw.length;
+    out.sample = raw.slice(0, 2500);
+    const artists = [];
+    (function walk(o) { if (!o || typeof o !== 'object') return; if (Array.isArray(o)) return o.forEach(walk);
+      if (typeof o.uri === 'string' && o.uri.startsWith('spotify:artist:') && o.profile) artists.push({ uri: o.uri, name: o.profile.name, img: !!(o.visuals && o.visuals.avatarImage) });
+      Object.values(o).forEach(walk); })(d);
+    out.artists = artists.slice(0, 6);
+    if (artists[0]) {
+      const o = await pathfinder('queryArtistOverview', { uri: artists[0].uri, locale: '', includePrerelease: false }, token);
+      const au = o.artistUnion || {};
+      out.overviewKeys = Object.keys(au);
+      out.topTracks = (((au.discography || {}).topTracks || {}).items || []).map((x) => [x.track && x.track.name, x.track && x.track.playcount]);
+      out.stats = au.stats;
+      out.avatar = JSON.stringify(au.visuals && au.visuals.avatarImage).slice(0, 300);
+      out.discoKeys = Object.keys(au.discography || {});
+      out.popularReleases = JSON.stringify((au.discography || {}).popularReleasesAlbums || null).slice(0, 400);
     }
   } catch (e) { out.err = e.message; }
   return out;
