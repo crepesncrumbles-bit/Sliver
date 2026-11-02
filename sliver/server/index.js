@@ -192,7 +192,13 @@ async function handleApi(req, res, p, url) {
     if (p === '/api/admin/users') {
       const me = await accounts.session(bearer(req));
       if (!me || !me.admin) return sendJson(res, 403, { ok: false, error: 'Admins only' });
-      return sendJson(res, 200, { ok: true, users: await accounts.listUsers() });
+      const users = (await accounts.listUsers()).map((u) => ({ ...u, online: userSockets.has(u.id) }));
+      return sendJson(res, 200, { ok: true, users });
+    }
+    if (p === '/api/admin/online') { // admin: who's on Sliver right now, and who's in a game
+      const me = await accounts.session(bearer(req));
+      if (!me || !me.admin) return sendJson(res, 403, { ok: false, error: 'Admins only' });
+      return sendJson(res, 200, { ok: true, ...(await whoIsOnline()) });
     }
     if (p === '/api/admin/stats') return await handleAdmin(req, res, url);
     const prof = p.match(/^\/api\/profile\/([\w-]{6,40})$/);
@@ -336,6 +342,50 @@ function setOnline(userId, socketId, on) {
   if (on) set.add(socketId); else set.delete(socketId);
   if (set.size) userSockets.set(userId, set); else userSockets.delete(userId);
 }
+// Admin: everyone connected right now. Rooms with their players (logged in or guest, in a game or
+// in the lobby), logged-in players who aren't in a room, and totals.
+async function whoIsOnline() {
+  const LIVE = ['loading', 'round', 'reveal'];
+  const inRoom = new Set();
+  const list = [];
+  let playing = 0, inLobby = 0, guestsPlaying = 0, guestsInRooms = 0;
+  for (const r of rooms.rooms.values()) {
+    const here = [...r.players.values()].filter((p) => p.connected);
+    if (!here.length) continue;
+    const live = LIVE.includes(r.phase);
+    const mode = r.game ? (r.game.ranked ? 'Ranked' : r.game.party ? 'Party' : 'Casual') : (r.settings.ranked ? 'Ranked' : r.settings.party ? 'Party' : 'Casual');
+    for (const p of here) {
+      if (p.userId) inRoom.add(p.userId);
+      else guestsInRooms++;
+      if (live) { playing++; if (!p.userId) guestsPlaying++; } else inLobby++;
+    }
+    list.push({
+      code: r.code, phase: live ? 'playing' : r.phase === 'results' ? 'results' : 'lobby', mode,
+      song: live && r.game ? `${Math.max(1, r.roundNum)} of ${r.game.rounds}` : null,
+      players: here.map((p) => ({ name: p.name, userId: p.userId || null, guest: !p.userId, host: p.id === r.hostId, icon: p.icon || '', avatar: p.avatar || '' })),
+    });
+  }
+  list.sort((a, b) => (b.phase === 'playing') - (a.phase === 'playing') || b.players.length - a.players.length);
+  // Logged-in players who are on the site but not in a room.
+  const idleIds = [...userSockets.keys()].filter((id) => !inRoom.has(id));
+  const idle = [];
+  for (const id of idleIds.slice(0, 200)) {
+    const u = await accounts.getUser(id).catch(() => null);
+    if (u) idle.push({ id, name: u.name || 'Player', icon: u.icon || '' });
+  }
+  let sockets = 0, guestSockets = 0;
+  for (const c of contexts.values()) { sockets++; if (!c.user()) guestSockets++; }
+  return {
+    totals: {
+      online: sockets, // open tabs / devices
+      accounts: userSockets.size, // logged-in people online
+      guests: guestSockets, // tabs not logged in
+      playing, guestsPlaying, inLobby, guestsInRooms, rooms: list.length,
+    },
+    rooms: list, idle,
+  };
+}
+
 // Account settings changed (icon, hidden): update that person in any room they're in.
 function refreshUserInRooms(user) {
   for (const sid of userSockets.get(user.id) || []) {
@@ -411,7 +461,7 @@ async function handleFriends(req, res, p) {
   return sendJson(res, 200, { ok: true, ...out, ...(await accounts.friends(me.id, presence)) });
 }
 
-const API_PATHS = /^\/api\/(signup|signup\/verify|signup\/resend|reset\/start|reset\/finish|login|logout|me|leaderboard|profile\/[\w-]+|artists|me\/(settings|avatar|name|delete)|avatar\/guest|leaderboard\/friends|admin\/(stats|user|users|announce)|referrals|bmc\/webhook|friends(\/(request|accept|remove|block|unblock))?)$/;
+const API_PATHS = /^\/api\/(signup|signup\/verify|signup\/resend|reset\/start|reset\/finish|login|logout|me|leaderboard|profile\/[\w-]+|artists|me\/(settings|avatar|name|delete)|avatar\/guest|leaderboard\/friends|admin\/(stats|user|users|online|announce)|referrals|bmc\/webhook|friends(\/(request|accept|remove|block|unblock))?)$/;
 
 const PUBLIC_HOST = (process.env.PUBLIC_HOST || (process.env.RENDER ? 'sliver.one' : '')).toLowerCase();
 const server = http.createServer((req, res) => {
@@ -565,6 +615,7 @@ io.on('connection', (socket) => {
     room: () => (room && rooms.get(room.code) === room ? room : null),
     player: () => player,
     setUser: (u) => { if (user && u && user.id === u.id) user = { ...user, ...u }; },
+    user: () => user,
   });
   const useAuth = async (token) => {
     const before = user;

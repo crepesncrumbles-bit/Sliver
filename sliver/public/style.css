@@ -741,7 +741,7 @@ body.in-game #decor-front { display: none; }
 :root[data-fx="sakura"] .brand h1 { background-image: linear-gradient(90deg, #FFFFFF, #FFE4EC, #FFFFFF, #FFD1DC, #FFFFFF); }
 
 /* Settings tabs */
-.seg.set-tabs { grid-template-columns: repeat(4, 1fr); position: sticky; top: -20px; z-index: 2; margin: 4px 0 6px; }
+.seg.set-tabs { grid-template-columns: repeat(3, 1fr); position: sticky; top: -20px; z-index: 2; margin: 4px 0 6px; }
 .set-tabs .seg-btn { font-size: 14px; padding: 9px 4px; white-space: nowrap; }
 .set-panel > h3:first-child { margin-top: 10px; }
 .set-panel { min-height: 160px; }
@@ -1113,3 +1113,23 @@ body.ui-hidden .promo-bar { visibility: hidden; }
 .account-card:has(> .looks-tiles:only-child) { padding: 12px; }
 .acct-stats { margin-left: auto; }
 .coffee-btn.shawerma { background: #F4B860; color: #2A1600; border-color: #2A1600; box-shadow: 0 4px 0 #2A1600; }
+
+/* admin: who's online */
+.admin-online { margin: 6px 0 14px; }
+.ao-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.ao-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 10px; }
+.ao-tiles div { padding: 8px; border-radius: 12px; background: var(--paper-2); text-align: center; }
+.ao-tiles b { display: block; font-family: var(--display); font-size: 22px; line-height: 1.1; }
+.ao-tiles small { font-size: 12px; color: var(--ink-2); font-weight: 600; }
+.ao-room { padding: 8px 10px; border-radius: 12px; border: 2px solid var(--line); margin-bottom: 6px; }
+.ao-room.live { border-color: var(--mint); }
+.ao-room-head { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 700; color: var(--ink-2); margin-bottom: 4px; }
+.ao-room-head .live-tag { color: var(--mint-ink); }
+.ao-people { display: flex; flex-wrap: wrap; gap: 4px; }
+.ao-people span { font-size: 13px; padding: 3px 9px; border-radius: 99px; background: var(--paper-2); font-weight: 600; }
+.ao-people span.guest { background: transparent; border: 1px dashed var(--line); color: var(--ink-2); }
+.ao-people span.acct { cursor: pointer; }
+.ao-sub { margin: 10px 0 6px; font-size: 12px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-2); }
+.on-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--mint); margin-left: 6px; vertical-align: 1px; }
+/* guests with no picture: a plain person icon */
+.guest-sil { width: 62%; height: 62%; fill: currentColor; opacity: .75; }

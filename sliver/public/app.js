@@ -90,6 +90,10 @@
   const okPic = (img) => !!img && PIC_RE.test(String(img));
   const avatar = (icon, name, img) => (okPic(img) ? `<img src="${esc(img)}" alt="" loading="lazy" onerror="this.remove()">`
     : icon && ICONS.includes(icon) ? esc(icon) : esc(String(name || '?').trim().charAt(0).toUpperCase() || '?'));
+  // Guests (not logged in) with no icon or photo get a plain person picture.
+  const GUEST_PIC = '<svg class="guest-sil" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9Zm0 2c-4.4 0-8 2.6-8 5.8 0 .7.5 1.2 1.2 1.2h13.6c.7 0 1.2-.5 1.2-1.2 0-3.2-3.6-5.8-8-5.8Z"/></svg>';
+  const isGuestPlain = (icon, img, loggedIn) => !loggedIn && !okPic(img) && !(icon && ICONS.includes(icon));
+  const pAvatar = (p) => (isGuestPlain(p.icon, p.avatar, p.loggedIn) ? GUEST_PIC : avatar(p.icon, p.name, p.avatar));
   const avClass = (icon, img) => (okPic(img) ? ' photo' : icon && ICONS.includes(icon) ? ' emoji' : '');
   const iconPrefix = (icon, img) => (okPic(img) ? `<img class="chip-pic" src="${esc(img)}" alt="" loading="lazy" onerror="this.remove()">`
     : icon && ICONS.includes(icon) ? `<span class="chip-icon" aria-hidden="true">${esc(icon)}</span>` : '');
@@ -405,6 +409,7 @@
     setTab = name;
     document.querySelectorAll('[data-set-tab]').forEach((b) => { const on = b.dataset.setTab === name; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); });
     document.querySelectorAll('[data-set-panel]').forEach((p) => { p.hidden = p.dataset.setPanel !== name; });
+    if (name === 'account' && !$('#settings').hidden) setTimeout(watchOnline, 0);
   }
   document.querySelectorAll('[data-set-tab]').forEach((b) => { b.onclick = () => showSetTab(b.dataset.setTab); });
   function openSettings(focusIcons) {
@@ -412,6 +417,7 @@
     showSetTab(focusIcons === true ? 'picture' : (typeof focusIcons === 'string' ? focusIcons : setTab));
     openSheet('settings');
     $('#btn-settings-close').focus();
+    if (setTab === 'account') watchOnline();
   }
   function closeSettings() { closeSheet('settings'); }
   $('#btn-settings').onclick = () => openSettings();
@@ -448,7 +454,7 @@
   }
   function renderMyIconButton() {
     const b = $('#btn-my-icon');
-    b.innerHTML = avatar(myIcon, $('#name').value.trim() || (auth && auth.user && auth.user.name) || '?', myAvatar);
+    b.innerHTML = isGuestPlain(myIcon, myAvatar, !!(auth && auth.user)) ? GUEST_PIC : avatar(myIcon, $('#name').value.trim() || (auth && auth.user && auth.user.name) || '?', myAvatar);
     b.classList.toggle('emoji', !!myIcon && !myAvatar);
     b.classList.toggle('photo', !!myAvatar);
   }
@@ -918,7 +924,7 @@
       const canKick = isHost && p.id !== state.meId;
       const armed = armedKick === p.id;
       return `<li class="${p.connected ? '' : 'offline'}${armed ? ' arm' : ''}">
-        <span class="av${avClass(p.icon, p.avatar)}" style="background:${AV[i % AV.length]}">${avatar(p.icon, p.name, p.avatar)}</span>
+        <span class="av${avClass(p.icon, p.avatar)}" style="background:${AV[i % AV.length]}">${pAvatar(p)}</span>
         ${armed ? `Remove ${esc(p.name)}?` : `${esc(p.name)}${p.id === state.meId ? ' (you)' : ''}`}
         ${p.id === state.hostId ? '<span class="host-tag">host</span>' : ''}
         ${state.settings.ranked && !p.loggedIn ? '<span class="guest-tag">not logged in</span>' : ''}
@@ -2053,7 +2059,7 @@
     const rest = multi ? ps.slice(3) : ps;
     if (multi) {
       const place = (p, n) => p ? `<div class="pod pod-${n}">
-          <div class="pod-who"><span class="pod-av${avClass(p.icon, p.avatar)}">${avatar(p.icon, p.name, p.avatar)}</span>
+          <div class="pod-who"><span class="pod-av${avClass(p.icon, p.avatar)}">${pAvatar(p)}</span>
           <b class="pod-name">${esc(p.name)}${p.id === state.meId ? ' <small>(you)</small>' : ''}</b><span class="pod-score">${fmt(p.score)}</span></div>
           <div class="pod-block"><span>${n}</span></div></div>` : '<div class="pod pod-empty"></div>';
       $('#podium').innerHTML = `<div class="pod-row">${place(ps[1], 2)}${place(ps[0], 1)}${place(ps[2], 3)}</div>`;
@@ -2157,7 +2163,10 @@
   function saveAuth(a) {
     const before = auth && auth.user ? auth.user.id : null, after = a && a.user ? a.user.id : null;
     auth = a;
-    if (before && before !== after) setTimeout(resetToHome, 0); // logged out, or a different account
+    if (before && before !== after) {
+      setTimeout(resetToHome, 0); // logged out, or a different account
+      if (!after) setTimeout(() => { setMyAvatar('', null); setMyIcon('', { fromAccount: true }); }, 0); // back to the guest picture
+    }
     try { a ? localStorage.setItem('sliver.auth', JSON.stringify(a)) : localStorage.removeItem('sliver.auth'); } catch {}
     window.SliverThemes.setOwned(a && a.user ? a.user.themes || [] : []);
     renderAccount();
@@ -2611,6 +2620,47 @@
   }
   // Every account in a dropdown; typing filters it (name, #tag, email or id).
   let adminUsers = null, adminLoadedAt = 0;
+  // ---- admin: who's online right now ----
+  let onlineTimer = null;
+  async function renderOnline() {
+    const box = $('#admin-online-body');
+    if (!box || $('#admin-panel').hidden) return;
+    const res = await api('/api/admin/online');
+    if (!res.ok) { box.innerHTML = `<p class="hint">${esc(res.error)}</p>`; return; }
+    const t = res.totals;
+    const person = (p) => p.guest ? `<span class="guest">${esc(p.name)} · guest</span>` : `<span class="acct" data-admin-view="${esc(p.userId)}">${esc(p.name)}${p.host ? ' ★' : ''}</span>`;
+    box.innerHTML = `<div class="ao-tiles">
+        <div><b>${fmt(t.online)}</b><small>online now</small></div>
+        <div><b>${fmt(t.playing)}</b><small>in a game</small></div>
+        <div><b>${fmt(t.guests)}</b><small>guests online</small></div>
+        <div><b>${fmt(t.accounts)}</b><small>logged in</small></div>
+        <div><b>${fmt(t.guestsPlaying)}</b><small>guests in a game</small></div>
+        <div><b>${fmt(t.rooms)}</b><small>open rooms</small></div>
+      </div>
+      <div class="ao-sub">Rooms (${t.rooms})</div>
+      ${res.rooms.length ? res.rooms.map((r) => `<div class="ao-room${r.phase === 'playing' ? ' live' : ''}">
+        <div class="ao-room-head"><span>${esc(r.code)} · ${esc(r.mode)}</span><span class="${r.phase === 'playing' ? 'live-tag' : ''}">${r.phase === 'playing' ? `● Playing, song ${esc(r.song || '')}` : r.phase === 'results' ? 'Final scores' : 'In the lobby'} · ${r.players.length}</span></div>
+        <div class="ao-people">${r.players.map(person).join('')}</div></div>`).join('') : '<p class="hint">No one is in a room.</p>'}
+      <div class="ao-sub">Logged in, not in a room (${res.idle.length})</div>
+      <div class="ao-people">${res.idle.length ? res.idle.map((u) => `<span class="acct" data-admin-view="${esc(u.id)}">${u.icon ? esc(u.icon) + ' ' : ''}${esc(u.name)}</span>`).join('') : '<span class="guest">Nobody</span>'}</div>
+      <p class="hint">Updates every 10 seconds. Tap a name to open their account. Everyone else in the player search is offline.</p>`;
+  }
+  function watchOnline() {
+    clearInterval(onlineTimer);
+    if (!auth || !auth.user || !auth.user.admin) return;
+    renderOnline();
+    onlineTimer = setInterval(() => {
+      if ($('#settings').hidden || $('#admin-panel').hidden || setTab !== 'account') return clearInterval(onlineTimer);
+      renderOnline();
+    }, 10000);
+  }
+  $('#admin-online-refresh').onclick = renderOnline;
+  document.addEventListener('click', async (e) => {
+    const v = e.target.closest('[data-admin-view]');
+    if (!v) return;
+    const u = await adminAction({ action: 'view', id: v.dataset.adminView });
+    if (u) { $('#admin-result').innerHTML = adminUserHtml(u); $('#admin-result').scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+  });
   async function loadAdminUsers() {
     if (adminUsers && Date.now() - adminLoadedAt < 30000) return adminUsers;
     const res = await api('/api/admin/users');
@@ -2626,7 +2676,7 @@
     ul.innerHTML = `<li class="group">${q ? `${hits.length}${hits.length === 60 ? '+' : ''} match${hits.length === 1 ? '' : 'es'}` : `All players (${list.length})`}</li>` + (hits.length ? hits.map((u) => `
       <li class="artist" data-admin-pick="${esc(u.id)}">
         <span class="acct-av${avClass(u.icon, u.avatar)}">${avatar(u.icon, u.name, u.avatar)}</span>
-        <div><div>${esc(u.name)} <span class="tag-no">#${esc(u.tag)}</span>${u.banned ? ' <span class="hid-tag" style="background:var(--red)">banned</span>' : ''}${u.hidden ? ' <span class="hid-tag">🙈</span>' : ''}</div><div class="s-artist">${esc(u.email)}</div></div>
+        <div><div>${esc(u.name)} <span class="tag-no">#${esc(u.tag)}</span>${u.online ? '<span class="on-dot" title="Online now"></span>' : ''}${u.banned ? ' <span class="hid-tag" style="background:var(--red)">banned</span>' : ''}${u.hidden ? ' <span class="hid-tag">🙈</span>' : ''}</div><div class="s-artist">${esc(u.email)}</div></div>
       </li>`).join('') : '<li class="group">No players match</li>');
   }
   $('#admin-query').addEventListener('focus', renderAdminList);

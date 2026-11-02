@@ -326,7 +326,6 @@
       <div class="seg set-tabs" role="tablist" aria-label="Settings sections">
         <button type="button" class="seg-btn on" role="tab" data-set-tab="sound" aria-selected="true">🔊 Sound</button>
         <button type="button" class="seg-btn" role="tab" data-set-tab="picture" aria-selected="false">🙂 Icon</button>
-        <button type="button" class="seg-btn" data-open-looks="mine">🎨 Themes</button>
         <button type="button" class="seg-btn" role="tab" data-set-tab="account" aria-selected="false">👤 Account</button>
       </div>
       <div class="set-panel" data-set-panel="sound" role="tabpanel">
@@ -356,6 +355,10 @@
       <div id="settings-account" class="settings-account"></div>
       <div id="admin-panel" class="admin-panel" hidden>
         <h3>Admin</h3>
+        <div class="admin-online">
+          <div class="ao-head"><b>Who's on Sliver right now</b><button type="button" class="btn small ghost" id="admin-online-refresh">Refresh</button></div>
+          <div id="admin-online-body"><p class="hint">Loading…</p></div>
+        </div>
         <form id="admin-find" class="row admin-search" autocomplete="off">
           <div class="artist-box">
             <input id="admin-query" placeholder="Search players: name, #tag, email…" aria-label="Find a player" />
