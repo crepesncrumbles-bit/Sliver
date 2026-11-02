@@ -13,7 +13,7 @@ const io = { to: (to) => ({ emit: (e, d) => events.push({ to, e, d }) }) };
   const b = room.addPlayer('Bo', { id: 's2' });
   room.sources.push({ key: 'demo', name: 'Demo', tracks: Array.from({ length: 6 }, (_, i) => ({ source: 'demo', sourceId: String(i), title: `Song ${i}`, artist: 'Band' })) });
   room.rebuildPool();
-  room.updateSettings({ rounds: 3, speedrun: true });
+  room.updateSettings({ rounds: 3 }); a.wantSr = b.wantSr = true;
   await room.start();
   await new Promise((r) => setTimeout(r, 50));
   check(room.phase === 'round' && room.game.speedrun, 'game starts in speedrun');
@@ -43,10 +43,39 @@ const io = { to: (to) => ({ emit: (e, d) => events.push({ to, e, d }) }) };
   check(a.score > b.score, 'scores add up');
 
   console.log('host ends a speedrun');
-  room.updateSettings({ speedrun: true });
   await room.start(); await new Promise((r) => setTimeout(r, 30));
   room.endRound();
   check(room.phase === 'results', '"End this song now" ends the speedrun for everyone');
+
+  console.log('speedrun just for one player');
+  {
+    b.wantSr = false;
+    await room.start(); await new Promise((r) => setTimeout(r, 50));
+    check(room.game.mixed && room.isSr(a) && !room.isSr(b), 'only Ash is speedrunning');
+    const ansOf = (pid) => room.roundOf(pid).track.poolId;
+    // Ash races through all 3 songs while Bo is on song 1
+    for (let i = 0; i < 3; i++) { room.guess(a.id, ansOf(a.id)); await room.srNext(a.id); }
+    check(room.publicState(a.id).speedrun.done && room.phase === 'round' && room.round.num === 1, 'Ash done, Bo still on song 1');
+    check(room.publicState(b.id).round.num === 1 && !room.publicState(b.id).speedrun, 'Bo plays normally');
+    // Bo plays the same songs with normal reveals
+    for (let i = 0; i < 3; i++) {
+      check(room.round.track.title === room.game.srLoaded[i].track.title, `Bo gets the same song ${i + 1}`);
+      room.giveUp(b.id);
+      check(room.phase === 'reveal', `reveal after song ${i + 1}`);
+      await room.nextRound();
+    }
+    check(room.phase === 'results', 'results once both are done');
+    check(a.score > 0 && b.score === 0, 'scores kept for both');
+    check(room.lastGame && room.casualEntries ? true : false, 'game wrapped up');
+  }
+  {
+    // Bo (normal) finishes first, waits for the speedrunner
+    await room.start(); await new Promise((r) => setTimeout(r, 50));
+    for (let i = 0; i < 3; i++) { room.giveUp(b.id); await room.nextRound(); }
+    check(room.phase === 'round' && room.publicState(b.id).speedrun.done, 'Bo waits for the speedrunner');
+    for (let i = 0; i < 3; i++) { room.giveUp(a.id); await room.srNext(a.id); }
+    check(room.phase === 'results', 'results when the speedrunner finishes');
+  }
 
   console.log('no repeats within a room');
   {

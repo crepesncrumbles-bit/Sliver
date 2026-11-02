@@ -179,19 +179,25 @@
   $('#join-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinRoom(); });
 
   function joined(res) {
-    if (!session || session.code !== res.code) showCode = false; // every room starts with its code hidden
     saveSession({ code: res.code, token: res.token });
     syncUrl();
   }
-  // The room code is hidden until you tap the eye (handy when streaming). While hidden it's
-  // also kept out of the address bar; Copy invite link still works.
+  // The room code is hidden until the host taps the eye (handy when streaming); the host's
+  // choice applies to everyone. While hidden it's also kept out of the address bar.
   let showCode = false;
+  const amHostNow = () => !!(state && state.hostId === state.meId);
   function syncUrl() {
     const code = session && session.code;
     history.replaceState(null, '', code && showCode ? `/?room=${code}` : '/');
   }
   function renderCode() {
     if (!state) return;
+    const was = showCode;
+    showCode = !!state.showCode;
+    if (was !== showCode) syncUrl();
+    const host = amHostNow();
+    $('#btn-code-eye').hidden = !host;
+    $('#btn-copy').hidden = !host && !showCode;
     const el = $('#lobby-code');
     el.textContent = showCode ? state.code : '••••';
     el.classList.toggle('masked', !showCode);
@@ -200,10 +206,9 @@
     eye.setAttribute('aria-label', showCode ? 'Hide room code' : 'Show room code');
     eye.title = showCode ? 'Hide room code' : 'Show room code';
   }
-  $('#btn-code-eye').onclick = () => {
-    showCode = !showCode;
-    renderCode();
-    syncUrl();
+  $('#btn-code-eye').onclick = async () => {
+    const res = await emit('showCode', { on: !showCode });
+    if (!res.ok) toast(res.error, 'error');
   };
 
   async function tryRejoin() {
@@ -520,11 +525,13 @@
     const u = auth && auth.user;
     const need = SHOP.REFERRALS_NEEDED || 5;
     const html = u
-      ? `<div class="invite-hero"><span class="ih-fire" aria-hidden="true">🔥</span><div><b>Unlock Campfire Crew for free</b><small>A theme you should get. Invite ${need} friends who sign up and play a game.</small></div><button type="button" class="btn ghost small" data-shop-preview="campfire">Preview</button></div>
+      ? `<div class="invite-hero"><span class="ih-fire" aria-hidden="true">🔥</span><div><b>Unlock Campfire Crew for free</b><small>Invite ${need} friends to sign up and play one game each.</small></div><button type="button" class="btn ghost small" data-shop-preview="campfire">Preview</button></div>
          <div class="invite-box" data-invite-box><p class="hint">Loading your invite link…</p></div>`
       : `<div class="invite-hero"><span class="ih-fire" aria-hidden="true">🔥</span><div><b>Get a free theme</b><small>Invite ${need} friends to unlock Campfire Crew, a theme you can't buy. Sign up to get your invite link.</small></div></div>
          <div class="acct-actions"><button class="btn small primary-ish" data-open-auth="signup">Sign up</button><button class="btn ghost small" data-shop-preview="campfire">Preview the theme</button></div>`;
-    for (const id of ['#invite-home', '#invite-results']) { const el = $(id); if (el) el.innerHTML = html; }
+    // Already have Campfire Crew? Then there's nothing to unlock: no box.
+    const have = !!(u && window.SliverThemes && SliverThemes.owns && SliverThemes.owns('campfire'));
+    for (const id of ['#invite-home', '#invite-results']) { const el = $(id); if (el) { el.innerHTML = have ? '' : html; el.hidden = have; } }
   }
 
   // ---- invite friends (referrals): 5 friends sign up with your link and play a game ----
@@ -535,6 +542,7 @@
     const res = await api('/api/referrals');
     if (!res.ok) { boxes().forEach((b) => { b.innerHTML = `<p class="hint">${esc(res.error)}</p>`; }); return; }
     inviteInfo = res;
+    if (res.unlocked) { for (const id of ['#invite-home', '#invite-results']) { const el = $(id); if (el) { el.innerHTML = ''; el.hidden = true; } } return; }
     const link = `${location.origin}/?ref=${res.code}`;
     const pips = Array.from({ length: res.needed }, (_, i) => `<i class="${i < res.played ? 'on' : i < res.joined ? 'half' : ''}"></i>`).join('');
     document.querySelectorAll('.invite-card').forEach((c) => c.classList.toggle('done', !!res.unlocked));
@@ -827,14 +835,14 @@
       el.setAttribute('aria-pressed', on);
     });
     $('#mods-title').textContent = ranked ? 'Mods' : 'Mode';
-    $('#set-speedrun').checked = !!st.speedrun;
+    { const me = state.players.find((p) => p.id === state.meId); $('#set-speedrun').checked = !!(me && me.wantSr); }
     $('#mode-mult').textContent = st.hard && st.chaos ? 'Hard + Chaos together: 2× points'
       : st.hard || st.chaos ? 'Tap Classic to turn it off, or add the other one too.' : 'Hard and Chaos can be on at the same time.';
     const modeName = st.hard && st.chaos ? 'Hard + Chaos' : st.hard ? 'Hard' : st.chaos ? 'Chaos' : 'Classic';
     const packName = (id) => ((state.packs || []).find((x) => x.id === id) || {}).name || 'no genre picked yet';
     $('#guest-mode').textContent = ranked
       ? `Ranked: ${packName(st.rankedPack)}. ${modeName}. 5 songs.`
-      : `Mode: ${modeName}${st.speedrun ? ', Speedrun' : ''}. ${st.rounds} songs.`;
+      : `Mode: ${modeName}. ${st.rounds} songs.`;
     const me = state.players.find((p) => p.id === state.meId);
     $('#guest-login').hidden = !(ranked && me && !me.loggedIn);
 
@@ -975,7 +983,10 @@
       emit('settings', m === 'classic' ? { hard: false, chaos: false } : { [m]: !st[m] });
     }
   });
-  $('#set-speedrun').onchange = (e) => emit('settings', { speedrun: e.target.checked });
+  $('#set-speedrun').onchange = async (e) => {
+    const res = await emit('srPref', { on: e.target.checked });
+    if (!res.ok) { toast(res.error, 'error'); e.target.checked = !e.target.checked; }
+  };
   $('#set-rounds').onchange = (e) => emit('settings', { rounds: e.target.value });
   $('#set-time').onchange = (e) => emit('settings', { roundTime: e.target.value });
   $('#set-guesses').onchange = (e) => emit('settings', { maxGuesses: e.target.value });
@@ -1344,7 +1355,7 @@
     const me = state.players.find((p) => p.id === state.meId);
     $('#loading-text').innerHTML = `<b>You're done!</b> ${me ? `${fmt(me.score)} points.` : ''} Waiting for everyone to finish…`;
     $('#loading-extra').innerHTML = `<ul class="sr-wait">${state.players.filter((p) => p.connected).map((p) =>
-      `<li class="${p.finished ? 'fin' : ''}"><span>${iconPrefix(p.icon, p.avatar)}${esc(p.name)}</span><span>${p.finished ? '✓ done' : `${p.progress + 1} / ${sr.total}`}</span></li>`).join('')}</ul>`;
+      `<li class="${p.finished ? 'fin' : ''}"><span>${iconPrefix(p.icon, p.avatar)}${esc(p.name)}</span><span>${p.finished ? '✓ done' : p.progress != null ? `${p.progress + 1} / ${sr.total}` : 'playing'}</span></li>`).join('')}</ul>`;
   }
 
   // ---------- round ----------
@@ -1501,9 +1512,9 @@
     const amHost = state.hostId === state.meId;
     $('#round-players').innerHTML = state.players.filter((p) => p.connected).map((p) => {
       const icon = { correct: '✓ ', out: '', 'gave-up': '', timeout: '' }[p.roundStatus] ?? '';
-      const prog = r.speedrun ? `<span class="prog">${p.finished ? 'done' : `${(p.progress || 0) + 1}/${r.total}`}</span>` : '';
-      const inner = `${r.speedrun ? '' : icon}${iconPrefix(p.icon, p.avatar)}${esc(p.name)}${p.id === state.hostId ? ' <small>host</small>' : ''}${prog}`;
-      return `<li class="${r.speedrun ? (p.finished ? 'correct' : '') : p.roundStatus || ''}">${amHost && p.id !== state.meId ? `<button data-player-menu="${esc(p.id)}">${inner}</button>` : inner}</li>`;
+      const prog = p.progress != null ? `<span class="prog">${p.finished ? 'done' : `${(p.progress || 0) + 1}/${r.total}`}</span>` : '';
+      const inner = `${p.speedrun ? '' : icon}${iconPrefix(p.icon, p.avatar)}${esc(p.name)}${p.id === state.hostId ? ' <small>host</small>' : ''}${prog}`;
+      return `<li class="${p.speedrun ? (p.finished ? 'correct' : '') : p.roundStatus || ''}">${amHost && p.id !== state.meId ? `<button data-player-menu="${esc(p.id)}">${inner}</button>` : inner}</li>`;
     }).join('');
 
     clearInterval(timerInt);

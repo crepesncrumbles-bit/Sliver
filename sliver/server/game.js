@@ -77,8 +77,9 @@ class Room {
     this.settings = {
       rounds: 5, roundTime: 0, maxGuesses: 0, hard: false, chaos: false,
       listenLen: LISTEN_AFTER, maxLen: GUESS_CLIP, ranked: false, rankedPack: null,
-      hostOnlySongs: false, speedrun: false,
+      hostOnlySongs: false,
     };
+    this.showCode = false; // host chooses whether the room code is shown to everyone
     this.game = null; // frozen copy of the settings while a game runs
     this.rankedPool = null; // { packId, tracks } songs for ranked play
     this.rankedLoading = null;
@@ -113,7 +114,7 @@ class Room {
     };
     this.players.set(p.id, p);
     if (!this.hostId) this.hostId = p.id;
-    if (this.game && this.game.speedrun && this.phase === 'round') { p.srIdx = 0; p.srDone = false; this.srBegin(p); }
+    if (this.game && this.game.speedrun && this.phase === 'round') { this.game.srIds.add(p.id); p.srIdx = 0; p.srDone = false; this.srBegin(p); }
     return p;
   }
 
@@ -353,7 +354,6 @@ class Room {
     if (typeof s.hostOnlySongs === 'boolean') st.hostOnlySongs = s.hostOnlySongs;
     if (typeof s.hard === 'boolean') st.hard = s.hard;
     if (typeof s.chaos === 'boolean') st.chaos = s.chaos;
-    if (typeof s.speedrun === 'boolean') st.speedrun = s.speedrun;
     if (s.mode !== undefined) { // older clients: one mode at a time
       st.hard = s.mode === 'hard'; st.chaos = s.mode === 'chaos';
     }
@@ -434,10 +434,19 @@ class Room {
       maxLen: GUESS_CLIP,
       listenLen: LISTEN_AFTER,
       roundTime: ranked ? RANKED_ROUND_TIME : st.roundTime,
-      speedrun: !ranked && !!st.speedrun,
       entrants,
       history: [],
     };
+    // Speedrun is each player's own choice. Everyone who picked it runs through the songs at their
+    // own pace; the rest play together as usual. Same songs for everyone either way.
+    const present = [...this.players.values()].filter((p) => p.connected);
+    const runners = ranked ? [] : present.filter((p) => p.wantSr);
+    this.game.srIds = new Set(runners.map((p) => p.id));
+    this.game.speedrun = !!runners.length && runners.length === present.length; // everyone's speedrunning
+    this.game.mixed = !!runners.length && !this.game.speedrun;
+    this.game.sr = [];
+    this.groupDone = false;
+    for (const p of this.players.values()) { p.srIdx = 0; p.srDone = false; p.srWaiting = false; clearTimeout(p.srTimer); }
     this.poolVersion++;
     if (this.opts.onStat) { this.opts.onStat('games'); if (ranked) this.opts.onStat('ranked'); }
     if (this.game.speedrun) return this.startSpeedrun();
@@ -448,13 +457,32 @@ class Room {
     const gid = this.gameId;
     const game = this.game;
     if (!game) return;
-    this.clearTimers();
-    if (this.roundNum >= game.rounds) return this.finish();
+    clearTimeout(this.timers.round); // (speedrunners' own timers keep going)
+    clearTimeout(this.timers.reveal);
+    if (this.roundNum >= game.rounds) {
+      if (!game.mixed) return this.finish();
+      // The group is done; wait here until the speedrunners finish too.
+      this.groupDone = true;
+      this.phase = 'round';
+      this.round = null;
+      this.reveal = null;
+      this.srMaybeFinish();
+      this.broadcast();
+      return;
+    }
     this.phase = 'loading';
     this.reveal = null;
     this.broadcast();
 
-    const { clip, track } = await this.pickSong(game);
+    let clip, track, shared = null;
+    if (game.mixed) {
+      shared = await this.srRound(this.roundNum);
+      if (shared) ({ clip, track } = shared);
+      if (shared && this.roundNum === 0 && gid === this.gameId) {
+        for (const p of this.players.values()) if (this.isSr(p)) this.srBegin(p);
+        (async () => { for (let i = 1; i < game.rounds && gid === this.gameId; i++) await this.srRound(i); })().catch(() => {});
+      }
+    } else ({ clip, track } = await this.pickSong(game));
     if (gid !== this.gameId || this.phase !== 'loading') return; // host ended the game meanwhile
     if (!track) {
       this.phase = 'lobby';
@@ -468,7 +496,7 @@ class Room {
     this.roundNum++;
     if (this.opts.onStat) this.opts.onStat('songs');
     const roundTimeMs = game.roundTime * 1000;
-    this.round = {
+    this.round = shared ? Object.assign(shared, { startedAt: Date.now(), endsAt: roundTimeMs ? Date.now() + roundTimeMs : null }) : {
       num: this.roundNum,
       nonce: id(10),
       track,
@@ -515,7 +543,7 @@ class Room {
     this.phase = 'loading';
     this.round = null;
     this.reveal = null;
-    for (const p of this.players.values()) { p.srIdx = 0; p.srDone = false; p.srStart = null; }
+    for (const p of this.players.values()) { p.srIdx = 0; p.srDone = false; p.srStart = null; game.srIds.add(p.id); }
     this.broadcast();
     const first = await this.srRound(0);
     if (gid !== this.gameId) return;
@@ -557,9 +585,21 @@ class Room {
     return game.sr[i];
   }
 
+  // Is this player speedrunning in the current game?
+  isSr(p) {
+    const g = this.game;
+    return !!(g && p && g.srIds && g.srIds.has(p.id));
+  }
+
+  // Can this player guess right now? Speedrunners play whenever they're mid-run.
+  canPlay(p) {
+    if (this.isSr(p)) return ['loading', 'round', 'reveal'].includes(this.phase) && !p.srDone;
+    return this.phase === 'round' && !!this.round;
+  }
+
   srCurrent(p) {
     const g = this.game;
-    return g && g.speedrun && g.srLoaded && p && !p.srDone ? g.srLoaded[p.srIdx] || null : null;
+    return g && this.isSr(p) && g.srLoaded && p && !p.srDone ? g.srLoaded[p.srIdx] || null : null;
   }
 
   // Start the player's current song (their own timer, if the room has one).
@@ -584,7 +624,7 @@ class Room {
   async srNext(playerId) {
     const p = this.players.get(playerId);
     const game = this.game;
-    if (!p || !game || !game.speedrun || this.phase !== 'round') throw new Error('Not in a speedrun');
+    if (!p || !game || !this.isSr(p) || !['loading', 'round', 'reveal'].includes(this.phase)) throw new Error('Not in a speedrun');
     if (p.srDone) return;
     const cur = this.srCurrent(p);
     if (cur && this.resultFor(p.id, cur).status === 'playing') throw new Error('Finish this song first');
@@ -603,21 +643,24 @@ class Room {
     if (gid !== this.gameId) return;
     p.srWaiting = false;
     if (!next) { p.srDone = true; this.srMaybeFinish(); this.broadcast(); return; }
-    this.roundNum = Math.max(this.roundNum, p.srIdx + 1);
+    if (game.speedrun) this.roundNum = Math.max(this.roundNum, p.srIdx + 1);
     this.srBegin(p);
     this.broadcast();
   }
 
   srMaybeFinish() {
-    if (this.phase !== 'round' || !this.game || !this.game.speedrun) return;
-    const active = [...this.players.values()].filter((p) => p.connected);
-    if (active.length && active.every((p) => p.srDone)) this.srFinish();
+    const g = this.game;
+    if (!g || !g.srIds || !g.srIds.size) return;
+    if (g.mixed && !this.groupDone) return; // the group is still playing
+    if (!g.mixed && this.phase !== 'round') return;
+    const active = [...this.players.values()].filter((p) => p.connected && this.isSr(p));
+    if (active.every((p) => p.srDone)) this.srFinish();
   }
 
   // Wrap up: anything unplayed counts as missed, then straight to the results.
   srFinish() {
     const game = this.game;
-    if (!game || !game.speedrun) return;
+    if (!game || !game.sr) return;
     for (const p of this.players.values()) clearTimeout(p.srTimer);
     const rounds = (game.srLoaded || []).filter(Boolean);
     game.history = rounds.map((r) => ({
@@ -710,7 +753,8 @@ class Room {
 
   // The round this player is on: the shared one, or in a speedrun their own current song.
   roundOf(playerId) {
-    if (this.game && this.game.speedrun) return this.srCurrent(this.players.get(playerId));
+    const p = this.players.get(playerId);
+    if (this.isSr(p)) return this.srCurrent(p);
     return this.round;
   }
 
@@ -725,7 +769,7 @@ class Room {
   }
 
   reportListen(playerId, seconds) {
-    if (this.phase !== 'round') return;
+    if (!this.canPlay(this.players.get(playerId))) return;
     const r = this.resultFor(playerId);
     if (r.status !== 'playing') return;
     const s = Number(seconds);
@@ -733,7 +777,7 @@ class Room {
   }
 
   guess(playerId, poolId) {
-    if (this.phase !== 'round') throw new Error('No song is playing right now');
+    if (!this.canPlay(this.players.get(playerId))) throw new Error('No song is playing right now');
     const round = this.roundOf(playerId);
     if (!round) throw new Error('Your next song is still loading');
     if (round.typed) throw new Error('Hard mode: type the song title');
@@ -750,7 +794,7 @@ class Room {
 
   // Hard mode: free-typed title, forgiving of small typos and "feat."/"(Remastered)" bits.
   guessText(playerId, text) {
-    if (this.phase !== 'round') throw new Error('No song is playing right now');
+    if (!this.canPlay(this.players.get(playerId))) throw new Error('No song is playing right now');
     const r = this.resultFor(playerId);
     if (r.status !== 'playing') throw new Error('You\'re done for this round');
     const typed = String(text || '').trim().slice(0, 120);
@@ -792,7 +836,7 @@ class Room {
   }
 
   giveUp(playerId) {
-    if (this.phase !== 'round') return;
+    if (!this.canPlay(this.players.get(playerId))) return;
     const r = this.resultFor(playerId);
     if (r.status === 'playing') r.status = 'gave-up';
     this.maybeEndRound();
@@ -800,17 +844,22 @@ class Room {
   }
 
   maybeEndRound() {
-    if (this.phase !== 'round') return;
     if (this.game && this.game.speedrun) return this.srMaybeFinish(); // each player moves on by themselves
-    const active = [...this.players.values()].filter((p) => p.connected);
+    if (this.game && this.game.mixed && this.groupDone) return this.srMaybeFinish();
+    if (this.phase !== 'round' || !this.round) return;
+    const active = [...this.players.values()].filter((p) => p.connected && !this.isSr(p));
     if (active.length && active.every((p) => this.resultFor(p.id).status !== 'playing')) this.endRound();
   }
 
   endRound() {
     if (this.phase !== 'round') return;
     if (this.game && this.game.speedrun) return this.srFinish(); // host "end now" ends the speedrun
-    this.clearTimers();
-    for (const p of this.players.values()) {
+    if (this.game && this.game.mixed && this.groupDone) return this.srFinish(); // host "end now" while waiting
+    if (!this.round) return;
+    clearTimeout(this.timers.round);
+    clearTimeout(this.timers.reveal);
+    const group = [...this.players.values()].filter((p) => !this.isSr(p));
+    for (const p of group) {
       const r = this.resultFor(p.id);
       if (r.status === 'playing') r.status = 'timeout';
     }
@@ -831,14 +880,14 @@ class Room {
       twist: this.round.twist,
       mult: this.round.mult,
       listenLen: game.listenLen,
-      results: [...this.players.values()].map((p) => {
+      results: group.map((p) => {
         const r = this.resultFor(p.id);
         return { id: p.id, name: p.name, icon: p.icon || '', avatar: p.avatar || '', status: r.status, points: r.points, bonus: r.bonus || 0, guesses: r.guesses.length, heard: r.maxHeard };
       }).sort((a, b) => b.points - a.points),
       autoNextAt: Date.now() + waitMs,
       last: this.roundNum >= game.rounds,
     };
-    game.history.push({
+    if (!game.mixed) game.history.push({ // mixed games add everyone's results up at the very end
       title: t.title,
       artist: t.artist,
       results: new Map([...this.players.values()].map((p) => {
@@ -956,7 +1005,7 @@ class Room {
       hostId: this.hostId,
       meId: forPlayerId,
       settings: this.settings,
-      game: g ? { ranked: g.ranked, packId: g.packId, hard: g.hard, chaos: g.chaos, speedrun: !!g.speedrun, rounds: g.rounds, listenLen: g.listenLen, maxLen: g.maxLen } : null,
+      game: g ? { ranked: g.ranked, packId: g.packId, hard: g.hard, chaos: g.chaos, speedrun: this.isSr(me), rounds: g.rounds, listenLen: g.listenLen, maxLen: g.maxLen } : null,
       lastGame: this.phase === 'results' ? this.lastGame || null : null,
       sources: this.sources.map(({ key, name, by, byId, packId, count }) => ({ key, name, by, byId, packId, count })),
       packs: packs.publicPacks(),
@@ -977,16 +1026,27 @@ class Room {
           loggedIn: !!p.userId,
           userId: p.hidden && !(me && me.isAdmin) ? null : p.userId || null,
           hiddenAcct: !!(p.hidden && me && me.isAdmin),
-          roundStatus: this.phase === 'round' && (g && g.speedrun ? !p.srDone && this.srCurrent(p) : this.round) ? this.resultFor(p.id).status : null,
-          progress: g && g.speedrun && this.phase === 'round' ? (p.srDone ? g.rounds : p.srIdx) : null,
-          finished: !!(g && g.speedrun && p.srDone),
+          roundStatus: (this.isSr(p) ? !p.srDone && this.srCurrent(p) : this.phase === 'round' && this.round) ? this.resultFor(p.id).status : null,
+          progress: this.isSr(p) && this.phase !== 'results' ? (p.srDone ? g.rounds : p.srIdx) : null,
+          finished: !!(this.isSr(p) ? p.srDone : g && g.mixed && this.groupDone),
+          speedrun: this.isSr(p),
+          wantSr: !!p.wantSr,
         })),
       round: null,
       reveal: this.phase === 'reveal' ? this.reveal : null,
     };
-    const sr = !!(g && g.speedrun);
-    const myRound = me && this.phase === 'round' ? this.roundOf(me.id) : null;
-    if (sr && me && this.phase === 'round') state.speedrun = { done: !!me.srDone, waiting: !!me.srWaiting || (!me.srDone && !myRound), idx: me.srIdx, total: g.rounds };
+    state.showCode = this.showCode;
+    const sr = this.isSr(me);
+    const live = ['loading', 'round', 'reveal'].includes(this.phase);
+    const myRound = me && (sr ? live : this.phase === 'round') ? this.roundOf(me.id) : null;
+    if (sr && live) {
+      // A speedrunner is always on their own song, whatever the rest of the room is doing.
+      state.phase = 'round';
+      state.reveal = null;
+      state.speedrun = { done: !!me.srDone, waiting: !!me.srWaiting || (!me.srDone && !myRound), idx: me.srIdx, total: g.rounds };
+    } else if (g && g.mixed && this.groupDone && this.phase === 'round' && me) {
+      state.speedrun = { done: true, waiting: false, idx: g.rounds, total: g.rounds }; // waiting on the speedrunners
+    }
     if (myRound && me) {
       const r = this.resultFor(me.id);
       const R = myRound;

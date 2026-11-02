@@ -712,6 +712,22 @@ io.on('connection', (socket) => {
     try { ack && ack({ ok: true, ...room.guessText(player.id, text) }); } catch (err) { fail(ack, err); }
   });
 
+  // Speedrun is each player's own pick (in the lobby, for the next game).
+  socket.on('srPref', ({ on } = {}, ack) => {
+    if (!need(ack)) return;
+    player.wantSr = !!on;
+    room.broadcast();
+    ack && ack({ ok: true });
+  });
+
+  // Only the host decides whether the room code is shown on everyone's screen.
+  socket.on('showCode', ({ on } = {}, ack) => {
+    if (!hostOnly(ack)) return;
+    room.showCode = !!on;
+    room.broadcast();
+    ack && ack({ ok: true });
+  });
+
   socket.on('giveUp', () => room && player && room.giveUp(player.id));
 
   // Speedrun: on to your next song.

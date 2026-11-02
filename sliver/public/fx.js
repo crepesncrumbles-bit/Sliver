@@ -1484,13 +1484,19 @@
       let whiteLayer = null, blackLayer = null;
       const hue = (m) => { const k = (m - LO) / (HI - LO); return `hsl(${Math.round(38 + k * 190)}, 85%, ${68 - k * 6}%)`; };
       let now = 0;
-      const MAX_BARS = 70;
-      function press(k, amt) {
+      const MAX_BARS = 90;
+      function press(k, amt, force) {
         k.glow = Math.max(k.glow, amt);
         k.off = 0;
         // A new note only if this key wasn't just played, and never more than MAX_BARS on screen.
         if (!k.held) { stats.oct[Math.floor((k.m - LO) / 12)]++; stats.gap = Math.max(stats.gap, now - stats.lastAt); stats.lastAt = now; }
-        if (!k.held && now - k.last > 0.18 && bars.length < MAX_BARS && (k.live || 0) < 3) { bars.push({ k, y: kbY, h: 0, growing: true, a: Math.min(1, 0.5 + amt) }); k.last = now; k.live = (k.live || 0) + 1; }
+        if (force && !k.held) {
+          // A tap always gets its bar: make room by retiring this key's oldest bar (or the oldest overall).
+          const own = (k.live || 0) >= 3 ? bars.findIndex((b) => b.k === k) : -1;
+          const old = own >= 0 ? own : bars.length >= MAX_BARS ? 0 : -1;
+          if (old >= 0) { bars[old].k.live--; bars.splice(old, 1); }
+          bars.push({ k, y: kbY, h: 0, growing: true, a: Math.min(1, 0.5 + amt) }); k.last = now; k.live = (k.live || 0) + 1;
+        } else if (!k.held && now - k.last > 0.18 && bars.length < MAX_BARS && (k.live || 0) < 3) { bars.push({ k, y: kbY, h: 0, growing: true, a: Math.min(1, 0.5 + amt) }); k.last = now; k.live = (k.live || 0) + 1; }
         k.held = true;
       }
       // A key lets go only after it's been quiet for a moment (the analysis flickers frame to frame).
@@ -1505,7 +1511,8 @@
       }
       function burst(k) {
         k.held = false; k.last = -9;
-        press(k, 1);
+        for (const b of bars) if (b.k === k) b.growing = false; // the previous tap's bar lets go and floats up
+        press(k, 1, true);
         k.tapUntil = now + 0.35;
         const cx = k.x + k.w / 2;
         for (let i = 0; i < 7; i++) {
@@ -1619,17 +1626,20 @@
           toFront();
           ctx.globalCompositeOperation = 'lighter';
           const speed = 70;
-          bars = bars.filter((b) => { const keep = b.y - b.h > -20 && b.a > 0.03; if (!keep) b.k.live--; return keep; });
+          // Keep a bar until it has fully left the top (its bottom edge) or faded out, so long
+          // held notes drift away and fade like the rest instead of vanishing.
+          bars = bars.filter((b) => { const keep = b.y > -20 && b.a > 0.03; if (!keep) b.k.live--; return keep; });
           for (const b of bars) {
             if (b.growing && b.k.held && b.h < (b.k.sustain ? H * 0.8 : kbH * 1.6)) b.h += speed * (b.k.sustain ? 1.6 : 1) * dt; else { b.growing = false; b.y -= speed * dt; }
-            b.a -= dt * (b.k.sustain && b.growing ? 0 : 0.16);
+            b.a -= dt * (b.k.sustain && b.growing ? 0 : b.h > kbH * 2 ? 0.28 : 0.16);
             const x = b.k.x + b.k.w * 0.12, w = b.k.w * 0.76, top = b.y - b.h;
             const hgt = Math.max(4, b.h);
             ctx.fillStyle = b.k.col;
             ctx.globalAlpha = Math.max(0, b.a) * 0.22; // soft halo: the same rounded shape, a bit bigger and fainter
-            rr(x - 3, top - 3, w + 6, hgt + 6, Math.min(9, w / 2 + 3)); ctx.fill();
+            // Corner radius never more than half the bar's height or width, or the shape twists into a "~".
+            rr(x - 3, top - 3, w + 6, hgt + 6, Math.min(9, (w + 6) / 2, (hgt + 6) / 2)); ctx.fill();
             ctx.globalAlpha = Math.max(0, b.a);
-            rr(x, top, w, hgt, Math.min(6, w / 2)); ctx.fill();
+            rr(x, top, w, hgt, Math.min(6, w / 2, hgt / 2)); ctx.fill();
           }
           ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
           // felt strip + keyboard

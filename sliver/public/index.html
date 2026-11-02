@@ -132,7 +132,6 @@
           </button>
         </div>
         <p class="mode-mult" id="mode-mult"></p>
-        <label class="check casual-only speedrun-opt"><input type="checkbox" id="set-speedrun" /> <span><b>⚡ Speedrun</b> Move on as soon as you're done with a song. No waiting for the others.</span></label>
         <div class="settings">
           <label class="field casual-only"><span>Songs</span><select id="set-rounds"></select></label>
           <label class="field casual-only"><span>Time per song</span><select id="set-time"></select></label>
@@ -142,6 +141,9 @@
         <p class="hint ranked-only" id="ranked-fixed" hidden>Ranked is always 5 songs, 90 seconds per song, unlimited guesses.</p>
         <p class="warn" id="ranked-warn" hidden></p>
         <button id="btn-start" class="btn primary big">Start game</button>
+      </div>
+      <div class="card casual-only sr-card">
+        <label class="check speedrun-opt"><input type="checkbox" id="set-speedrun" /> <span><b>⚡ Speedrun (just you)</b> Go at your own pace: move on as soon as you're done with a song, and only wait for the others at the very end.</span></label>
       </div>
       <div class="card guest-only waiting-card">
         <p id="guest-mode"></p>
