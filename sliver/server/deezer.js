@@ -222,6 +222,31 @@ async function loadRoster(names, packName, { perArtist = 12 } = {}) {
   return { name: packName, tracks: addWeights(tracks), artists: used };
 }
 
+// A pack rebuilt from Apple's catalogue (used when Deezer is turning the server away).
+// Each artist's songs (exact name only), kept to the pack's years if it has them, plus
+// Apple's current chart for the top-hits pack.
+async function loadItunesPack(fb, packName, { perArtist = 12 } = {}) {
+  const seen = new Set(), tracks = [];
+  const add = (t, pop) => {
+    const key = normText(t.title) + '|' + normText(t.artist);
+    if (seen.has(key) || tracks.length >= MAX_TRACKS) return;
+    seen.add(key); tracks.push({ ...t, pop });
+  };
+  if (fb.chart) {
+    try { (await itunes.chartSongs(100)).forEach((t, i) => add(t, 1000000 - i * 8000)); } catch (err) { console.warn('  Apple chart unavailable:', err.message); }
+  }
+  const [y0, y1] = fb.years || [0, 9999];
+  const names = fb.roster || [];
+  for (let i = 0; i < names.length; i += 4) {
+    const lists = await Promise.all(names.slice(i, i + 4).map((n) =>
+      itunes.itunesArtistSongs(n).then((l) => l.filter((t) => nameClose(t.artist, n) && (!t.year || (t.year >= y0 && t.year <= y1)))).catch(() => [])));
+    for (const list of lists) list.slice(0, perArtist).forEach((t, j) => add(t, Math.max(1, 500000 - j * 25000)));
+    if (i + 4 < names.length) await wait(700); // be gentle with Apple's rate limit
+  }
+  if (tracks.length < 10) throw new Error(`Couldn't load "${packName}" right now. Try again in a minute.`);
+  return { name: packName, tracks: addWeights(tracks) };
+}
+
 async function findArtist(q, artistId, strict = false) {
   if (artistId && /^\d+$/.test(String(artistId))) return getJson(`${API}/artist/${artistId}`);
   if (!q) throw new Error('Type an artist name');
@@ -411,4 +436,4 @@ async function searchArtists(query) {
   return list;
 }
 
-module.exports = { loadRoster, nameClose, pickArtist, rankArtists, searchArtists, loadDeezerSource, fetchPreview, parseDeezerInput, searchDeezer, loadDeezerPlaylistSearch, loadDeezerArtist, addItunesSongs, sameSong, squashTitle, MAX_TRACKS, TOP_N_SONGS };
+module.exports = { loadItunesPack, deezerBlocked, loadRoster, nameClose, pickArtist, rankArtists, searchArtists, loadDeezerSource, fetchPreview, parseDeezerInput, searchDeezer, loadDeezerPlaylistSearch, loadDeezerArtist, addItunesSongs, sameSong, squashTitle, MAX_TRACKS, TOP_N_SONGS };

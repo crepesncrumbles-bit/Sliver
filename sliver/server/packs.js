@@ -110,6 +110,31 @@ function artists(cat, names, extra = {}) {
   }));
 }
 
+
+// When Deezer turns the server away (it has been blocking Render), these packs are rebuilt
+// from Apple's catalogue: each listed artist's songs, kept to the pack's years where it has any.
+const FALLBACK = {
+  'top-hits': { chart: true, roster: ['Sabrina Carpenter', 'Chappell Roan', 'Billie Eilish', 'Kendrick Lamar', 'SZA', 'Benson Boone', 'Teddy Swims', 'Lady Gaga', 'Bruno Mars', 'ROSÉ', 'Morgan Wallen', 'Post Malone', 'Tate McRae', 'Gracie Abrams', 'Alex Warren', 'The Weeknd', 'Doechii'], years: [2023, 2030] },
+  '2010s': { roster: ['Rihanna', 'Katy Perry', 'Bruno Mars', 'Taylor Swift', 'Adele', 'Ed Sheeran', 'Drake', 'Justin Bieber', 'Ariana Grande', 'The Weeknd', 'Maroon 5', 'Lady Gaga', 'Calvin Harris', 'Pharrell Williams', 'Imagine Dragons', 'Sia', 'LMFAO', 'Post Malone', 'Shawn Mendes', 'Dua Lipa'], years: [2010, 2019] },
+  '2000s': { roster: ['Beyoncé', 'Usher', 'Rihanna', 'Britney Spears', 'Eminem', '50 Cent', 'OutKast', 'Nelly', 'Kelly Clarkson', 'Black Eyed Peas', 'Justin Timberlake', 'Christina Aguilera', 'Avril Lavigne', 'Shakira', 'Gwen Stefani', 'The Killers', 'Coldplay', 'Lady Gaga', 'Akon', 'Destiny’s Child'], years: [2000, 2009] },
+  '90s': { roster: ['Mariah Carey', 'Whitney Houston', 'Backstreet Boys', 'Spice Girls', 'TLC', 'Britney Spears', 'Nirvana', 'Oasis', 'Alanis Morissette', 'Celine Dion', 'No Doubt', 'Green Day', 'Coolio', '2Pac', 'Destiny’s Child', 'Ace of Base', 'Shania Twain', 'Boyz II Men', 'Madonna', 'Red Hot Chili Peppers'], years: [1990, 1999] },
+  '80s': { roster: ['Michael Jackson', 'Madonna', 'Prince', 'Whitney Houston', 'Bon Jovi', 'a-ha', 'Queen', 'Cyndi Lauper', 'Wham!', 'Duran Duran', 'Tears for Fears', 'Toto', 'Journey', 'Bruce Springsteen', 'Eurythmics', 'Lionel Richie', 'The Police', 'Phil Collins', 'Hall & Oates', 'Def Leppard'], years: [1980, 1989] },
+  'throwbacks': { roster: ['Usher', 'Rihanna', 'Black Eyed Peas', 'Britney Spears', 'Nelly', 'OutKast', 'Kesha', 'LMFAO', 'Flo Rida', 'Pitbull', 'Beyoncé', 'Lady Gaga', 'Katy Perry', 'Chris Brown', 'Sean Paul', 'Shakira', 'Taio Cruz', 'Jason Derulo'], years: [1998, 2014] },
+  'hiphop': { roster: ['Drake', 'Kendrick Lamar', 'Travis Scott', 'Future', 'Lil Baby', '21 Savage', 'J. Cole', 'Gunna', 'Playboi Carti', 'Metro Boomin', 'Lil Uzi Vert', 'Tyler, The Creator', 'Doja Cat', 'Megan Thee Stallion', 'Nicki Minaj', 'Cardi B', 'Lil Wayne', 'Eminem', 'Kanye West', 'GloRilla'] },
+  'pop': { roster: ['Taylor Swift', 'Sabrina Carpenter', 'Ariana Grande', 'Billie Eilish', 'Dua Lipa', 'Olivia Rodrigo', 'Harry Styles', 'Ed Sheeran', 'Bruno Mars', 'Lady Gaga', 'Chappell Roan', 'Justin Bieber', 'The Weeknd', 'Miley Cyrus', 'Tate McRae', 'Charli xcx', 'Selena Gomez', 'Shawn Mendes'] },
+  'rnb': { roster: ['SZA', 'Usher', 'Beyoncé', 'Chris Brown', 'Frank Ocean', 'Daniel Caesar', 'Brent Faiyaz', 'H.E.R.', 'Summer Walker', 'Jhené Aiko', 'Kehlani', 'Giveon', 'The Weeknd', 'Alicia Keys', 'Bryson Tiller', 'Miguel', 'Tems', 'Victoria Monét'] },
+  'rock': { roster: ['Queen', 'AC/DC', "Guns N' Roses", 'Led Zeppelin', 'The Rolling Stones', 'Bon Jovi', 'Aerosmith', 'Nirvana', 'Fleetwood Mac', 'Eagles', 'The Beatles', 'Pink Floyd', 'Journey', 'Def Leppard', 'Lynyrd Skynyrd', 'Red Hot Chili Peppers', 'Foo Fighters', 'Kiss'] },
+  'metal': { roster: ['Metallica', 'Iron Maiden', 'Slipknot', 'System of a Down', 'Black Sabbath', 'Megadeth', 'Avenged Sevenfold', 'Bring Me The Horizon', 'Rammstein', 'Pantera', 'Judas Priest', 'Ghost', 'Korn', 'Disturbed', 'Sleep Token', 'Linkin Park'] },
+  'country': { roster: ['Morgan Wallen', 'Zach Bryan', 'Luke Combs', 'Chris Stapleton', 'Kane Brown', 'Jason Aldean', 'Carrie Underwood', 'Luke Bryan', 'Florida Georgia Line', 'Lainey Wilson', 'Thomas Rhett', 'Blake Shelton', 'Shaboozey', 'Post Malone', 'Kenny Chesney', 'Miranda Lambert', 'Jelly Roll'] },
+  'latin': { roster: ['Bad Bunny', 'Karol G', 'J Balvin', 'Daddy Yankee', 'Ozuna', 'Feid', 'Peso Pluma', 'Rauw Alejandro', 'Shakira', 'Maluma', 'Anuel AA', 'Myke Towers', 'Becky G', 'Sech', 'Grupo Frontera', 'Luis Fonsi'] },
+  'dance': { roster: ['Calvin Harris', 'David Guetta', 'Avicii', 'Martin Garrix', 'Marshmello', 'The Chainsmokers', 'Kygo', 'Zedd', 'Swedish House Mafia', 'Tiësto', 'Fred again..', 'Fisher', 'Disclosure', 'Clean Bandit', 'Alan Walker', 'Major Lazer'] },
+  'indie': { roster: ['Arctic Monkeys', 'Tame Impala', 'The Neighbourhood', 'Cage The Elephant', 'Glass Animals', 'Foster The People', 'The 1975', 'Mac DeMarco', 'Phoebe Bridgers', 'Hozier', 'Lorde', 'Vampire Weekend', 'The Strokes', 'MGMT', 'Florence + The Machine', 'Mitski', 'Wallows', 'Beach House'] },
+  'kpop': { roster: ['BTS', 'BLACKPINK', 'Stray Kids', 'NewJeans', 'TWICE', 'SEVENTEEN', 'aespa', 'IVE', 'LE SSERAFIM', 'Jungkook', 'ROSÉ', 'Jimin', 'ITZY', '(G)I-DLE', 'ENHYPEN', 'Red Velvet', 'EXO', 'BIGBANG'] },
+  'afrobeats': { roster: ['Burna Boy', 'Wizkid', 'Davido', 'Rema', 'Tems', 'Ayra Starr', 'Asake', 'CKay', 'Fireboy DML', 'Omah Lay', 'Tyla', 'Kizz Daniel', 'Olamide', 'Mr Eazi', 'Tiwa Savage', 'Joeboy'] },
+  'movies': { roster: ['Hans Zimmer', 'John Williams', 'Ludwig Göransson', 'Alan Menken', 'Lin-Manuel Miranda', 'Idina Menzel', 'Hugh Jackman', 'Lady Gaga', 'Whitney Houston', 'Celine Dion', 'Survivor', 'Kenny Loggins', 'Ray Parker Jr.', 'Danny Elfman', 'Howard Shore', 'Ramin Djawadi'] },
+};
+for (const p of PACKS) if (FALLBACK[p.id]) p.fallback = FALLBACK[p.id];
+
 const byId = new Map(PACKS.map((p) => [p.id, p]));
 
 // Ranked play uses the genre and decade packs; each one has its own leaderboard.

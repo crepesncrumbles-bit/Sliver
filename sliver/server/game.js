@@ -2,7 +2,7 @@
 
 const crypto = require('crypto');
 const { demoTracks, renderDemoWav } = require('./demo');
-const { loadDeezerSource, fetchPreview, searchDeezer, loadDeezerPlaylistSearch, loadDeezerArtist, loadRoster } = require('./deezer');
+const { loadDeezerSource, fetchPreview, searchDeezer, loadDeezerPlaylistSearch, loadDeezerArtist, loadRoster, loadItunesPack } = require('./deezer');
 const packs = require('./packs');
 const { isSpotify, loadSpotifySource, fetchUrlPreview, fetchSpotifyCover } = require('./spotify');
 const { isAnghami, loadAnghamiSource } = require('./anghami');
@@ -289,7 +289,13 @@ class Room {
         console.warn(`  pack "${pack.name}": Spotify unavailable (${err.message}), using backup`);
       }
     }
-    return loadDeezerPlaylistSearch(pack.backup, pack.name);
+    try {
+      return await loadDeezerPlaylistSearch(pack.backup, pack.name);
+    } catch (err) {
+      if (!pack.fallback) throw err;
+      console.warn(`  pack "${pack.name}": Deezer unavailable (${err.message}), using Apple's catalogue`);
+      return loadItunesPack(pack.fallback, pack.name);
+    }
   }
 
   // Rebuild the pool from the sources still present (dedupes songs shared between playlists).

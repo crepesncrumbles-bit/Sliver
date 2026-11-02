@@ -45,6 +45,7 @@ function toTrack(r) {
     link: r.trackViewUrl || null,
     previewUrl: r.previewUrl,
     durationMs: r.trackTimeMillis || 0,
+    year: r.releaseDate ? Number(String(r.releaseDate).slice(0, 4)) || null : null,
   };
 }
 
@@ -114,11 +115,39 @@ async function searchItunesArtists(q) {
     for (const r of data.results || []) {
       if (!r.artistId || seen.has(r.artistId)) continue;
       seen.add(r.artistId);
-      out.push({ id: `it:${r.artistId}`, name: r.artistName, picture: null, fans: 0, genre: r.primaryGenreName || '' });
+      out.push({ id: `it:${r.artistId}`, name: r.artistName, picture: null, fans: 0, genre: r.primaryGenreName || '', songs: 0 });
     }
-    if (out.length) break;
+    if (out.length) {
+      // Apple has no artist photos in its public API: use the cover of each artist's most popular
+      // song instead (one more search, by song, for the same words).
+      try {
+        const songs = await getJson(`${API}/search?term=${encodeURIComponent(q)}&entity=song&limit=50&country=${cc}`);
+        for (const r of songs.results || []) {
+          const a = out.find((x) => x.id === `it:${r.artistId}`);
+          if (!a) continue;
+          a.songs++;
+          if (!a.picture && r.artworkUrl100) a.picture = r.artworkUrl100.replace(/\/\d+x\d+bb\./, '/120x120bb.');
+        }
+        // The artist people mean usually has the most songs matching the search.
+        out.sort((x, y) => y.songs - x.songs);
+      } catch { /* pictures are optional */ }
+      break;
+    }
+  }
+  return out.map(({ songs, ...a }) => a);
+}
+
+// Apple Music's current most-played songs in the US (for "Today's Top Hits" when Deezer is out).
+async function chartSongs(limit = 100) {
+  const feed = await getJson(`https://rss.applemarketingtools.com/api/v2/us/music/most-played/${limit}/songs.json`);
+  const ids = ((feed.feed && feed.feed.results) || []).map((r) => r.id).filter(Boolean);
+  if (!ids.length) return [];
+  const out = [];
+  for (let i = 0; i < ids.length; i += 100) {
+    const data = await getJson(`${API}/lookup?id=${ids.slice(i, i + 100).join(',')}&entity=song&country=us`);
+    for (const r of data.results || []) if (isSong(r)) out.push(toTrack(r));
   }
   return out;
 }
 
-module.exports = { searchItunesArtists, itunesArtistSongs, searchItunes, findArtistId, toTrack, ARABIC_SCRIPT, _cache: cache };
+module.exports = { chartSongs, searchItunesArtists, itunesArtistSongs, searchItunes, findArtistId, toTrack, ARABIC_SCRIPT, _cache: cache };
