@@ -968,3 +968,10 @@ html:has(body.ui-hidden), body.ui-hidden { touch-action: none; overflow: hidden;
 .slot-card.on .name::after { content: none; }
 .slot-card .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
 .slot-card .season { color: var(--ink-2); }
+
+/* Sign up / Log in, top right */
+.top-auth { font: inherit; font-size: 14px; font-weight: 800; cursor: pointer; height: 38px; padding: 0 14px; border-radius: 99px;
+  background: var(--pop); color: var(--pop-ink); border: 2px solid var(--stroke); box-shadow: 0 2px 0 var(--stroke); white-space: nowrap; }
+.top-auth:hover { filter: brightness(1.05); }
+.top-auth.ghosty { background: transparent; color: var(--on-page); border-color: color-mix(in srgb, var(--on-page) 32%, transparent); box-shadow: none; }
+@media (max-width: 380px) { .top-auth.ghosty { display: none; } }

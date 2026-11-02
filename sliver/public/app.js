@@ -749,6 +749,7 @@
     closeSheet('players');
     document.body.classList.remove('in-game');
     show('home');
+    renderTopAuth();
   }
 
   // ---------- render ----------
@@ -765,6 +766,7 @@
     if (!$('#players').hidden) renderPlayersSheet();
     if ($('#btn-end').hidden) disarmEnd();
     document.body.classList.toggle('in-game', ['loading', 'round', 'reveal'].includes(phase));
+    renderTopAuth();
     if (phase === 'lobby') renderLobby();
     else if (phase === 'loading') { $('#loading-text').textContent = 'Cueing up the next song…'; $('#loading-extra').innerHTML = ''; show('loading'); }
     else if (phase === 'round' && state.speedrun && !state.round) renderSrWait();
@@ -1941,7 +1943,15 @@
     try { a ? localStorage.setItem('sliver.auth', JSON.stringify(a)) : localStorage.removeItem('sliver.auth'); } catch {}
     window.SliverThemes.setOwned(a && a.user ? a.user.themes || [] : []);
     renderAccount();
+    renderTopAuth();
     if (!$('#settings').hidden) renderThemes();
+  }
+  // Sign up / Log in at the top right while logged out (on the home screen; rooms keep the bar clear).
+  function renderTopAuth() {
+    const out = !(auth && auth.user);
+    const inRoom = !!state && !$('#btn-leave').hidden; // keep the bar clear inside a room
+    $('#btn-top-signup').hidden = !out || inRoom;
+    $('#btn-top-login').hidden = !out || inRoom;
   }
   async function api(path, { method = 'GET', body } = {}) {
     const headers = {};
@@ -2027,6 +2037,8 @@
     show('#auth-email-field', mode === 'login' || mode === 'signup' || mode === 'reset');
     show('#auth-code-field', mode === 'verify' || mode === 'reset2');
     show('#auth-password-field', mode === 'login' || mode === 'signup' || mode === 'reset2');
+    show('#auth-confirm-field', mode === 'signup' || mode === 'reset2');
+    if (mode !== 'signup' && mode !== 'reset2') $('#auth-confirm').value = '';
     $('#auth-password-label').textContent = mode === 'reset2' ? 'New password' : 'Password';
     $('#auth-password').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
     $('#auth-submit').textContent = { login: 'Log in', signup: emailCodes ? 'Send me a code' : 'Create account', verify: 'Verify and create account', reset: 'Send me a code', reset2: 'Set new password' }[mode];
@@ -2112,6 +2124,7 @@
     const input = $('#auth-password');
     const show = input.type === 'password';
     input.type = show ? 'text' : 'password';
+    $('#auth-confirm').type = input.type;
     const b = $('#btn-show-pw');
     b.setAttribute('aria-pressed', String(show));
     b.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
@@ -2120,11 +2133,13 @@
   };
   function hidePassword() {
     $('#auth-password').type = 'password';
+    $('#auth-confirm').type = 'password';
     $('#btn-show-pw').setAttribute('aria-pressed', 'false');
     $('#btn-show-pw').setAttribute('aria-label', 'Show password');
   }
   function loggedIn(res, msg) {
     $('#auth-password').value = '';
+    $('#auth-confirm').value = '';
     $('#auth-code').value = '';
     hidePassword();
     saveAuth({ token: res.token, user: res.user });
@@ -2150,6 +2165,11 @@
     };
     const [path, body] = calls[authMode];
     const mode = authMode;
+    if ((mode === 'signup' || mode === 'reset2') && password !== $('#auth-confirm').value) {
+      authError('The passwords don\'t match. Type the same password in both boxes.');
+      $('#auth-confirm').focus();
+      return;
+    }
     btn.disabled = true;
     const res = await api(path, { method: 'POST', body });
     btn.disabled = false;
@@ -2707,6 +2727,7 @@
 
   window.SliverThemes.setOwned(auth && auth.user ? auth.user.themes || [] : []);
   renderAccount();
+  renderTopAuth();
   refreshMe().then(refreshFriends);
   checkGuestPic();
 

@@ -233,6 +233,21 @@ function _reset() { tokenCache = null; hashes = { at: 0, map: {}, loading: null 
 async function _probe(q) {
   const out = {};
   try { const token = await anonToken(); out.token = !!token;
+    try {
+      const r = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(q)}&type=artist,track&limit=5`, { headers: { 'User-Agent': UA, Authorization: `Bearer ${token}` } });
+      out.webApiStatus = r.status;
+      if (r.ok) { const j = await r.json(); out.webApiArtists = ((j.artists && j.artists.items) || []).map((x) => ({ id: x.id, name: x.name, img: !!(x.images && x.images.length), followers: x.followers && x.followers.total, pop: x.popularity })); out.webApiTrackPop = ((j.tracks && j.tracks.items) || []).map((t) => [t.name, t.popularity]); }
+      else out.webApiBody = (await r.text()).slice(0, 200);
+    } catch (e) { out.webApiErr = e.message; }
+    try {
+      const res = await fetch('https://open.spotify.com/', { headers: { 'User-Agent': UA } });
+      const html = await res.text();
+      const urls = [...new Set([...html.matchAll(/https:\/\/open\.spotifycdn\.com\/cdn\/build\/web-player\/[\w.~-]+\.js/g)].map((m) => m[0]))];
+      out.jsFiles = urls.length;
+      out.searchOpsInFiles = [];
+      for (const u of urls) { const js = await (await fetch(u, { headers: { 'User-Agent': UA } })).text(); const ops = [...js.matchAll(/"(search\w*|queryArtist\w*)","query","[0-9a-f]{64}"/g)].map((m) => m[1]); if (ops.length) out.searchOpsInFiles.push([u.split('/').pop(), ops.slice(0, 12)]); }
+      out.chunkHints = (html.match(/web-player\/[\w.~-]+\.js/g) || []).length;
+    } catch (e) { out.scanErr = e.message; }
     for (const op of ['searchDesktop', 'searchArtists', 'searchTracks', 'queryArtistOverview', 'getTrack', 'queryArtistDiscographyAll']) out['hash_' + op] = !!(await opHash(op));
     const d = await pathfinder('searchDesktop', { searchTerm: q, offset: 0, limit: 10, numberOfTopResults: 5, includeAudiobooks: false, includeArtistHasConcertsField: false, includePreReleases: false, includeLocalConcertsField: false }, token);
     const s = d.searchV2 || {};
