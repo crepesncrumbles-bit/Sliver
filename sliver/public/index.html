@@ -69,6 +69,17 @@
       <button id="btn-settings" class="gear" aria-label="Settings" title="Settings">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M20.17 10.04 L22.90 10.54 L22.90 13.46 L20.17 13.96 L19.16 16.39 L20.74 18.67 L18.67 20.74 L16.39 19.16 L13.96 20.17 L13.46 22.90 L10.54 22.90 L10.04 20.17 L7.61 19.16 L5.33 20.74 L3.26 18.67 L4.84 16.39 L3.83 13.96 L1.10 13.46 L1.10 10.54 L3.83 10.04 L4.84 7.61 L3.26 5.33 L5.33 3.26 L7.61 4.84 L10.04 3.83 L10.54 1.10 L13.46 1.10 L13.96 3.83 L16.39 4.84 L18.67 3.26 L20.74 5.33 L19.16 7.61 Z M15.4 12 A3.4 3.4 0 1 0 8.6 12 A3.4 3.4 0 1 0 15.4 12 Z"/></svg>
       </button>
+      <!-- Logged in: your picture opens a menu (settings, themes, shop, log out) -->
+      <div class="me-wrap" id="me-wrap" hidden>
+        <button id="btn-me" class="me-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="me-menu" aria-label="Your account" title="Your account"><span class="me-av" id="me-av"></span></button>
+        <div id="me-menu" class="me-menu" role="menu" hidden>
+          <div class="me-head" id="me-head"></div>
+          <button type="button" role="menuitem" data-me="settings"><span class="mi" aria-hidden="true">⚙️</span>Settings</button>
+          <button type="button" role="menuitem" data-me="themes"><span class="mi" aria-hidden="true">🎨</span>Themes</button>
+          <button type="button" role="menuitem" data-me="shop"><span class="mi" aria-hidden="true">✨</span>Shop</button>
+          <button type="button" role="menuitem" data-me="logout" class="me-out"><span class="mi" aria-hidden="true">🚪</span>Log out</button>
+        </div>
+      </div>
       </div>
     </div>
     <header class="brand">
@@ -96,10 +107,10 @@
       </div>
       <div class="card account-card" id="account-box"></div>
       <div class="card invite-card" id="invite-home"></div>
-      <p class="about-line">Sliver is a free guess-the-song game. Hear a split-second clip and race your friends to name it, with any artist, your own Spotify playlist, or packs from Top Hits to Arabic and K-pop.</p>
       <a class="coffee-btn" id="coffee-home" target="_blank" rel="noopener" hidden>
         <span class="cup" aria-hidden="true">☕</span><span><b>Buy me a coffee</b><small>$2 or more unlocks a random premium theme</small></span>
       </a>
+      <p class="about-line">Sliver is a free guess-the-song game. Hear a split-second clip and race your friends to name it, with any artist, your own Spotify playlist, or packs of top hits from all over the world.</p>
     </section>
 
     <!-- LOBBY -->
@@ -146,9 +157,14 @@
       </div>
 
       <div class="card host-only">
-        <div class="seg" role="tablist" aria-label="Game type">
+        <div class="seg seg-3" role="tablist" aria-label="Game type">
           <button class="seg-btn" id="seg-casual" role="tab">Casual</button>
+          <button class="seg-btn" id="seg-party" role="tab">Party</button>
           <button class="seg-btn" id="seg-ranked" role="tab">Ranked</button>
+        </div>
+        <div id="party-panel" class="party-intro" hidden>
+          <p><b>Everyone in one room?</b> Your screen plays the songs for the room (put it on a TV or speaker), and everyone guesses on their own phone.</p>
+          <p class="hint">Want more of the clip, or ready to give up? When 70% of the players still guessing vote for it, it happens.</p>
         </div>
         <div id="ranked-panel" hidden>
           <p class="hint ranked-intro">5 songs from one genre. Scores go on that genre's top 25 and raise your rating.</p>
@@ -177,7 +193,7 @@
         <p class="warn" id="ranked-warn" hidden></p>
         <button id="btn-start" class="btn primary big">Start game</button>
       </div>
-      <div class="card casual-only sr-card">
+      <div class="card casual-only no-party sr-card">
         <label class="check speedrun-opt"><input type="checkbox" id="set-speedrun" /> <span><b>⚡ Speedrun (just you)</b> Go at your own pace: move on as soon as you're done with a song, and only wait for the others at the very end.</span></label>
       </div>
       <div class="card guest-only waiting-card">
@@ -229,6 +245,9 @@
         <div class="jump-row" id="jump-row" role="group" aria-label="Play a set length"></div>
         <p class="hint small" id="heard-note"></p>
       </div>
+
+      <!-- Party mode: the host's screen plays the clip; phones guess and vote -->
+      <div class="card party-card" id="party-card" hidden></div>
 
       <div class="card" id="guess-card">
         <div class="card-head">
@@ -307,7 +326,7 @@
       <div class="seg set-tabs" role="tablist" aria-label="Settings sections">
         <button type="button" class="seg-btn on" role="tab" data-set-tab="sound" aria-selected="true">🔊 Sound</button>
         <button type="button" class="seg-btn" role="tab" data-set-tab="picture" aria-selected="false">🙂 Icon</button>
-        <button type="button" class="seg-btn" role="tab" data-set-tab="themes" aria-selected="false">🎨 Themes</button>
+        <button type="button" class="seg-btn" data-open-looks="mine">🎨 Themes</button>
         <button type="button" class="seg-btn" role="tab" data-set-tab="account" aria-selected="false">👤 Account</button>
       </div>
       <div class="set-panel" data-set-panel="sound" role="tabpanel">
@@ -331,63 +350,6 @@
         </div>
       </div>
       <div id="icon-grid" class="icon-grid" role="radiogroup" aria-labelledby="icon-title"></div>
-      </div>
-      <div class="set-panel" data-set-panel="themes" role="tabpanel" hidden>
-      <div class="mini-seg th-seg" role="tablist" aria-label="Theme sections">
-        <button type="button" class="mini-btn" data-th-tab="mine" aria-pressed="true">Mine</button>
-        <button type="button" class="mini-btn" data-th-tab="shop" aria-pressed="false">✨ Shop</button>
-        <button type="button" class="mini-btn" data-th-tab="make" aria-pressed="false">🎨 Create</button>
-      </div>
-      <div data-th-panel="mine">
-        <div class="th-bar">
-          <span class="hint" id="th-hint">Tap ☆ to favorite. Favorites stay on top.</span>
-          <button type="button" class="btn small ghost" id="th-arrange" aria-pressed="false">Arrange</button>
-        </div>
-        <div id="theme-grid" class="theme-grid" role="radiogroup" aria-label="Theme"></div>
-        <label class="check decor-toggle" id="decor-toggle-row"><input type="checkbox" id="decor-toggle" /> <span>Holiday decorations</span></label>
-        <div class="motion-row">
-          <div class="mini-seg" role="group" aria-label="Animations">
-            <span class="mini-label hl">Animations</span>
-            <button type="button" class="mini-btn" data-motion-pref="on">On</button>
-            <button type="button" class="mini-btn" data-motion-pref="off">Off</button>
-          </div>
-          <p class="hint small-left" id="motion-note"></p>
-        </div>
-      </div>
-      <div data-th-panel="shop" hidden>
-      <div class="shop" id="shop">
-        <h4>Premium themes <span class="price-tag" id="shop-price">$2.50 each</span></h4>
-        <p class="hint" id="shop-note">Animated backgrounds and extra effects. Tap one to preview it.</p>
-        <div id="shop-grid" class="theme-grid shop-grid"></div>
-        <div class="shop-detail" id="shop-detail" hidden></div>
-      </div>
-      </div>
-      <div data-th-panel="make" hidden>
-      <div class="custom-theme" id="custom-theme">
-        <h4>Make your own theme</h4>
-        <p class="hint">Pick a slot, give it a name, and choose your colors. Your themes are used from here.</p>
-        <div class="theme-grid slot-grid" role="tablist" aria-label="Theme slot" id="slot-seg"></div>
-        <div class="row ct-name-row">
-          <input id="ct-name" maxlength="24" placeholder="Slot 1" aria-label="Name this theme" autocomplete="off" />
-          <button type="button" id="ct-use" class="btn small primary-ish" hidden>Use this theme</button>
-        </div>
-        <div class="ct-colors">
-          <label class="ct-color"><input type="color" id="ct-page" /><span>Background</span></label>
-          <label class="ct-color"><input type="color" id="ct-card" /><span>Cards</span></label>
-          <label class="ct-color"><input type="color" id="ct-accent" /><span>Buttons</span></label>
-          <label class="ct-color"><input type="color" id="ct-pop" /><span>Highlights</span></label>
-        </div>
-        <p class="warn small" id="ct-warn" hidden></p>
-        <div class="ct-share">
-          <div class="ct-code-box"><div class="label">Share code</div><code id="ct-code">SLV-</code></div>
-          <button type="button" id="ct-copy" class="btn small">Copy code</button>
-        </div>
-        <form id="ct-import" class="row ct-import" autocomplete="off">
-          <input id="ct-import-code" placeholder="Paste a theme code" aria-label="Theme code" spellcheck="false" />
-          <button class="btn small" type="submit">Use code</button>
-        </form>
-      </div>
-      </div>
       </div>
       <div class="set-panel" data-set-panel="account" role="tabpanel" hidden>
       <h3>Account</h3>
@@ -413,6 +375,76 @@
       </a>
       </div>
       <button id="btn-settings-done" class="btn primary">Done</button>
+    </section>
+  </div>
+
+  <!-- THEMES (yours, the shop, make your own) -->
+  <div id="looks" class="sheet-backdrop" hidden>
+    <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="looks-title">
+      <div class="sheet-head">
+        <h2 id="looks-title">Themes</h2>
+        <button class="x" data-close aria-label="Close themes">×</button>
+      </div>
+      <div class="seg set-tabs th-tabs" role="tablist" aria-label="Themes sections">
+        <button type="button" class="seg-btn on" role="tab" data-th-tab="mine" aria-selected="true">🎨 Yours</button>
+        <button type="button" class="seg-btn" role="tab" data-th-tab="shop" aria-selected="false">✨ Shop</button>
+        <button type="button" class="seg-btn" role="tab" data-th-tab="make" aria-selected="false">🖌️ Make one</button>
+      </div>
+      <div data-th-panel="mine" role="tabpanel">
+        <div class="th-bar">
+          <span class="hint" id="th-hint">Tap a theme to wear it. ☆ keeps it on top.</span>
+          <button type="button" class="btn small ghost" id="th-arrange" aria-pressed="false">Arrange</button>
+        </div>
+        <div id="theme-grid" class="theme-grid" role="radiogroup" aria-label="Theme"></div>
+        <button type="button" class="th-nudge" data-th-go="shop"><span aria-hidden="true">✨</span><span><b>Want a moving background?</b><small>Premium themes animate and react when you tap. Try any of them free.</small></span><i aria-hidden="true">›</i></button>
+        <h4 class="th-sub">Look options</h4>
+        <label class="check decor-toggle" id="decor-toggle-row"><input type="checkbox" id="decor-toggle" /> <span>Holiday decorations</span></label>
+        <div class="motion-row">
+          <div class="mini-seg" role="group" aria-label="Animations">
+            <span class="mini-label hl">Animations</span>
+            <button type="button" class="mini-btn" data-motion-pref="on">On</button>
+            <button type="button" class="mini-btn" data-motion-pref="off">Off</button>
+          </div>
+          <p class="hint small-left" id="motion-note"></p>
+        </div>
+      </div>
+      <div data-th-panel="shop" role="tabpanel" hidden>
+      <div class="shop" id="shop">
+        <div class="shop-head"><h4>Premium themes</h4><span class="price-tag" id="shop-price">$2.50 each</span></div>
+        <p class="hint" id="shop-note">Animated backgrounds you can tap and play with. Hit <b>Try</b> to wear one for 12 seconds, free.</p>
+        <p class="shop-how" id="shop-how" hidden></p>
+        <ul id="shop-list" class="shop-list"></ul>
+        <a class="coffee-btn in-shop" id="coffee-shop" target="_blank" rel="noopener" hidden>
+          <span class="cup" aria-hidden="true">☕</span><span><b>Or buy me a coffee</b><small>$2 or more unlocks a random premium theme</small></span>
+        </a>
+      </div>
+      </div>
+      <div data-th-panel="make" role="tabpanel" hidden>
+      <div class="custom-theme" id="custom-theme">
+        <p class="hint ct-lead">Pick a slot, name it, and choose four colors. Tap <b>Use this theme</b> to wear it.</p>
+        <div class="theme-grid slot-grid" role="tablist" aria-label="Theme slot" id="slot-seg"></div>
+        <div class="row ct-name-row">
+          <input id="ct-name" maxlength="24" placeholder="Slot 1" aria-label="Name this theme" autocomplete="off" />
+          <button type="button" id="ct-use" class="btn small primary-ish" hidden>Use this theme</button>
+        </div>
+        <div class="ct-colors">
+          <label class="ct-color"><input type="color" id="ct-page" /><span>Background</span></label>
+          <label class="ct-color"><input type="color" id="ct-card" /><span>Cards</span></label>
+          <label class="ct-color"><input type="color" id="ct-accent" /><span>Buttons</span></label>
+          <label class="ct-color"><input type="color" id="ct-pop" /><span>Highlights</span></label>
+        </div>
+        <p class="warn small" id="ct-warn" hidden></p>
+        <div class="ct-share">
+          <div class="ct-code-box"><div class="label">Share code</div><code id="ct-code">SLV-</code></div>
+          <button type="button" id="ct-copy" class="btn small">Copy code</button>
+        </div>
+        <form id="ct-import" class="row ct-import" autocomplete="off">
+          <input id="ct-import-code" placeholder="Paste a theme code" aria-label="Theme code" spellcheck="false" />
+          <button class="btn small" type="submit">Use code</button>
+        </form>
+      </div>
+      </div>
+      <button class="btn primary th-done" data-close>Done</button>
     </section>
   </div>
 
@@ -512,6 +544,7 @@
 
   <div id="invite-pop" class="invite-pop" hidden role="alertdialog" aria-live="assertive"></div>
 
+  <div id="promo-bar" class="promo-bar" role="status" hidden></div>
   <div id="gotit" class="gotit" aria-live="polite"></div>
   <div id="toasts" class="toasts" aria-live="polite"></div>
   <div id="confetti" class="confetti" aria-hidden="true"></div>

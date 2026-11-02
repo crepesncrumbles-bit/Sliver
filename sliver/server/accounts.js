@@ -121,6 +121,7 @@ class Accounts {
     return {
       ...this.publicUser(u), email: u.email, hidden: !!int(u.hidden),
       themes: this.isAdmin(u) ? SHOP.allIds.slice() : owned.filter((t) => SHOP.allIds.includes(t)), admin: this.isAdmin(u),
+      promo: { games: int(u.promoGames), shown: int(u.promoShown) },
     };
   }
 
@@ -133,13 +134,20 @@ class Accounts {
 
   // Your own account settings: icon (one of ICONS, or '' for your initial) and
   // hidden (others can't see your stats, leaderboard name or account in rooms; friends still can).
-  async updateSettings(userId, { icon, hidden } = {}) {
+  async updateSettings(userId, { icon, hidden, promo } = {}) {
     const ops = [];
     if (icon !== undefined) {
       if (icon && !ICONS.includes(icon)) throw new AccountError('Pick one of the icons');
       ops.push(['HSET', K.user(userId), 'icon', icon || '']);
     }
     if (hidden !== undefined) ops.push(['HSET', K.user(userId), 'hidden', hidden ? 1 : 0]);
+    // Premium theme try-ons during your 1st, 5th and 9th game: games counted, try-ons shown.
+    // Only ever goes up, so two devices can't reset each other.
+    if (promo && typeof promo === 'object') {
+      const [g0, s0] = await this.store.cmd('HMGET', K.user(userId), 'promoGames', 'promoShown') || [];
+      const clamp = (v) => Math.max(0, Math.min(100000, Math.floor(Number(v) || 0)));
+      ops.push(['HSET', K.user(userId), 'promoGames', Math.max(int(g0), clamp(promo.games)), 'promoShown', Math.max(int(s0), clamp(promo.shown))]);
+    }
     if (ops.length) await this.store.pipeline(ops);
     const u = await this.getUser(userId);
     return { user: await this.selfUser(u) };

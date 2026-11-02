@@ -158,7 +158,7 @@ async function handleApi(req, res, p, url) {
       if (!me) return sendJson(res, 401, { ok: false, error: 'Log in first' });
       const body = await readBody(req, p === '/api/me/avatar' ? 100000 : 10000);
       let out;
-      if (p === '/api/me/settings') out = await accounts.updateSettings(me.id, { icon: body.icon, hidden: body.hidden });
+      if (p === '/api/me/settings') out = await accounts.updateSettings(me.id, { icon: body.icon, hidden: body.hidden, promo: body.promo });
       else if (p === '/api/me/avatar') {
         if (rateLimited(`avatar:${me.id}`)) return sendJson(res, 429, { ok: false, error: 'Too many uploads. Wait a few minutes.' });
         out = body.clear ? await accounts.clearAvatar(me.id) : await accounts.setAvatar(me.id, body.image);
@@ -766,6 +766,17 @@ io.on('connection', (socket) => {
   });
 
   socket.on('giveUp', () => room && player && room.giveUp(player.id));
+
+  // Party mode: vote for a longer clip ('more') or to give up on the song ('skip'); null takes it back.
+  socket.on('vote', ({ kind } = {}, ack) => {
+    if (!need(ack)) return;
+    try { ack && ack({ ok: true, ...room.vote(player.id, kind === 'more' || kind === 'skip' ? kind : null) }); } catch (err) { fail(ack, err); }
+  });
+  // Party mode: the host plays a longer clip right away (without waiting for votes).
+  socket.on('partyMore', (_, ack) => {
+    if (!hostOnly(ack)) return;
+    try { ack && ack({ ok: true, ...room.nextStage() }); } catch (err) { fail(ack, err); }
+  });
 
   // Speedrun: on to your next song.
   socket.on('srNext', async (_, ack) => {

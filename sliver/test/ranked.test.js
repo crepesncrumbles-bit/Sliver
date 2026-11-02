@@ -172,7 +172,7 @@ const io = { to: (to) => ({ emit: (e, d) => events.push({ to, e, d }) }) };
       const ra = room.guess(a1.id, ans);
       const rb = room.guess(b1.id, ans);
       check(ra.points === pointsForLength(1) + FIRST_BONUS && ra.bonus === FIRST_BONUS, 'first correct guess gets +500');
-      check(rb.points === pointsForLength(0.1) && !rb.bonus, 'second correct guess doesn\'t');
+      check(rb.points === pointsForLength(0.1) + 400 && rb.bonus === 400 && rb.place === 2, 'second correct guess gets +400');
       const ev = events.filter((x) => x.e === 'gotIt').slice(-2);
       check(ev[0].d.first === true && ev[1].d.first === false, 'the pop-up says who was first');
       check(room.reveal.results.find((x) => x.id === a1.id).bonus === 500, 'reveal shows the bonus');

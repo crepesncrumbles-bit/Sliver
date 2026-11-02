@@ -19,8 +19,13 @@ const GUESS_CLIP = 15; // longest clip you can play while guessing (fixed)
 const LISTEN_AFTER = 30; // how much of the song plays after you guess / at the reveal (fixed)
 const RANKED_ROUND_TIME = 90; // ranked: seconds per song (fixed)
 const WRONG_PENALTY = 500;
-const FIRST_BONUS = 500; // multiplayer: first person to get each song
+// Multiplayer: bonus by the order people get each song (1st +500, 2nd +400 … 5th +100, then none).
+const PLACE_BONUS = [500, 400, 300, 200, 100];
+const FIRST_BONUS = PLACE_BONUS[0];
 const RANKED_ROUNDS = 5;
+// Party mode: the host's screen plays the clip for the room, in steps. Players vote for more or to give up.
+const PARTY_STAGES = [0.5, 1, 3, 5, 10, 15];
+const PARTY_VOTE = 0.7; // share of the players still guessing who have to agree
 
 // Modifiers. Hard 1.5×, Chaos 1.25×, both together 2×.
 const MODES = {
@@ -77,7 +82,7 @@ class Room {
     this.settings = {
       rounds: 5, roundTime: 0, maxGuesses: 0, hard: false, chaos: false,
       listenLen: LISTEN_AFTER, maxLen: GUESS_CLIP, ranked: false, rankedPack: null,
-      hostOnlySongs: false,
+      hostOnlySongs: false, party: false,
     };
     this.showCode = false; // host chooses whether the room code is shown to everyone
     this.game = null; // frozen copy of the settings while a game runs
@@ -364,6 +369,9 @@ class Room {
       st.hard = s.mode === 'hard'; st.chaos = s.mode === 'chaos';
     }
     if (typeof s.ranked === 'boolean') st.ranked = s.ranked;
+    if (typeof s.party === 'boolean') st.party = s.party;
+    if (s.ranked === true) st.party = false; // party is a casual game
+    else if (s.party === true) st.ranked = false;
     if (st.ranked !== before) { this.usedTrackKeys.clear(); this.poolVersion++; }
     this.broadcast();
     return st;
@@ -424,6 +432,10 @@ class Room {
     const pool = ranked ? this.rankedPool.tracks : this.pool;
     if (pool.length < 2) throw new Error(ranked ? 'That genre didn\'t load enough songs. Try another.' : 'Add a playlist with at least 2 songs first');
     if (this.phase !== 'lobby' && this.phase !== 'results') throw new Error('Game already running');
+    const party = !ranked && !!st.party;
+    if (party && ![...this.players.values()].some((p) => p.connected && p.id !== this.hostId)) {
+      throw new Error('Party mode needs friends to guess. Send them the invite link, or switch to Casual.');
+    }
     for (const p of this.players.values()) p.score = 0;
     this.roundNum = 0;
     this.usedTrackKeys.clear();
@@ -431,6 +443,7 @@ class Room {
     this.game = {
       id: this.gameId,
       ranked,
+      party,
       packId: ranked ? st.rankedPack : null,
       pool,
       hard: st.hard,
@@ -446,7 +459,7 @@ class Room {
     // Speedrun is each player's own choice. Everyone who picked it runs through the songs at their
     // own pace; the rest play together as usual. Same songs for everyone either way.
     const present = [...this.players.values()].filter((p) => p.connected);
-    const runners = ranked ? [] : present.filter((p) => p.wantSr);
+    const runners = ranked || party ? [] : present.filter((p) => p.wantSr); // party: the room moves together
     this.game.srIds = new Set(runners.map((p) => p.id));
     this.game.speedrun = !!runners.length && runners.length === present.length; // everyone's speedrunning
     this.game.mixed = !!runners.length && !this.game.speedrun;
@@ -510,9 +523,11 @@ class Room {
       ...this.roundTwist(), // { mode, hard, chaos, twist, offset, typed, mult }
       maxLen: game.maxLen,
       firstId: null,
+      solved: 0, // how many have got it (for the 500/400/300… bonus)
       startedAt: Date.now(),
       endsAt: roundTimeMs ? Date.now() + roundTimeMs : null,
       results: new Map(), // playerId -> { status, guesses:[], maxHeard, points }
+      ...(game.party ? { stage: 0, votes: new Map() } : {}), // party: clip step, and playerId -> 'more' | 'skip'
     };
     this.lookUpPlays(track, this.roundNum, gid);
     this.phase = 'round';
@@ -581,7 +596,7 @@ class Room {
         if (this.opts.onStat) this.opts.onStat('songs');
         const r = {
           num: i + 1, nonce: id(10), track, clip, ...this.roundTwist(), maxLen: game.maxLen,
-          firstId: null, startedAt: Date.now(), endsAt: null, results: new Map(),
+          firstId: null, solved: 0, startedAt: Date.now(), endsAt: null, results: new Map(),
         };
         game.srLoaded = game.srLoaded || [];
         game.srLoaded[i] = r;
@@ -599,8 +614,75 @@ class Room {
 
   // Can this player guess right now? Speedrunners play whenever they're mid-run.
   canPlay(p) {
+    if (this.isPresenter(p)) return false; // party: the host's screen plays the songs, it doesn't guess
     if (this.isSr(p)) return ['loading', 'round', 'reveal'].includes(this.phase) && !p.srDone;
     return this.phase === 'round' && !!this.round;
+  }
+
+  // ---------- party mode ----------
+  // The host's device is the room's screen and speaker: it plays the clip, everyone else guesses on
+  // their phone. The clip grows in steps (PARTY_STAGES); the players still guessing vote to hear
+  // more or to give up, and it happens once 70% of them agree.
+  isParty() { return !!(this.game && this.game.party); }
+  isPresenter(p) { return !!(p && this.isParty() && p.id === this.hostId); }
+  // Everyone who plays along in this room (party: not the host's screen).
+  guessers() { return [...this.players.values()].filter((p) => !this.isPresenter(p)); }
+  stageLen(round = this.round) { return PARTY_STAGES[Math.min(PARTY_STAGES.length - 1, (round && round.stage) || 0)]; }
+
+  // The players who can still vote: here, guessing, and not done with this song.
+  voters() {
+    if (!this.isParty() || this.phase !== 'round' || !this.round) return [];
+    return this.guessers().filter((p) => p.connected && this.resultFor(p.id).status === 'playing');
+  }
+
+  tally() {
+    const round = this.round;
+    const voters = this.voters();
+    const ids = new Set(voters.map((p) => p.id));
+    let more = 0, skip = 0;
+    if (round && round.votes) for (const [pid, v] of round.votes) { if (!ids.has(pid)) continue; if (v === 'more') more++; else if (v === 'skip') skip++; }
+    const need = voters.length ? Math.max(1, Math.ceil(voters.length * PARTY_VOTE - 1e-9)) : 0;
+    return { more, skip, voters: voters.length, need, last: !round || round.stage >= PARTY_STAGES.length - 1 };
+  }
+
+  // kind: 'more' (play a longer clip), 'skip' (give up on this song) or null (take your vote back).
+  vote(playerId, kind) {
+    const p = this.players.get(playerId);
+    if (!this.isParty() || this.phase !== 'round' || !this.round) throw new Error('Votes are for party mode songs');
+    if (this.isPresenter(p)) throw new Error('The host\'s screen doesn\'t vote');
+    if (this.resultFor(playerId).status !== 'playing') throw new Error('You\'re done with this song');
+    if (kind === 'more' && this.round.stage >= PARTY_STAGES.length - 1) throw new Error('That\'s the whole clip already');
+    const votes = this.round.votes;
+    if (!kind || votes.get(playerId) === kind) votes.delete(playerId);
+    else votes.set(playerId, kind === 'skip' ? 'skip' : 'more');
+    if (!this.checkVotes()) this.broadcast();
+    return { vote: votes.get(playerId) || null };
+  }
+
+  // Acts on the votes once enough people agree. Returns true if something happened (and was broadcast).
+  checkVotes() {
+    if (!this.isParty() || this.phase !== 'round' || !this.round) return false;
+    const t = this.tally();
+    if (!t.voters) return false;
+    if (t.skip >= t.need) {
+      for (const p of this.voters()) this.resultFor(p.id).status = 'gave-up';
+      this.io.to(this.code).emit('toast', { kind: 'info', text: 'The room voted to give up on this one' });
+      this.endRound();
+      return true;
+    }
+    if (t.more >= t.need && !t.last) { this.nextStage(); return true; }
+    return false;
+  }
+
+  // Longer clip for everyone (votes, or the host). Votes for "more" start over at each step.
+  nextStage() {
+    const round = this.round;
+    if (!this.isParty() || this.phase !== 'round' || !round) throw new Error('No party song is playing');
+    if (round.stage >= PARTY_STAGES.length - 1) throw new Error('That\'s the whole clip already');
+    round.stage++;
+    for (const [pid, v] of round.votes) if (v === 'more') round.votes.delete(pid);
+    this.broadcast();
+    return { stage: round.stage, len: this.stageLen(round) };
   }
 
   srCurrent(p) {
@@ -780,6 +862,7 @@ class Room {
   }
 
   reportListen(playerId, seconds) {
+    if (this.isParty()) return; // party: what you've heard is the room's clip step
     if (!this.canPlay(this.players.get(playerId))) return;
     const r = this.resultFor(playerId);
     if (r.status !== 'playing') return;
@@ -821,32 +904,41 @@ class Room {
     const round = this.roundOf(playerId);
     r.guesses.push(entry);
     const max = this.game ? this.game.maxGuesses : this.settings.maxGuesses;
+    if (this.isParty()) r.maxHeard = Math.max(r.maxHeard, this.stageLen(round)); // the room's clip so far
     if (entry.correct) {
       r.status = 'correct';
       const wrong = r.guesses.length - 1;
       const base = pointsForLength(r.maxHeard) - wrong * WRONG_PENALTY;
       r.points = Math.max(0, Math.round(base * (round.mult || 1)));
-      // Multiplayer bonus: first to get the song. Not in ranked (scores there are compared
-      // across all games, so they can't depend on who else was in the room).
-      if (!round.firstId && this.players.size >= 2 && !(this.game && this.game.ranked)) {
-        round.firstId = playerId;
-        r.bonus = FIRST_BONUS;
-        r.points += FIRST_BONUS;
+      // Multiplayer bonus by the order people get it: 1st +500, 2nd +400 … 5th +100. Not in ranked
+      // (scores there are compared across all games, so they can't depend on who else was in the room).
+      const place = round.solved || 0;
+      round.solved = place + 1;
+      if (this.guessers().length >= 2 && !(this.game && this.game.ranked)) {
+        r.place = place + 1;
+        if (!round.firstId) round.firstId = playerId;
+        r.bonus = PLACE_BONUS[place] || 0;
+        r.points += r.bonus;
       }
       const p = this.players.get(playerId);
       if (p) {
         p.score += r.points;
-        this.io.to(this.code).emit('gotIt', { playerId, name: p.name, icon: p.icon || '', avatar: p.avatar || '', points: r.points, heard: r.maxHeard, first: !!r.bonus, num: round.num });
+        this.io.to(this.code).emit('gotIt', { playerId, name: p.name, icon: p.icon || '', avatar: p.avatar || '', points: r.points, heard: r.maxHeard, first: r.place === 1, place: r.place || 0, num: round.num });
       }
     } else if (max && r.guesses.length >= max) {
       r.status = 'out';
     }
+    if (r.status !== 'playing' && round.votes) round.votes.delete(playerId); // done: no more votes from you
     this.maybeEndRound();
     this.broadcast();
-    return { correct: entry.correct, points: r.points, bonus: r.bonus || 0, guessesLeft: max ? max - r.guesses.length : null };
+    return { correct: entry.correct, points: r.points, bonus: r.bonus || 0, place: r.place || 0, guessesLeft: max ? max - r.guesses.length : null };
   }
 
   giveUp(playerId) {
+    if (this.isParty()) { // party: giving up is a vote, so the room decides together
+      try { this.vote(playerId, 'skip'); } catch { /* not playing this song */ }
+      return;
+    }
     if (!this.canPlay(this.players.get(playerId))) return;
     const r = this.resultFor(playerId);
     if (r.status === 'playing') r.status = 'gave-up';
@@ -858,8 +950,9 @@ class Room {
     if (this.game && this.game.speedrun) return this.srMaybeFinish(); // each player moves on by themselves
     if (this.game && this.game.mixed && this.groupDone) return this.srMaybeFinish();
     if (this.phase !== 'round' || !this.round) return;
-    const active = [...this.players.values()].filter((p) => p.connected && !this.isSr(p));
-    if (active.length && active.every((p) => this.resultFor(p.id).status !== 'playing')) this.endRound();
+    const active = [...this.players.values()].filter((p) => p.connected && !this.isSr(p) && !this.isPresenter(p));
+    if (active.length && active.every((p) => this.resultFor(p.id).status !== 'playing')) return this.endRound();
+    this.checkVotes(); // party: fewer people still guessing can tip a vote over 70%
   }
 
   endRound() {
@@ -869,7 +962,7 @@ class Room {
     if (!this.round) return;
     clearTimeout(this.timers.round);
     clearTimeout(this.timers.reveal);
-    const group = [...this.players.values()].filter((p) => !this.isSr(p));
+    const group = [...this.players.values()].filter((p) => !this.isSr(p) && !this.isPresenter(p));
     for (const p of group) {
       const r = this.resultFor(p.id);
       if (r.status === 'playing') r.status = 'timeout';
@@ -893,7 +986,7 @@ class Room {
       listenLen: game.listenLen,
       results: group.map((p) => {
         const r = this.resultFor(p.id);
-        return { id: p.id, name: p.name, icon: p.icon || '', avatar: p.avatar || '', status: r.status, points: r.points, bonus: r.bonus || 0, guesses: r.guesses.length, heard: r.maxHeard };
+        return { id: p.id, name: p.name, icon: p.icon || '', avatar: p.avatar || '', status: r.status, points: r.points, bonus: r.bonus || 0, place: r.place || 0, guesses: r.guesses.length, heard: r.maxHeard };
       }).sort((a, b) => b.points - a.points),
       autoNextAt: Date.now() + waitMs,
       last: this.roundNum >= game.rounds,
@@ -901,7 +994,7 @@ class Room {
     if (!game.mixed) game.history.push({ // mixed games add everyone's results up at the very end
       title: t.title,
       artist: t.artist,
-      results: new Map([...this.players.values()].map((p) => {
+      results: new Map([...this.players.values()].filter((p) => !this.isPresenter(p)).map((p) => {
         const r = this.resultFor(p.id);
         return [p.id, { status: r.status, points: r.points, heard: r.maxHeard, guesses: r.guesses.length }];
       })),
@@ -916,7 +1009,9 @@ class Room {
     this.phase = 'results';
     this.round = null;
     const game = this.game;
-    this.lastGame = game ? { ranked: game.ranked, packId: game.packId, hard: game.hard, chaos: game.chaos, speedrun: !!game.speedrun, songs: game.srSongs || null } : null;
+    // Party: the host's screen didn't play, so it isn't on the podium.
+    const watchers = game && game.party ? [...this.players.values()].filter((p) => !game.history.some((h) => h.results.has(p.id))).map((p) => p.id) : [];
+    this.lastGame = game ? { ranked: game.ranked, party: !!game.party, watchers, packId: game.packId, hard: game.hard, chaos: game.chaos, speedrun: !!game.speedrun, songs: game.srSongs || null } : null;
     this.game = null;
     this.poolVersion++;
     this.broadcast();
@@ -1016,7 +1111,7 @@ class Room {
       hostId: this.hostId,
       meId: forPlayerId,
       settings: this.settings,
-      game: g ? { ranked: g.ranked, packId: g.packId, hard: g.hard, chaos: g.chaos, speedrun: this.isSr(me), rounds: g.rounds, listenLen: g.listenLen, maxLen: g.maxLen } : null,
+      game: g ? { id: g.id, ranked: g.ranked, party: !!g.party, presenter: this.isPresenter(me), packId: g.packId, hard: g.hard, chaos: g.chaos, speedrun: this.isSr(me), rounds: g.rounds, listenLen: g.listenLen, maxLen: g.maxLen } : null,
       lastGame: this.phase === 'results' ? this.lastGame || null : null,
       sources: this.sources.map(({ key, name, by, byId, packId, count }) => ({ key, name, by, byId, packId, count })),
       packs: packs.publicPacks(),
@@ -1037,7 +1132,9 @@ class Room {
           loggedIn: !!p.userId,
           userId: p.hidden && !(me && me.isAdmin) ? null : p.userId || null,
           hiddenAcct: !!(p.hidden && me && me.isAdmin),
-          roundStatus: (this.isSr(p) ? !p.srDone && this.srCurrent(p) : this.phase === 'round' && this.round) ? this.resultFor(p.id).status : null,
+          roundStatus: this.isPresenter(p) ? null : (this.isSr(p) ? !p.srDone && this.srCurrent(p) : this.phase === 'round' && this.round) ? this.resultFor(p.id).status : null,
+          presenter: this.isPresenter(p),
+          vote: this.isParty() && this.phase === 'round' && this.round && this.round.votes ? this.round.votes.get(p.id) || null : null,
           progress: this.isSr(p) && this.phase !== 'results' ? (p.srDone ? g.rounds : p.srIdx) : null,
           finished: !!(this.isSr(p) ? p.srDone : g && g.mixed && this.groupDone),
           speedrun: this.isSr(p),
@@ -1079,8 +1176,17 @@ class Room {
         mult: R.mult,
         clipUrl: `/api/clip/${this.code}/${R.nonce}`,
         endsAt: sr ? me.srEndsAt || null : R.endsAt,
-        my: { status: r.status, guesses: r.guesses, maxHeard: r.maxHeard, points: r.points, bonus: r.bonus || 0 },
+        my: { status: r.status, guesses: r.guesses, maxHeard: r.maxHeard, points: r.points, bonus: r.bonus || 0, place: r.place || 0 },
       };
+      if (this.isParty() && R.votes) {
+        const t = this.tally();
+        state.round.party = {
+          presenter: this.isPresenter(me),
+          stage: R.stage, stages: PARTY_STAGES, len: this.stageLen(R),
+          more: t.more, skip: t.skip, voters: t.voters, need: t.need, last: t.last,
+          myVote: R.votes.get(me.id) || null,
+        };
+      }
     }
     return state;
   }
@@ -1163,4 +1269,4 @@ function titleMatches(guess, track) {
   return false;
 }
 
-module.exports = { cleanAvatar, RoomManager, pointsForLength, titleMatches, multFor, MODES, MIN_LEN, MAX_LEN, GUESS_CLIP, LISTEN_AFTER, RANKED_ROUND_TIME, FIRST_BONUS, RANKED_ROUNDS };
+module.exports = { cleanAvatar, RoomManager, pointsForLength, titleMatches, multFor, MODES, MIN_LEN, MAX_LEN, GUESS_CLIP, LISTEN_AFTER, RANKED_ROUND_TIME, FIRST_BONUS, PLACE_BONUS, PARTY_STAGES, PARTY_VOTE, RANKED_ROUNDS };

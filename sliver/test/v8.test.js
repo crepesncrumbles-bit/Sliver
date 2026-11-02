@@ -31,7 +31,7 @@ const io = { to: (to) => ({ emit: (e, d) => events.push({ to, e, d }) }) };
   check(sa2.round.num === 2 && sb2.round.num === 1 && sa2.round.my.status === 'playing', 'Ash moves to song 2 while Bo is still on song 1');
   check(sa2.players.find((p) => p.id === a.id).progress === 1, 'progress shown to others');
   const rb = room.guess(b.id, ans(b.id));
-  check(rb.correct && !rb.bonus, 'Bo gets song 1 second (no bonus)');
+  check(rb.correct && rb.bonus === 400 && rb.place === 2, 'Bo gets song 1 second (+400)');
   // Ash finishes everything
   room.giveUp(a.id); await room.srNext(a.id);
   room.guess(a.id, ans(a.id)); await room.srNext(a.id);

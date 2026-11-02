@@ -358,6 +358,8 @@
     THEMES, available, inSeason, seasonEnds, apply, current, encode, decode, buildCustom, contrast, easterSunday,
     DEFAULT_CUSTOM, SLOTS, slots, slotTheme, slotName, renameSlot,
     saved,
+    // The theme you've picked (not a preview that's showing right now).
+    currentTheme: () => resolve(saved()),
     premium: () => THEMES.filter((t) => t.premium),
     owns,
     setOwned(list) {

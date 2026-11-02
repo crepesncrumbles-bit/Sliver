@@ -975,3 +975,135 @@ html:has(body.ui-hidden), body.ui-hidden { touch-action: none; overflow: hidden;
 .top-auth:hover { filter: brightness(1.05); }
 .top-auth.ghosty { background: transparent; color: var(--on-page); border-color: color-mix(in srgb, var(--on-page) 32%, transparent); box-shadow: none; }
 @media (max-width: 380px) { .top-auth.ghosty { display: none; } }
+
+/* ---------- your picture, top right (logged in): a menu with Settings, Themes, Shop, Log out ---------- */
+#app > .topbar { position: relative; z-index: 45; } /* the menu opens over the cards */
+.me-wrap { position: relative; }
+.me-btn { display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border-radius: 50%; cursor: pointer;
+  background: color-mix(in srgb, var(--on-page) 14%, transparent); border: 2px solid color-mix(in srgb, var(--on-page) 40%, transparent); transition: border-color .15s, transform .1s; }
+.me-btn:hover, .me-btn[aria-expanded="true"] { border-color: var(--pop); }
+.me-btn:active { transform: scale(.95); }
+.me-av { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; overflow: hidden; background: var(--pop); color: var(--pop-ink); font-family: var(--display); font-weight: 800; font-size: 15px; }
+.me-av.emoji { background: var(--surface); font-size: 18px; }
+.me-av img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.me-menu { position: absolute; right: 0; top: calc(100% + 8px); z-index: 60; min-width: 196px; padding: 6px; border-radius: 16px;
+  background: var(--paper); color: var(--ink); border: 2px solid var(--stroke); box-shadow: 0 5px 0 var(--stroke), 0 16px 40px rgba(0,0,0,.25);
+  transform-origin: top right; animation: me-pop .14s ease-out; }
+@keyframes me-pop { from { opacity: 0; transform: scale(.94) translateY(-4px); } to { opacity: 1; transform: none; } }
+.me-head { display: flex; align-items: baseline; gap: 6px; padding: 8px 10px 10px; margin-bottom: 4px; border-bottom: 2px dashed var(--line); }
+.me-head b { font-family: var(--display); font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
+.me-head small { color: var(--ink-2); font-weight: 600; font-size: 13px; }
+.me-menu [role="menuitem"] { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px; border: 0; border-radius: 10px; background: transparent; color: var(--ink); font: inherit; font-weight: 700; font-size: 15px; text-align: left; cursor: pointer; }
+.me-menu [role="menuitem"]:hover, .me-menu [role="menuitem"]:focus-visible { background: var(--paper-2); outline: none; }
+.me-menu .mi { width: 22px; text-align: center; }
+.me-menu .me-out { margin-top: 4px; border-top: 2px dashed var(--line); border-radius: 0 0 10px 10px; color: var(--bad-ink); }
+:root[data-motion="reduce"] .me-menu { animation: none; }
+
+/* ---------- home: Themes and Shop tiles ---------- */
+.looks-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.look-tile { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; border: 2px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; text-align: left; cursor: pointer; transition: border-color .12s, transform .1s; }
+.look-tile:hover { border-color: var(--brand); }
+.look-tile:active { transform: translateY(2px); }
+.look-tile b { display: block; font-family: var(--display); font-size: 16px; line-height: 1.2; white-space: nowrap; }
+.look-tile small { display: block; font-size: 12px; color: var(--ink-2); font-weight: 600; }
+.look-tile.shop-tile { background: linear-gradient(135deg, color-mix(in srgb, var(--pop) 26%, var(--surface)), var(--surface)); }
+.lt-sw { flex: none; width: 38px; height: 38px; border-radius: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 6px; box-shadow: inset 0 0 0 2px rgba(0,0,0,.08); }
+.lt-sw i { border-radius: 4px; }
+.lt-sw i:first-child { grid-column: 1 / 3; }
+
+/* ---------- Themes sheet ---------- */
+.seg.th-tabs { grid-template-columns: repeat(3, 1fr); margin: 14px 0 12px; }
+.th-nudge { display: flex; align-items: center; gap: 12px; width: 100%; margin: 4px 0 16px; padding: 12px 14px; border-radius: 14px; border: 2px dashed color-mix(in srgb, var(--accent) 55%, var(--line)); background: color-mix(in srgb, var(--pop) 14%, var(--paper)); color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.th-nudge:hover { border-style: solid; }
+.th-nudge > span:first-child { font-size: 22px; }
+.th-nudge b { display: block; font-family: var(--display); font-size: 15px; }
+.th-nudge small { display: block; font-size: 13px; color: var(--ink-2); }
+.th-nudge i { margin-left: auto; font-style: normal; font-size: 24px; color: var(--ink-2); }
+.th-sub { margin: 0 0 8px; font-family: var(--display); font-size: 15px; }
+.decor-toggle { margin-bottom: 10px; }
+.th-done { margin-top: 18px; }
+.ct-lead { margin-top: 0 !important; }
+
+/* shop: one row per theme, Try and Buy right there */
+.shop-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.shop-head h4 { margin: 0; font-family: var(--display); font-size: 17px; }
+.shop-how { margin: 0 0 12px; padding: 8px 12px; border-radius: 10px; background: var(--surface); font-size: 13px; color: var(--ink-2); line-height: 1.45; }
+.shop-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.shop-row { display: flex; gap: 12px; align-items: flex-start; padding: 10px; border-radius: 14px; background: var(--surface); border: 2px solid var(--line); }
+.shop-row.wearing { border-color: var(--stroke); box-shadow: 0 3px 0 var(--stroke); }
+.shop-sw { flex: none; width: 92px; height: 74px; border-radius: 10px; display: block; position: relative; overflow: hidden; }
+.shop-sw .sw-card { position: absolute; left: 10px; right: 10px; top: 14px; bottom: -6px; border-radius: 7px; }
+.shop-sw .sw-disc { position: absolute; left: 18px; top: 24px; width: 20px; height: 20px; border-radius: 50%; }
+.shop-sw .sw-bar { position: absolute; left: 46px; right: 16px; height: 6px; border-radius: 3px; }
+.shop-info { flex: 1; min-width: 0; }
+.shop-info > b { display: block; font-family: var(--display); font-size: 16px; line-height: 1.2; }
+.shop-info > small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin: 3px 0 8px; font-size: 13px; color: var(--ink-2); line-height: 1.35; }
+.shop-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.shop-actions a.btn { text-decoration: none; }
+.shop-tag { font-style: normal; font-family: var(--body); font-size: 11px; font-weight: 800; padding: 2px 7px; border-radius: 99px; background: var(--inverse); color: var(--inverse-ink); vertical-align: 2px; }
+.shop-tag.yours { background: var(--good-bg); color: var(--mint-ink); }
+.shop-on { font-weight: 800; font-size: 14px; color: var(--mint-ink); }
+.shop-info .invite-box { margin-top: 10px; }
+.coffee-btn.in-shop { margin-top: 14px; }
+@media (max-width: 380px) { .shop-sw { width: 70px; height: 64px; } }
+
+/* ---------- game type: Casual / Party / Ranked ---------- */
+.seg.seg-3 { grid-template-columns: repeat(3, 1fr); }
+#seg-party::before { content: "🎉 "; }
+.party-intro { margin: -4px 0 16px; padding: 12px 14px; border-radius: 14px; background: color-mix(in srgb, var(--pop) 18%, var(--paper-2)); }
+.party-intro p { margin: 0; font-size: 14px; line-height: 1.45; }
+.party-intro .hint { margin: 6px 0 0; font-size: 13px; }
+
+/* ---------- party mode in a round ---------- */
+.party-card { display: flex; flex-direction: column; gap: 12px; }
+.pc-head { display: flex; align-items: center; gap: 12px; }
+.pc-ic { font-size: 26px; flex: none; }
+.pc-head b { display: block; font-family: var(--display); font-size: 18px; line-height: 1.2; }
+.pc-head small { display: block; font-size: 14px; color: var(--ink-2); }
+.pc-head small b { display: inline; font-family: var(--body); font-size: inherit; color: var(--accent-strong); }
+.pc-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.pc-steps li { text-align: center; padding: 7px 0; border-radius: 9px; background: var(--paper-2); color: var(--ink-2); font-weight: 800; font-size: 13px; font-variant-numeric: tabular-nums; }
+.pc-steps li.past { background: color-mix(in srgb, var(--accent) 22%, var(--paper-2)); color: var(--ink); }
+.pc-steps li.now { background: var(--accent); color: var(--accent-ink); box-shadow: 0 2px 0 var(--stroke); }
+.pc-votes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.vote-btn { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 14px 8px; border-radius: 14px; border: 2px solid var(--stroke); background: var(--surface); color: var(--ink); box-shadow: 0 3px 0 var(--stroke); font: inherit; cursor: pointer; transition: transform .06s, box-shadow .06s; }
+.vote-btn b { font-family: var(--display); font-size: 17px; }
+.vote-btn small { font-size: 12px; font-weight: 700; color: var(--ink-2); }
+.vote-btn:active { transform: translateY(3px); box-shadow: none; }
+.vote-btn.on { background: var(--pop); color: var(--pop-ink); }
+.vote-btn.on small { color: var(--pop-ink); }
+.vote-btn.skip.on { background: var(--bad-bg); color: var(--bad-ink); }
+.vote-btn:disabled { opacity: .45; cursor: default; transform: none; box-shadow: 0 3px 0 var(--stroke); }
+.pc-note { margin: 0; font-size: 13px; color: var(--ink-2); text-align: center; }
+.pc-tally { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pc-tally span { padding: 10px; border-radius: 12px; background: var(--paper-2); font-size: 14px; text-align: center; color: var(--ink-2); }
+.pc-tally span.hot { background: color-mix(in srgb, var(--pop) 40%, var(--paper-2)); color: var(--ink); }
+.pc-tally b { font-family: var(--display); font-size: 18px; color: var(--ink); }
+.party-card [data-party-more] { align-self: center; }
+.vote-mark { font-size: 12px; margin-left: 2px; }
+/* the room's screen (host): play button and clip length, no slider; no guessing */
+body.party-screen #screen-round .scrubber, body.party-screen #screen-round .plus-row, body.party-screen #screen-round .jump-row,
+body.party-screen #heard-note, body.party-screen #guess-card, body.party-screen #done-card { display: none !important; }
+body.party-screen #screen-round .len { font-size: 64px; }
+/* phones: no audio here, so no play button; giving up is a vote */
+body.party:not(.party-screen) #screen-round .stage, body.party #btn-giveup { display: none !important; }
+body.party:not(.party-screen) #screen-reveal .listen-card { display: none !important; }
+
+/* places 1st–5th */
+.first-tag.p2 { background: #D9DEE8; color: #2B3240; }
+.first-tag.p3 { background: #E8C29A; color: #4A2E12; }
+.first-tag.p4, .first-tag.p5 { background: var(--paper-2); color: var(--ink-2); }
+
+/* ---------- try-on bar (a premium theme for 12 s, mid-game) ---------- */
+.promo-bar { position: fixed; left: 50%; top: max(10px, env(safe-area-inset-top)); transform: translateX(-50%); z-index: 85; width: min(94vw, 460px);
+  display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 14px; border-radius: 16px;
+  background: var(--paper); color: var(--ink); border: 2px solid var(--stroke); box-shadow: 0 5px 0 var(--stroke), 0 12px 34px rgba(0,0,0,.3); }
+.promo-bar.in { animation: ab-in .35s cubic-bezier(.2,1.4,.4,1); }
+.promo-bar .pb-spark { font-size: 22px; }
+.promo-bar .pb-text { flex: 1; min-width: 0; }
+.promo-bar .pb-text b { display: block; font-family: var(--display); font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.promo-bar .pb-text small { display: block; font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.promo-bar .pb-x { flex: none; width: 30px; height: 30px; border: 0; border-radius: 9px; background: transparent; color: var(--ink-2); font-size: 20px; cursor: pointer; }
+.promo-bar .pb-x:hover { background: var(--paper-2); }
+:root[data-motion="reduce"] .promo-bar.in { animation: none; }
+body.ui-hidden .promo-bar { visibility: hidden; }
