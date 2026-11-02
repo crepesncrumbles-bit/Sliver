@@ -6,8 +6,15 @@ const { normText } = require('./text');
 const itunes = require('./itunes');
 const MAX_TRACKS = 500; // most songs one playlist can add
 
+const BROWSER_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36',
+  'Accept': 'application/json,text/plain,*/*',
+  'Accept-Language': 'en-US,en;q=0.9',
+};
 async function getJson(url) {
-  const res = await fetch(url, { headers: { 'User-Agent': 'Sliver/1.0' } });
+  let res = await fetch(url, { headers: { 'User-Agent': 'Sliver/1.0' } });
+  // Deezer sometimes turns away non-browser clients: ask again like a browser would.
+  if (res.status === 403) res = await fetch(url, { headers: BROWSER_HEADERS });
   if (!res.ok) throw new Error(`Deezer returned HTTP ${res.status}`);
   const data = await res.json();
   if (data && data.error) {
