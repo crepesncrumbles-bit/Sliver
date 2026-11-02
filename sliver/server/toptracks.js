@@ -124,7 +124,7 @@ async function spotifyRanking(id) {
     if (!prev || plays > prev.plays) found.set(key, spotifyTrack(t, cover));
   };
   for (const x of (disco.topTracks && disco.topTracks.items) || []) add(x.track);
-  // Releases: popular ones first, then albums and singles, up to 14 in all.
+  // Releases: popular ones first, then albums and singles, up to 24 in all.
   const uris = [];
   const pushUris = (o) => (function walk(v) {
     if (!v || typeof v !== 'object') return;
@@ -135,7 +135,7 @@ async function spotifyRanking(id) {
   pushUris(disco.popularReleasesAlbums);
   pushUris(disco.albums);
   pushUris(disco.singles);
-  const pick = uris.slice(0, 14);
+  const pick = uris.slice(0, 24);
   for (let i = 0; i < pick.length; i += 4) {
     const lists = await Promise.all(pick.slice(i, i + 4).map(spotifyAlbumTracks));
     for (const list of lists) for (const { t, cover } of list) add(t, cover);
