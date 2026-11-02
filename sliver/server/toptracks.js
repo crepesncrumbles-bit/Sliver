@@ -35,6 +35,17 @@ const songKey = (title) => normText(String(title || '')
   .replace(/\s+-\s+.*$/, '')
   .replace(/\s*[([][^)\]]*(version|remaster|edit|mix)[^)\]]*[)\]]/gi, '')).replace(/ /g, '');
 const squash = (s) => normText(s).replace(/ /g, '');
+// A rough "consonant skeleton" so different spellings of the same title match:
+// "Tamally Maak" / "Tamly Maak", "Nour El Ein" / "Noor Al Ain", and Arabic script
+// "خليك معايا" / "Khalik Maaya".
+const AR = { 'ب': 'b', 'ت': 't', 'ث': 's', 'ج': 'g', 'ح': 'h', 'خ': 'kh', 'د': 'd', 'ذ': 'z', 'ر': 'r', 'ز': 'z', 'س': 's', 'ش': 'sh', 'ص': 's', 'ض': 'd', 'ط': 't', 'ظ': 'z', 'غ': 'gh', 'ف': 'f', 'ق': 'k', 'ك': 'k', 'ل': 'l', 'م': 'm', 'ن': 'n', 'ه': 'h', 'ة': '', 'و': '', 'ي': '', 'ى': '', 'ا': '', 'أ': '', 'إ': '', 'آ': '', 'ء': '', 'ئ': '', 'ؤ': '', 'ع': '' };
+function skeleton(title) {
+  let t = String(title || '').replace(/\s*[([].*?[)\]]/g, '').replace(/\s+-\s+.*$/, '');
+  t = [...t].map((c) => (c in AR ? AR[c] : c)).join('');
+  t = normText(t).replace(/[^a-z]/g, '')
+    .replace(/q/g, 'k').replace(/ph/g, 'f').replace(/ck/g, 'k').replace(/[aeiouyw]/g, '').replace(/(.)\1+/g, '$1');
+  return t;
+}
 const bestImage = (sources, max = 640) => {
   if (!Array.isArray(sources) || !sources.length) return null;
   const s = [...sources].sort((a, b) => (b.width || 0) - (a.width || 0));
@@ -187,7 +198,9 @@ async function deezerRanking(name) {
 // Reciprocal-rank fusion: each platform adds weight / (K + position). K damps the gap between
 // #1 and #2 so agreement across platforms matters more than one platform's exact order.
 const K = 8;
-const WEIGHTS = { spotify: 1.0, apple: 0.8, deezer: 0.7 };
+// Spotify's all-time play counts are the steadiest signal. Apple's search order leans towards
+// new releases, so it counts for less and mostly breaks ties.
+const WEIGHTS = { spotify: 1.0, apple: 0.5, deezer: 0.7 };
 
 async function topSongs({ spotifyId = null, name, n = 20 } = {}) {
   const key = `top:${spotifyId || squash(name)}:${n}`;
@@ -201,10 +214,14 @@ async function topSongs({ spotifyId = null, name, n = 20 } = {}) {
     ]);
     const lists = { spotify: sp.list, apple, deezer };
     const songs = new Map(); // key -> { score, versions: {platform: track}, ranks }
+    const bySkel = new Map(); // skeleton -> key (to merge spellings across platforms)
     for (const [platform, list] of Object.entries(lists)) {
       list.forEach((t, i) => {
-        const k = songKey(t.title);
+        let k = songKey(t.title);
         if (!k) return;
+        const sk = skeleton(t.title);
+        if (!songs.has(k) && sk.length >= 4 && bySkel.has(sk)) k = bySkel.get(sk);
+        else if (sk.length >= 4 && !bySkel.has(sk)) bySkel.set(sk, k);
         const s = songs.get(k) || { score: 0, by: {}, ranks: {} };
         if (s.by[platform]) return; // first (best) position only
         s.by[platform] = t;
@@ -215,7 +232,11 @@ async function topSongs({ spotifyId = null, name, n = 20 } = {}) {
     }
     const ranked = [...songs.values()].sort((a, b) => b.score - a.score);
     const out = [];
+    const spotifyKnows = sp.list.length >= 30;
     for (const s of ranked) {
+      // With a full Spotify picture, a song far down Spotify's play counts isn't a "top" song,
+      // however high another platform's search puts it (usually a brand-new release).
+      if (spotifyKnows && s.ranks.spotify && s.ranks.spotify > 60) continue;
       // Prefer a version we can play straight away (Apple/Deezer preview); keep Spotify's
       // cover and play count when it has them.
       const sp1 = s.by.spotify, ap = s.by.apple, dz = s.by.deezer;
@@ -246,4 +267,4 @@ async function findSpotifyArtist(name) {
   return (exact.find((a) => a.verified) || exact[0] || null);
 }
 
-module.exports = { topSongs, spotifyArtists, findSpotifyArtist, songKey, _cache: cache, _wait: wait };
+module.exports = { skeleton, topSongs, spotifyArtists, findSpotifyArtist, songKey, _cache: cache, _wait: wait };
