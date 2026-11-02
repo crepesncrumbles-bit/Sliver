@@ -1051,7 +1051,21 @@
     emailCodes = !!info.emailCodes;
     coffeeUrl = info.bmc || null;
     shopUrl = info.shop || null;
-    for (const id of ['#coffee-home', '#coffee-settings', '#coffee-shop']) { $(id).hidden = !coffeeUrl; if (coffeeUrl) $(id).href = coffeeUrl; }
+    // Middle East & North Africa: Buy Me a Coffee needs a card or a dollar account, so a local
+    // "Buy me a shawerma" link (InstaPay / wallets) shows instead, when one is set up.
+    const mena = /^(Africa\/(Cairo|Tripoli|Tunis|Algiers|Casablanca|El_Aaiun|Khartoum)|Asia\/(Riyadh|Dubai|Qatar|Kuwait|Bahrain|Muscat|Amman|Beirut|Damascus|Baghdad|Jerusalem|Gaza|Hebron|Aden|Tehran|Famagusta|Nicosia))$/
+      .test((() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } })());
+    const shawerma = mena && info.shawerma;
+    for (const id of ['#coffee-home', '#coffee-settings', '#coffee-shop']) {
+      const el = $(id), url = shawerma || coffeeUrl;
+      el.hidden = !url;
+      if (!url) continue;
+      el.href = url;
+      if (shawerma) {
+        el.classList.add('shawerma');
+        el.innerHTML = `<span class="cup" aria-hidden="true">🌯</span><span><b>${id === '#coffee-shop' ? 'Or buy me a shawerma' : 'Buy me a shawerma'}</b><small>InstaPay or a mobile wallet. Send any amount with your Sliver email in the note and get a premium theme.</small></span>`;
+      }
+    }
     if (!$('#looks').hidden) renderShop();
     if (!$('#auth').hidden && authMode === 'login') setAuthMode('login', { keepMessages: true });
     if (state && state.phase === 'lobby') renderLobby();

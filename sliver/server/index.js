@@ -472,7 +472,7 @@ const server = http.createServer((req, res) => {
     // When hosted (Render sets RENDER=true), there's no Wi-Fi address to share: use the public URL.
     const lan = process.env.RENDER ? [] : lanAddresses().map((ip) => `http://${ip}:${PORT}`);
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    return res.end(JSON.stringify({ port: PORT, lan, demoOnly, accounts: store.kind, emailCodes: !!mailer, bmc: BMC_URL || null, shop: BMC_SHOP_URL || null, payments: !!BMC_SECRET }));
+    return res.end(JSON.stringify({ port: PORT, lan, demoOnly, accounts: store.kind, emailCodes: !!mailer, bmc: BMC_URL || null, shawerma: process.env.SHAWERMA_URL || null, shop: BMC_SHOP_URL || null, payments: !!BMC_SECRET }));
   }
 
   // Player photos: /api/avatar/u/<account id> (saved) or /api/avatar/g/<id> (guests, in memory).

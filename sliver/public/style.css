@@ -1060,7 +1060,7 @@ html:has(body.ui-hidden), body.ui-hidden { touch-action: none; overflow: hidden;
 .pc-head b { display: block; font-family: var(--display); font-size: 18px; line-height: 1.2; }
 .pc-head small { display: block; font-size: 14px; color: var(--ink-2); }
 .pc-head small b { display: inline; font-family: var(--body); font-size: inherit; color: var(--accent-strong); }
-.pc-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.pc-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
 .pc-steps li { text-align: center; padding: 7px 0; border-radius: 9px; background: var(--paper-2); color: var(--ink-2); font-weight: 800; font-size: 13px; font-variant-numeric: tabular-nums; }
 .pc-steps li.past { background: color-mix(in srgb, var(--accent) 22%, var(--paper-2)); color: var(--ink); }
 .pc-steps li.now { background: var(--accent); color: var(--accent-ink); box-shadow: 0 2px 0 var(--stroke); }
@@ -1112,3 +1112,4 @@ body.ui-hidden .promo-bar { visibility: hidden; }
 .lt-ic svg { width: 20px; height: 20px; fill: currentColor; }
 .account-card:has(> .looks-tiles:only-child) { padding: 12px; }
 .acct-stats { margin-left: auto; }
+.coffee-btn.shawerma { background: #F4B860; color: #2A1600; border-color: #2A1600; box-shadow: 0 4px 0 #2A1600; }

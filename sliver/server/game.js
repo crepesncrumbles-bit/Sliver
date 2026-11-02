@@ -24,7 +24,7 @@ const PLACE_BONUS = [500, 400, 300, 200, 100];
 const FIRST_BONUS = PLACE_BONUS[0];
 const RANKED_ROUNDS = 5;
 // Party mode: the host's screen plays the clip for the room, in steps. Players vote for more or to give up.
-const PARTY_STAGES = [0.5, 1, 3, 5, 10, 15];
+const PARTY_STAGES = [0.1, 0.5, 1, 3, 5, 10, 15];
 const PARTY_VOTE = 0.7; // share of the players still guessing who have to agree
 
 // Modifiers. Hard 1.5×, Chaos 1.25×, both together 2×.
