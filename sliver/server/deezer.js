@@ -4,6 +4,7 @@
 const API = 'https://api.deezer.com';
 const { normText } = require('./text');
 const itunes = require('./itunes');
+const toptracks = require('./toptracks');
 const MAX_TRACKS = 500; // most songs one playlist can add
 
 const BROWSER_HEADERS = {
@@ -381,6 +382,19 @@ const deezerBlocked = (err) => /Deezer returned HTTP (403|429|5\d\d)|fetch faile
 
 async function loadDeezerArtist(artistName, artistId, opts = {}) {
   const q = String(artistName || '').trim();
+  const sp = /^sp:([A-Za-z0-9]+)$/.exec(String(artistId || ''));
+  // "Top 20": their biggest songs ranked across Spotify, Apple and Deezer together.
+  if (opts.mode === 'top') {
+    try {
+      const spotifyId = sp ? sp[1] : ((await toptracks.findSpotifyArtist(q)) || {}).id?.slice(3) || null;
+      const r = await toptracks.topSongs({ spotifyId, name: q, n: TOP_N_SONGS });
+      if (r.tracks.length >= 8) {
+        return { name: `${r.name}: top ${TOP_N_SONGS}`, tracks: addWeights(r.tracks.map((t) => ({ ...t }))), image: r.picture || null };
+      }
+    } catch (err) { console.warn(`  cross-platform top songs failed for "${q}": ${err.message}`); }
+  }
+  if (sp) artistId = null; // a Spotify pick: load the rest of their songs by name (exact name only)
+  if (sp) opts = { ...opts, strict: true };
   if (/^it:/.test(String(artistId || ''))) return loadItunesArtist(q, artistId, opts);
   try { return await loadDeezerArtistOnly(q, artistId, opts); } catch (err) {
     if (!deezerBlocked(err)) throw err;
@@ -422,6 +436,15 @@ async function searchArtists(query) {
   const hit = artistSearchCache.get(q);
   if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.list;
   let list;
+  // Spotify's search first: it has the artists' real photos. Then Deezer, then Apple.
+  try {
+    const spl = await toptracks.spotifyArtists(q);
+    if (spl.length) {
+      list = spl.slice(0, 8).map(({ verified, ...a }) => ({ ...a, fans: 0 }));
+      artistSearchCache.set(q, { at: Date.now(), list });
+      return list;
+    }
+  } catch (err) { /* fall back to Deezer / Apple */ }
   try {
     const data = await getJson(`${API}/search/artist?q=${encodeURIComponent(q)}&limit=15`);
     list = rankArtists((data.data || []).map((a) => ({

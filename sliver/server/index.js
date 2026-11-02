@@ -436,6 +436,17 @@ const server = http.createServer((req, res) => {
   }
 
   // Quick check of the music services this server depends on (no secrets, nothing stored).
+  if (p === '/diag/top') {
+    const tt = require('./toptracks');
+    const q = String(url.searchParams.get('artist') || 'drake').slice(0, 60);
+    (async () => {
+      const a = await tt.findSpotifyArtist(q).catch(() => null);
+      const r = await tt.topSongs({ spotifyId: a ? a.id.slice(3) : null, name: q, n: 20 });
+      return { artist: r.name, picture: r.picture, sources: r.sources, songs: r.tracks.map((t, i) => `${i + 1}. ${t.title}  [spotify #${t.ranks.spotify || '-'} apple #${t.ranks.apple || '-'} deezer #${t.ranks.deezer || '-'}${t.plays ? ', ' + t.plays.toLocaleString() + ' plays' : ''}]`) };
+    })().then((o) => { res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(o, null, 1)); },
+      (e) => { res.writeHead(500, { 'Content-Type': 'text/plain' }); res.end(String(e && e.message)); });
+    return;
+  }
   if (p === '/diag/spotify') {
     require('./spotifyweb')._probe(String(url.searchParams.get('q') || 'drake').slice(0, 40)).then((o) => {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(o, null, 1));

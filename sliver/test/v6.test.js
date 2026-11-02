@@ -106,7 +106,7 @@ const dz = (id, title, artist, rank, extra = {}) => ({ id, title, title_short: t
     {
       const top = await deezer.loadDeezerArtist('Pop Star', '55', { mode: 'top' });
       check(top.tracks.length === 20 && top.name === 'Pop Star: top 20', '"Top 20" gives their 20 most popular songs');
-      check(top.tracks[0].pop >= top.tracks[19].pop && !calls.some((u) => u.includes('itunes')), '…most popular first, without asking iTunes');
+      check(top.tracks[0].pop >= top.tracks[19].pop, '…most popular first');
       const all = await deezer.loadDeezerArtist('Pop Star', '55', { mode: 'all' });
       check(all.tracks.length === 100 && all.name === 'Pop Star: all songs', '"All songs" still gives the full list');
     }

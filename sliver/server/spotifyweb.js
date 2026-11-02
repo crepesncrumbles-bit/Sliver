@@ -245,6 +245,7 @@ async function _probe(q) {
       if (typeof o.uri === 'string' && o.uri.startsWith('spotify:artist:') && o.profile) artists.push({ uri: o.uri, name: o.profile.name, img: !!(o.visuals && o.visuals.avatarImage) });
       Object.values(o).forEach(walk); })(d);
     out.artists = artists.slice(0, 6);
+    out.getAlbumHash = !!(await opHash('getAlbum'));
     if (artists[0]) {
       const o = await pathfinder('queryArtistOverview', { uri: artists[0].uri, locale: '', includePrerelease: false }, token);
       const au = o.artistUnion || {};
@@ -259,4 +260,4 @@ async function _probe(q) {
   return out;
 }
 
-module.exports = { _probe, extractToken, rememberToken, anonToken, morePlaylistTracks, spotifyPlays, collectTracks, toSliverTrack, _reset };
+module.exports = { pathfinder, _probe, extractToken, rememberToken, anonToken, morePlaylistTracks, spotifyPlays, collectTracks, toSliverTrack, _reset };
