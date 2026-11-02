@@ -452,10 +452,13 @@
     if (document.activeElement !== nameEl) nameEl.value = T.slotName(slot) === `Slot ${slot + 1}` ? '' : T.slotName(slot);
     nameEl.placeholder = `Slot ${slot + 1}`;
     const using = inUse === `custom${slot + 1}`;
-    $('#ct-use').hidden = !saved[slot];
+    $('#ct-use').hidden = false;
+    const c = customColors();
+    // Preview of this slot's colours (without switching the app to it).
+    $('#ct-preview').innerHTML = `<span class="ctp-page" style="background:${c.page}"><span class="ctp-card" style="background:${c.card}">
+      <span class="ctp-btn" style="background:${c.accent}"></span><span class="ctp-pop" style="background:${c.pop}"></span></span></span>`;
     $('#ct-use').disabled = using;
     $('#ct-use').textContent = using ? '✓ Using this theme' : 'Use this theme';
-    const c = customColors();
     for (const [k, sel] of Object.entries(CT)) $(sel).value = c[k].toLowerCase();
     $('#ct-code').textContent = T.encode(c);
     // Gentle warning when text would be hard to read.
@@ -469,13 +472,12 @@
     const b = e.target.closest('[data-slot]');
     if (!b) return;
     slot = Number(b.dataset.slot);
-    if (window.SliverThemes.slots()[slot]) window.SliverThemes.set(`custom${slot + 1}`);
     renderCustomTheme(); renderThemes();
   });
   for (const [k, sel] of Object.entries(CT)) {
     $(sel).addEventListener('input', (e) => {
       const c = { ...customColors(), [k]: e.target.value.toUpperCase() };
-      window.SliverThemes.setSlot(slot, c); // live preview: switches to "My theme N" as you pick
+      window.SliverThemes.storeSlot(slot, c); // saved to the slot; only "Use this theme" switches to it
       renderCustomTheme();
       renderThemes();
     });
@@ -486,8 +488,9 @@
     renderCustomTheme();
   });
   $('#ct-use').onclick = () => {
-    if (!window.SliverThemes.slots()[slot]) return;
-    window.SliverThemes.set(`custom${slot + 1}`);
+    const T = window.SliverThemes;
+    if (!T.slots()[slot]) T.storeSlot(slot, customColors()); // a new slot: keep the colours shown
+    T.set(`custom${slot + 1}`);
     renderCustomTheme(); renderThemes();
     toast(`Using ${window.SliverThemes.slotName(slot)}`, 'good');
   };
@@ -500,10 +503,10 @@
     e.preventDefault();
     const c = window.SliverThemes.decode($('#ct-import-code').value);
     if (!c) return toast('That theme code doesn\'t look right. Check for typos.', 'error');
-    window.SliverThemes.setSlot(slot, c);
+    window.SliverThemes.storeSlot(slot, c);
     $('#ct-import-code').value = '';
     renderCustomTheme(); renderThemes();
-    toast(`Theme loaded into slot ${slot + 1}.`, 'good');
+    toast(`Theme loaded into ${window.SliverThemes.slotName(slot)}. Tap "Use this theme" to switch to it.`, 'good');
   };
 
   // ---------- premium themes shop ----------

@@ -368,6 +368,8 @@
     set(id) { put(KEY, id); return apply(id); },
     // Save "My theme N" colours and switch to it.
     setSlot(i, colors) { saveSlot(i, colors); put(KEY, `custom${i + 1}`); return apply(`custom${i + 1}`); },
+    // Save a slot's colours without switching to it (repaints only if it's the theme in use).
+    storeSlot(i, colors) { const c = saveSlot(i, colors); if (saved() === `custom${i + 1}`) apply(saved()); return c; },
     clearSlot(i) { saveSlot(i, null); if (saved() === `custom${i + 1}`) put(KEY, 'cobalt'); return apply(saved()); },
     // Try a premium theme for a few seconds (the shop's Preview button).
     preview(id, ms = 12000) {
