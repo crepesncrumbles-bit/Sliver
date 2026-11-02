@@ -25,6 +25,7 @@ const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml',
   '.png': 'image/png', '.ico': 'image/x-icon',
+  '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml; charset=utf-8', '.webmanifest': 'application/manifest+json',
 };
 
 function lanAddresses() {
@@ -422,8 +423,13 @@ const server = http.createServer((req, res) => {
   const host = String(req.headers.host || '').toLowerCase().split(':')[0];
   if (PUBLIC_HOST && host.endsWith('.onrender.com') && req.method === 'GET' && !p.startsWith('/api/') && p !== '/ws') {
     const dest = 'https://' + PUBLIC_HOST + url.pathname + url.search;
+    // Search engines get a permanent redirect, so they list sliver.one instead of the old address.
+    if (/bot|crawl|spider|slurp|facebookexternalhit|discord|whatsapp|telegram|preview/i.test(String(req.headers['user-agent'] || ''))) {
+      res.writeHead(301, { Location: dest, 'Cache-Control': 'no-store' });
+      return res.end();
+    }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-    return res.end('<!doctype html><meta charset="utf-8"><title>Sliver</title><script>(function(){var d=' + JSON.stringify(dest) +
+    return res.end('<!doctype html><meta charset="utf-8"><title>Sliver</title><meta name="robots" content="noindex"><link rel="canonical" href="' + dest + '"><script>(function(){var d=' + JSON.stringify(dest) +
       ',o={};try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k.indexOf("sliver.")===0)o[k]=localStorage.getItem(k);}}catch(e){}' +
       'location.replace(d+(Object.keys(o).length?"#carry="+encodeURIComponent(JSON.stringify(o)):""));})();</script>' +
       '<noscript><a href="' + dest + '">Sliver has moved to ' + PUBLIC_HOST + '</a></noscript>');
@@ -583,7 +589,7 @@ io.on('connection', (socket) => {
     if (token && r.kickedTokens.has(token)) return fail(ack, new Error('The host removed you from this room'));
     let p = token ? r.reconnect(token, socket) : null;
     if (!p) {
-      if (r.players.size >= 12) return fail(ack, new Error('Room is full (12 players)'));
+      if (r.players.size >= 20) return fail(ack, new Error('Room is full (20 players)'));
       if (r.game && r.game.ranked) return fail(ack, new Error('A ranked game is running in that room. Join when it ends.'));
       const host = r.players.get(r.hostId);
       if (user && host && host.userId && await accounts.isBlockedEitherWay(host.userId, user.id).catch(() => false)) {

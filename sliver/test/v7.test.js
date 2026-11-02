@@ -53,7 +53,9 @@ function loadThemes(store = {}) {
       check(/easter\(\)/.test(decor) && /const (egg|bunny|chick|tulip|butterfly) =/.test(decor), 'Easter decorations: eggs, bunnies, a chick, tulips, butterflies');
       check(T.current() === 'custom1' && T.slots()[0].page === '#111111', 'the old single "My theme" moved into slot 1');
       T.setSlot(2, { page: '#222222', card: '#EEEEEE', accent: '#0000FF', pop: '#FFFF00' });
-      check(T.SLOTS === 3 && T.current() === 'custom3' && T.slots().filter(Boolean).length === 2 && T.slotTheme(2).name === 'My theme 3', '3 save slots for your own themes');
+      check(T.SLOTS === 3 && T.current() === 'custom3' && T.slots().filter(Boolean).length === 2 && T.slotTheme(2).name === 'Slot 3', '3 save slots for your own themes');
+      T.renameSlot(2, '  Night Drive  ');
+      check(T.slotTheme(2).name === 'Night Drive' && T.slotName(0) === 'Slot 1', 'slots can be renamed');
       T.clearSlot(2);
       check(!T.slots()[2] && T.current() === 'cobalt', 'clearing the slot you use goes back to the default');
 

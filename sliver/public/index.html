@@ -3,8 +3,41 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Sliver — guess the song</title>
+  <title>Sliver: Guess the Song Game | Play Free with Friends</title>
+  <meta name="description" content="Sliver is a free guess-the-song game. Hear a split-second clip and race your friends to name it. Play any artist, your own Spotify playlist, or packs like Top Hits, throwbacks, Arabic and K-pop. No download." />
+  <link rel="canonical" href="https://sliver.one/" />
+  <meta name="robots" content="index, follow" />
   <meta name="theme-color" content="#2336E6" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Sliver" />
+  <meta property="og:url" content="https://sliver.one/" />
+  <meta property="og:title" content="Sliver: Guess the Song Game" />
+  <meta property="og:description" content="Hear a split-second clip and race your friends to name the song. Any artist, your own playlists, free in your browser." />
+  <meta property="og:image" content="https://sliver.one/og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Sliver: Guess the Song Game" />
+  <meta name="twitter:description" content="Hear a split-second clip and race your friends to name the song." />
+  <meta name="twitter:image" content="https://sliver.one/og.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": ["VideoGame", "WebApplication"],
+    "name": "Sliver",
+    "alternateName": ["Sliver guess the song", "Sliver music game"],
+    "url": "https://sliver.one/",
+    "image": "https://sliver.one/og.png",
+    "description": "A free multiplayer guess-the-song game. Hear a split-second clip and race your friends to name it. Play any artist, your own Spotify playlist, or genre packs.",
+    "applicationCategory": "GameApplication",
+    "genre": ["Music", "Trivia", "Party"],
+    "operatingSystem": "Any (web browser)",
+    "playMode": ["MultiPlayer", "SinglePlayer"],
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+  }
+  </script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='16' fill='%232336E6'/><g fill='%23FBFAFF'><rect x='12' y='26' width='6' height='12' rx='3'/><rect x='22' y='18' width='6' height='28' rx='3'/><rect x='42' y='22' width='6' height='20' rx='3'/></g><rect x='32' y='10' width='6' height='44' rx='3' fill='%23FFD43B'/></svg>" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -61,6 +94,7 @@
       </div>
       <div class="card account-card" id="account-box"></div>
       <div class="card invite-card" id="invite-home"></div>
+      <p class="about-line">Sliver is a free guess-the-song game. Hear a split-second clip and race your friends to name it, with any artist, your own Spotify playlist, or packs from Top Hits to Arabic and K-pop.</p>
       <a class="coffee-btn" id="coffee-home" target="_blank" rel="noopener" hidden>
         <span class="cup" aria-hidden="true">☕</span><span><b>Buy me a coffee</b><small>$2 or more unlocks a random premium theme</small></span>
       </a>
@@ -115,7 +149,7 @@
           <button class="seg-btn" id="seg-ranked" role="tab">Ranked</button>
         </div>
         <div id="ranked-panel" hidden>
-          <p class="hint ranked-intro">5 songs from one genre. Scores go on that genre's top 25 and raise your rating. Everyone needs to be logged in.</p>
+          <p class="hint ranked-intro">5 songs from one genre. Scores go on that genre's top 25 and raise your rating.</p>
           <h3 class="sub">Genre</h3>
           <div id="ranked-genres" class="pack-row"></div>
         </div>
@@ -137,7 +171,6 @@
           <label class="field casual-only"><span>Time per song</span><select id="set-time"></select></label>
           <label class="field casual-only"><span>Guesses per song</span><select id="set-guesses"></select></label>
         </div>
-        <p class="hint">Clips go up to 15 seconds while you guess. After you guess, the song plays for 30 seconds.</p>
         <p class="hint ranked-only" id="ranked-fixed" hidden>Ranked is always 5 songs, 90 seconds per song, unlimited guesses.</p>
         <p class="warn" id="ranked-warn" hidden></p>
         <button id="btn-start" class="btn primary big">Start game</button>
@@ -247,6 +280,7 @@
         <div class="label">Winner</div>
         <div class="winner" id="winner"></div>
       </div>
+      <div class="card podium" id="podium" hidden></div>
       <div class="card ranked-result" id="ranked-result" hidden></div>
       <div class="card">
         <ol id="final-board" class="board"></ol>
@@ -311,8 +345,7 @@
         <label class="check decor-toggle" id="decor-toggle-row"><input type="checkbox" id="decor-toggle" /> <span>Holiday decorations</span></label>
         <div class="motion-row">
           <div class="mini-seg" role="group" aria-label="Animations">
-            <span class="mini-label">Animations</span>
-            <button type="button" class="mini-btn" data-motion-pref="auto">Auto</button>
+            <span class="mini-label hl">Animations</span>
             <button type="button" class="mini-btn" data-motion-pref="on">On</button>
             <button type="button" class="mini-btn" data-motion-pref="off">Off</button>
           </div>
@@ -330,7 +363,12 @@
       <div data-th-panel="make" hidden>
       <div class="custom-theme" id="custom-theme">
         <h4>Make your own theme</h4>
+        <p class="hint">Pick a slot, give it a name, and choose your colors. Your themes are used from here.</p>
         <div class="mini-seg slot-seg" role="tablist" aria-label="Theme slot" id="slot-seg"></div>
+        <div class="row ct-name-row">
+          <input id="ct-name" maxlength="24" placeholder="Slot 1" aria-label="Name this theme" autocomplete="off" />
+          <button type="button" id="ct-use" class="btn small primary-ish" hidden>Use this theme</button>
+        </div>
         <div class="ct-colors">
           <label class="ct-color"><input type="color" id="ct-page" /><span>Background</span></label>
           <label class="ct-color"><input type="color" id="ct-card" /><span>Cards</span></label>

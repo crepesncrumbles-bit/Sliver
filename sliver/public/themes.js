@@ -303,11 +303,24 @@
     put(SLOTS_KEY, JSON.stringify(list));
     return list[i];
   }
+  // Each slot can have its own name ("Slot 1" until renamed).
+  const NAMES_KEY = 'sliver.customNames';
+  function slotNames() {
+    let n; try { n = JSON.parse(get(NAMES_KEY)); } catch { n = null; }
+    if (!Array.isArray(n)) n = [];
+    return Array.from({ length: SLOTS }, (_, i) => (typeof n[i] === 'string' && n[i].trim() ? n[i].trim().slice(0, 24) : ''));
+  }
+  const slotName = (i) => slotNames()[i] || `Slot ${i + 1}`;
+  function renameSlot(i, name) {
+    const n = slotNames();
+    n[i] = String(name || '').trim().slice(0, 24);
+    put(NAMES_KEY, JSON.stringify(n));
+  }
   function slotTheme(i) {
     const c = slots()[i];
     if (!c) return null;
     const t = buildCustom(c);
-    return { ...t, id: `custom${i + 1}`, name: `My theme ${i + 1}`, slot: i };
+    return { ...t, id: `custom${i + 1}`, name: slotName(i), slot: i };
   }
 
   // Premium themes you own (from your account; remembered on this device between visits).
@@ -343,7 +356,8 @@
 
   window.SliverThemes = {
     THEMES, available, inSeason, seasonEnds, apply, current, encode, decode, buildCustom, contrast, easterSunday,
-    DEFAULT_CUSTOM, SLOTS, slots, slotTheme,
+    DEFAULT_CUSTOM, SLOTS, slots, slotTheme, slotName, renameSlot,
+    saved,
     premium: () => THEMES.filter((t) => t.premium),
     owns,
     setOwned(list) {

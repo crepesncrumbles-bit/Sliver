@@ -8,20 +8,19 @@
   } catch (e) {}
   history.replaceState(null, '', location.pathname + location.search);
 })();
-/* Animations setting. Many computers (Windows: Settings > Accessibility > Visual effects >
- * "Animation effects" off) ask websites to reduce motion; we follow that by default, which freezes
- * the animated backgrounds. Players can override it: "auto" (follow the device), "on" or "off". */
+/* Animations setting: "on" (the default) or "off". The device's own "reduce motion" setting is
+ * ignored, so animated backgrounds always play unless the player turns them off here. */
 (function () {
   const KEY = 'sliver.motion';
   const mq = window.matchMedia ? matchMedia('(prefers-reduced-motion: reduce)') : { matches: false, addEventListener() {} };
-  let pref = 'auto';
-  try { pref = localStorage.getItem(KEY) || 'auto'; } catch {}
+  let pref = 'on';
+  try { pref = localStorage.getItem(KEY) === 'off' ? 'off' : 'on'; } catch {}
   const api = {
     pref: () => pref,
     deviceReduced: () => !!mq.matches,
-    reduced: () => pref === 'off' || (pref !== 'on' && !!mq.matches),
+    reduced: () => pref === 'off',
     set(v) {
-      pref = ['auto', 'on', 'off'].includes(v) ? v : 'auto';
+      pref = v === 'off' ? 'off' : 'on';
       try { localStorage.setItem(KEY, pref); } catch {}
       apply();
     },

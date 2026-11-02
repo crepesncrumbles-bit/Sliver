@@ -302,9 +302,9 @@
   let arranging = false, thTab = 'mine';
   function myThemes() {
     const T = window.SliverThemes;
-    const slotThemes = [0, 1, 2].map((i) => T.slotTheme(i)).filter(Boolean);
+    // Your own made themes live in the Create tab, not here.
     const ownedPremium = T.premium().filter((t) => T.owns(t.id));
-    const list = T.available().concat(ownedPremium, slotThemes);
+    const list = T.available().concat(ownedPremium);
     const rank = (t) => { const i = themeOrder.indexOf(t.id); return i < 0 ? 1e6 + list.indexOf(t) : i; };
     return list.slice().sort((a, b) => rank(a) - rank(b));
   }
@@ -357,22 +357,10 @@
   function renderMotion() {
     const M = window.SliverMotion; if (!M) return;
     document.querySelectorAll('[data-motion-pref]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.motionPref === M.pref())));
-    $('#motion-note').textContent = M.pref() === 'auto'
-      ? (M.deviceReduced() ? 'Your computer asks apps to reduce motion, so animated backgrounds are frozen. Pick On to play them.' : 'Animated backgrounds and effects are on.')
-      : M.pref() === 'on' ? 'Animations always on.' : 'Animations off: backgrounds stay still.';
+    $('#motion-note').textContent = M.pref() === 'on' ? 'Animated backgrounds and effects are on.' : 'Animations off: backgrounds stay still.';
   }
   document.querySelectorAll('[data-motion-pref]').forEach((b) => { b.onclick = () => { window.SliverMotion.set(b.dataset.motionPref); renderMotion(); }; });
   renderMotion();
-  // If an animated theme is frozen because of the device setting, say so once (with the fix).
-  let motionHinted = false;
-  function hintFrozen() {
-    const M = window.SliverMotion;
-    if (motionHinted || !M || M.pref() !== 'auto' || !M.deviceReduced() || !document.documentElement.dataset.fx) return;
-    motionHinted = true;
-    setTimeout(() => toast('This theme is animated, but your computer is set to reduce motion so it\'s frozen. Turn animations on in Settings → Themes.', 'info', 9000), 1500);
-  }
-  window.addEventListener('sliver:theme', () => setTimeout(hintFrozen, 0));
-  setTimeout(hintFrozen, 0);
   $('#th-arrange').onclick = () => { arranging = !arranging; renderThemes(); };
   // Drag and drop to reorder (mouse); the ‹ › buttons do the same on phones.
   let dragId = null;
@@ -457,8 +445,16 @@
   function renderCustomTheme() {
     const T = window.SliverThemes;
     const saved = T.slots();
+    const inUse = String(T.current());
     $('#slot-seg').innerHTML = [0, 1, 2].map((i) => `<button type="button" class="mini-btn" role="tab" data-slot="${i}" aria-pressed="${i === slot}">
-      ${saved[i] ? `<i class="slot-dot" style="background:${saved[i].accent}"></i>` : ''}Slot ${i + 1}${saved[i] ? '' : ' <small>(empty)</small>'}</button>`).join('');
+      ${saved[i] ? `<i class="slot-dot" style="background:${saved[i].accent}"></i>` : ''}${esc(T.slotName(i))}${saved[i] ? (inUse === `custom${i + 1}` ? ' <small>✓</small>' : '') : ' <small>(empty)</small>'}</button>`).join('');
+    const nameEl = $('#ct-name');
+    if (document.activeElement !== nameEl) nameEl.value = T.slotName(slot) === `Slot ${slot + 1}` ? '' : T.slotName(slot);
+    nameEl.placeholder = `Slot ${slot + 1}`;
+    const using = inUse === `custom${slot + 1}`;
+    $('#ct-use').hidden = !saved[slot];
+    $('#ct-use').disabled = using;
+    $('#ct-use').textContent = using ? '✓ Using this theme' : 'Use this theme';
     const c = customColors();
     for (const [k, sel] of Object.entries(CT)) $(sel).value = c[k].toLowerCase();
     $('#ct-code').textContent = T.encode(c);
@@ -484,6 +480,17 @@
       renderThemes();
     });
   }
+  // Rename the slot (saved as you type).
+  $('#ct-name').addEventListener('input', (e) => {
+    window.SliverThemes.renameSlot(slot, e.target.value);
+    renderCustomTheme();
+  });
+  $('#ct-use').onclick = () => {
+    if (!window.SliverThemes.slots()[slot]) return;
+    window.SliverThemes.set(`custom${slot + 1}`);
+    renderCustomTheme(); renderThemes();
+    toast(`Using ${window.SliverThemes.slotName(slot)}`, 'good');
+  };
   $('#ct-copy').onclick = async () => {
     const code = $('#ct-code').textContent;
     try { await navigator.clipboard.writeText(code); toast('Theme code copied. Send it to a friend!', 'good'); }
@@ -754,12 +761,24 @@
     if (phase !== 'round' && phase !== 'reveal') stopAudio();
   }
 
+  // Big rooms: show the first 5 players (always including you), then a "+N" chip that opens the full list.
+  const SHOW_PLAYERS = 5;
+  function firstFew(list) {
+    if (list.length <= SHOW_PLAYERS) return list;
+    const out = list.slice(0, SHOW_PLAYERS);
+    const me = list.find((p) => p.id === state.meId);
+    if (me && !out.includes(me)) out[SHOW_PLAYERS - 1] = me;
+    return out;
+  }
+  const moreChip = (n) => (n > 0 ? `<li class="more-chip"><button type="button" data-more-players aria-label="Show all ${n + SHOW_PLAYERS} players">+${n}</button></li>` : '');
+
   function renderLobby() {
     show('lobby');
     renderCode();
     const isHost = state.hostId === state.meId;
     const AV = ['#FFD43B', '#FF9EC7', '#8FF0CF', '#AFC0FF', '#FFC48A', '#D7B8FF'];
-    $('#lobby-players').innerHTML = state.players.map((p, i) => {
+    const lobbyShown = firstFew(state.players);
+    $('#lobby-players').innerHTML = lobbyShown.map((p, i) => {
       const canKick = isHost && p.id !== state.meId;
       const armed = armedKick === p.id;
       return `<li class="${p.connected ? '' : 'offline'}${armed ? ' arm' : ''}">
@@ -769,7 +788,7 @@
         ${state.settings.ranked && !p.loggedIn ? '<span class="guest-tag">not logged in</span>' : ''}
         ${canKick ? `<button class="kick" data-kick="${esc(p.id)}" aria-label="${armed ? 'Confirm removing' : 'Remove'} ${esc(p.name)}" title="${armed ? 'Tap again to remove' : 'Remove from room'}">×</button>` : ''}
       </li>`;
-    }).join('');
+    }).join('') + moreChip(state.players.length - lobbyShown.length);
 
     $('#pool-count').textContent = `${fmt(state.poolSize)} song${state.poolSize === 1 ? '' : 's'}`;
     $('#sources').innerHTML = state.sources.map((src) => {
@@ -1510,12 +1529,14 @@
     }
 
     const amHost = state.hostId === state.meId;
-    $('#round-players').innerHTML = state.players.filter((p) => p.connected).map((p) => {
+    const here = state.players.filter((p) => p.connected);
+    const roundShown = firstFew(here);
+    $('#round-players').innerHTML = roundShown.map((p) => {
       const icon = { correct: '✓ ', out: '', 'gave-up': '', timeout: '' }[p.roundStatus] ?? '';
       const prog = p.progress != null ? `<span class="prog">${p.finished ? 'done' : `${(p.progress || 0) + 1}/${r.total}`}</span>` : '';
       const inner = `${p.speedrun ? '' : icon}${iconPrefix(p.icon, p.avatar)}${esc(p.name)}${p.id === state.hostId ? ' <small>host</small>' : ''}${prog}`;
       return `<li class="${p.speedrun ? (p.finished ? 'correct' : '') : p.roundStatus || ''}">${amHost && p.id !== state.meId ? `<button data-player-menu="${esc(p.id)}">${inner}</button>` : inner}</li>`;
-    }).join('');
+    }).join('') + moreChip(here.length - roundShown.length);
 
     clearInterval(timerInt);
     $('#timer').classList.remove('low');
@@ -1795,7 +1816,22 @@
     const top = ps[0];
     const tied = ps.filter((p) => p.score === top.score);
     $('#winner').innerHTML = tied.length > 1 ? `${tied.map((p) => iconPrefix(p.icon, p.avatar) + esc(p.name)).join(' & ')} tie` : iconPrefix(top.icon, top.avatar) + esc(top.name);
-    $('#final-board').innerHTML = ps.map((p) =>
+    // Multiplayer: the top three stand on a podium (2nd, 1st, 3rd), everyone else is listed below.
+    const multi = ps.length >= 2;
+    $('.winner-card').hidden = multi;
+    $('#podium').hidden = !multi;
+    const rest = multi ? ps.slice(3) : ps;
+    if (multi) {
+      const place = (p, n) => p ? `<div class="pod pod-${n}">
+          <div class="pod-who"><span class="pod-av${avClass(p.icon, p.avatar)}">${avatar(p.icon, p.name, p.avatar)}</span>
+          <b class="pod-name">${esc(p.name)}${p.id === state.meId ? ' <small>(you)</small>' : ''}</b><span class="pod-score">${fmt(p.score)}</span></div>
+          <div class="pod-block"><span>${n}</span></div></div>` : '<div class="pod pod-empty"></div>';
+      $('#podium').innerHTML = `<div class="pod-row">${place(ps[1], 2)}${place(ps[0], 1)}${place(ps[2], 3)}</div>`;
+    }
+    $('#final-board').closest('.card').hidden = !rest.length;
+    $('#final-board').style.counterReset = `rank ${multi ? 3 : 0}`;
+    $('#final-board').classList.toggle('after-podium', multi);
+    $('#final-board').innerHTML = rest.map((p) =>
       `<li><span class="b-name">${iconPrefix(p.icon, p.avatar)}${esc(p.name)}</span><span class="b-score">${fmt(p.score)}</span></li>`).join('');
     const lg = state.lastGame;
     $('#sr-songs').hidden = !(lg && lg.speedrun && lg.songs && lg.songs.length);
@@ -2413,12 +2449,12 @@
         </div>` : ''}
       </li>`;
     }).join('');
-    $('#players-hint').textContent = isHost ? 'Tap twice to confirm. Works during a game too.' : 'Only the host can change the host or remove players.';
+    $('#players-hint').textContent = isHost ? '' : 'Only the host can change the host or remove players.';
   }
   function openPlayers() { plArmed = null; renderPlayersSheet(); openSheet('players'); }
   $('#btn-players').onclick = openPlayers;
   document.addEventListener('click', async (e) => {
-    if (e.target.closest('[data-player-menu]')) return openPlayers();
+    if (e.target.closest('[data-player-menu]') || e.target.closest('[data-more-players]')) return openPlayers();
     const h = e.target.closest('[data-pl-host]'), k = e.target.closest('[data-pl-kick]');
     if (!h && !k) return;
     const id = (h || k).dataset[h ? 'plHost' : 'plKick'];
