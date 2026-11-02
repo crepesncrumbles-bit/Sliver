@@ -748,7 +748,12 @@ class Room {
       if (coverP) await Promise.race([coverP, new Promise((r) => setTimeout(r, 2500))]);
       return result;
     }
-    return fetchPreview(track.sourceId);
+    try { return await fetchPreview(track.sourceId); } catch (err) {
+      // Deezer turned us away: the same song's preview from iTunes.
+      const it = await searchItunes(track.title, track.artist);
+      if (it.cover && !track.cover) track.cover = it.cover;
+      return fetchUrlPreview(it.previewUrl);
+    }
   }
 
   // The round this player is on: the shared one, or in a speedrun their own current song.

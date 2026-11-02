@@ -201,7 +201,15 @@ async function loadRoster(names, packName, { perArtist = 12 } = {}) {
         if (!a) return [];
         used.push(a.name);
         return await artistSongs(a, { top: perArtist });
-      } catch { return []; }
+      } catch (err) {
+        if (!deezerBlocked(err)) return [];
+        // Deezer is turning the server away: this artist's songs from iTunes (exact name only).
+        try {
+          const list = (await itunes.itunesArtistSongs(n)).filter((t) => nameClose(t.artist, n)).slice(0, perArtist);
+          if (list.length) used.push(n);
+          return list.map((t, i) => ({ ...t, pop: Math.max(1, 500000 - i * 20000) }));
+        } catch { return []; }
+      }
     }));
     for (const list of lists) for (const t of list) {
       const key = normText(t.title) + '|' + normText(t.artist);
@@ -323,7 +331,40 @@ async function addItunesSongs(list, artistName, opts) {
 // Deezer's top 100 + albums/EPs/singles, plus iTunes for artists Deezer covers thinly
 // (Arabic artists, or anyone with under 150 songs on Deezer).
 // artistId (from the suggestions list) picks the exact artist; otherwise search by name.
-async function loadDeezerArtist(artistName, artistId, { mode = 'all', arabic = false, strict = false } = {}) {
+// When Deezer turns the server away, artists come from iTunes instead.
+async function loadItunesArtist(q, artistId, { mode = 'all', arabic = false } = {}) {
+  const id = /^it:\d+$/.test(String(artistId || '')) ? String(artistId).slice(3) : null;
+  const key = `it:${id || normText(q)}`;
+  const hit = artistCache.get(key);
+  let list;
+  if (hit && Date.now() - hit.at < ARTIST_TTL) list = await hit.promise;
+  else {
+    const promise = itunes.itunesArtistSongs(q, { arabic, id });
+    artistCache.set(key, { at: Date.now(), promise });
+    promise.catch(() => artistCache.delete(key));
+    list = await promise;
+  }
+  if (list.length < 2) throw new Error(`No playable songs found for "${q}"`);
+  // iTunes lists an artist's songs roughly most popular first.
+  list = list.map((t, i) => ({ ...t, pop: Math.max(1, 1000000 - i * 5000) }));
+  const top = mode === 'top' ? TOP_N_SONGS : 0;
+  const tracks = addWeights(top ? list.slice(0, top) : list.slice(0, MAX_ARTIST_SONGS));
+  const name = list[0].artist || q;
+  return { name: `${name}: ${top ? `top ${top}` : 'all songs'}`, tracks, image: null };
+}
+const deezerBlocked = (err) => /Deezer returned HTTP (403|429|5\d\d)|fetch failed|quota/i.test(String(err && err.message));
+
+async function loadDeezerArtist(artistName, artistId, opts = {}) {
+  const q = String(artistName || '').trim();
+  if (/^it:/.test(String(artistId || ''))) return loadItunesArtist(q, artistId, opts);
+  try { return await loadDeezerArtistOnly(q, artistId, opts); } catch (err) {
+    if (!deezerBlocked(err)) throw err;
+    console.warn(`  Deezer unavailable for "${q}" (${err.message}), using iTunes`);
+    return loadItunesArtist(q, null, opts);
+  }
+}
+
+async function loadDeezerArtistOnly(artistName, artistId, { mode = 'all', arabic = false, strict = false } = {}) {
   const q = String(artistName || '').trim();
   const artist = await findArtist(q, artistId, strict);
   if (!artist || !artist.id) throw new Error(`No artist called "${q}" found. For a playlist, paste its link.`);
@@ -355,12 +396,16 @@ async function searchArtists(query) {
   if (q.length < 2) return [];
   const hit = artistSearchCache.get(q);
   if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.list;
-  const data = await getJson(`${API}/search/artist?q=${encodeURIComponent(q)}&limit=15`);
-  if (!Array.isArray(data.data)) throw new Error('Unexpected Deezer reply: ' + JSON.stringify(data).slice(0, 150));
-  if (!data.data.length) throw new Error('Deezer found no artists (total ' + data.total + ')');
-  const list = rankArtists((data.data || []).map((a) => ({
-    id: String(a.id), name: a.name, picture: a.picture_small || a.picture_medium || null, fans: a.nb_fan || 0,
-  })), q);
+  let list;
+  try {
+    const data = await getJson(`${API}/search/artist?q=${encodeURIComponent(q)}&limit=15`);
+    list = rankArtists((data.data || []).map((a) => ({
+      id: String(a.id), name: a.name, picture: a.picture_small || a.picture_medium || null, fans: a.nb_fan || 0,
+    })), q);
+  } catch (err) {
+    if (!deezerBlocked(err)) throw err;
+    list = await itunes.searchItunesArtists(q); // Deezer is turning the server away
+  }
   artistSearchCache.set(q, { at: Date.now(), list });
   if (artistSearchCache.size > 500) artistSearchCache.delete(artistSearchCache.keys().next().value);
   return list;

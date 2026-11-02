@@ -66,10 +66,10 @@ async function findArtistId(name, stores) {
 }
 
 // Up to ~200 songs per store by this artist (as the main artist), most popular first.
-async function itunesArtistSongs(name, { arabic } = {}) {
-  const isArabic = arabic || ARABIC_SCRIPT.test(name);
+async function itunesArtistSongs(name, { arabic, id } = {}) {
+  const isArabic = arabic || ARABIC_SCRIPT.test(name || '');
   const stores = isArabic ? STORES_ARABIC : STORES_WEST;
-  const artistId = await findArtistId(name, stores).catch(() => null);
+  const artistId = id ? Number(id) : await findArtistId(name, stores).catch(() => null);
   if (!artistId) return [];
   const out = [];
   const seen = new Set();
@@ -104,4 +104,21 @@ async function searchItunes(title, artist) {
   throw new Error(`No iTunes match for "${title}"`);
 }
 
-module.exports = { itunesArtistSongs, searchItunes, findArtistId, toTrack, ARABIC_SCRIPT, _cache: cache };
+// Artist suggestions from iTunes (used when Deezer can't be reached). Ids are "it:<id>".
+async function searchItunesArtists(q) {
+  const stores = ARABIC_SCRIPT.test(q) ? STORES_ARABIC : ['us'];
+  const out = [], seen = new Set();
+  for (const cc of stores) {
+    let data;
+    try { data = await getJson(`${API}/search?term=${encodeURIComponent(q)}&entity=musicArtist&limit=12&country=${cc}`); } catch { continue; }
+    for (const r of data.results || []) {
+      if (!r.artistId || seen.has(r.artistId)) continue;
+      seen.add(r.artistId);
+      out.push({ id: `it:${r.artistId}`, name: r.artistName, picture: null, fans: 0, genre: r.primaryGenreName || '' });
+    }
+    if (out.length) break;
+  }
+  return out;
+}
+
+module.exports = { searchItunesArtists, itunesArtistSongs, searchItunes, findArtistId, toTrack, ARABIC_SCRIPT, _cache: cache };
