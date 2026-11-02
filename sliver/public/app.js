@@ -2447,7 +2447,7 @@
     ul.innerHTML = '<li class="group">Artists</li>' + artistList.map((a, i) => `
       <li data-artist="${i}" class="artist${i === artistActive ? ' active' : ''}">
         ${a.picture ? `<img src="${esc(a.picture)}" alt="" loading="lazy" />` : `<span class="a-ph">${esc(a.name[0])}</span>`}
-        <div><div>${esc(a.name)}</div><div class="s-artist">${a.fans ? `${fmtPlays(a.fans)} fans · ` : ''}add all their songs</div></div>
+        <div><div>${esc(a.name)}</div><div class="s-artist">${a.fans ? `${fmtPlays(a.fans)} fans · ` : a.genre ? `${esc(a.genre)} · ` : ''}add all their songs</div></div>
       </li>`).join('');
   }
   function pickArtist(a) { $('#playlist-input').value = a.name; addInput(a.name, a.id); }
