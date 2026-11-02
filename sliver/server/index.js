@@ -201,8 +201,9 @@ async function handleApi(req, res, p, url) {
     }
     if (p === '/api/artists') {
       if (demoOnly) return sendJson(res, 200, { ok: true, artists: [] });
-      const artists = await searchArtists(url.searchParams.get('q')).catch(() => []);
-      return sendJson(res, 200, { ok: true, artists });
+      let error = null;
+      const artists = await searchArtists(url.searchParams.get('q')).catch((e) => { error = String(e && e.message || e).slice(0, 200); console.warn('artist search failed:', error); return []; });
+      return sendJson(res, 200, error ? { ok: true, artists, error } : { ok: true, artists });
     }
     return sendJson(res, 404, { ok: false, error: 'Not found' });
   } catch (err) {

@@ -349,6 +349,8 @@ async function searchArtists(query) {
   const hit = artistSearchCache.get(q);
   if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.list;
   const data = await getJson(`${API}/search/artist?q=${encodeURIComponent(q)}&limit=15`);
+  if (!Array.isArray(data.data)) throw new Error('Unexpected Deezer reply: ' + JSON.stringify(data).slice(0, 150));
+  if (!data.data.length) throw new Error('Deezer found no artists (total ' + data.total + ')');
   const list = rankArtists((data.data || []).map((a) => ({
     id: String(a.id), name: a.name, picture: a.picture_small || a.picture_medium || null, fans: a.nb_fan || 0,
   })), q);
