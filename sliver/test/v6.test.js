@@ -332,6 +332,12 @@ const dz = (id, title, artist, rank, extra = {}) => ({ id, title, title_short: t
       ctx.window = { dispatchEvent: (e) => events.push(e), SliverShop: require('../public/shop.js') };
       vm.createContext(ctx);
       vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/themes.js'), 'utf8'), ctx);
+      const T0 = ctx.window.SliverThemes;
+      check(T0.current() === 'cobalt' && !T0.unlocked('grape') && T0.unlocked('cobalt'), 'guests: only Blue Hour is unlocked');
+      T0.set('grape');
+      check(T0.current() === 'cobalt', 'guests can\'t switch to a locked theme');
+      T0.setSignedIn(true);
+      check(T0.current() === 'grape' && T0.unlocked('grape'), 'signing up unlocks the theme you picked');
       const T = ctx.window.SliverThemes;
       const names = T.THEMES.map((t) => t.name);
       check(!names.some((n) => /^GX|Opera|Ultraviolet|Hackerman|Rose Quartz|Purple Haze|Vaporwave|Sub Zero|Lambda|Frutti|Pay to Win|After Eight/i.test(n)), 'theme names are Sliver\'s own: ' + names.join(', '));
