@@ -26,6 +26,7 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
 
 function loadThemes(store = {}) {
   const events = [];
+  if (!('sliver.auth' in store)) store['sliver.auth'] = JSON.stringify({ token: 't', user: { id: 'u1' } }); // signed in: all themes unlocked
   const ctx = {
     localStorage: { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; } },
     document: { documentElement: { style: { setProperty() {} }, dataset: {} }, querySelector: () => null },
