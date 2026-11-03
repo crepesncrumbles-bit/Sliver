@@ -441,6 +441,9 @@ async function searchArtists(query) {
     const spl = await toptracks.spotifyArtists(q);
     if (spl.length) {
       list = spl.slice(0, 8).map(({ verified, ...a }) => ({ ...a, fans: 0 }));
+      // How big each one is: Spotify monthly listeners for the top few (looked up together, quickly).
+      const counts = await Promise.all(list.slice(0, 6).map((a) => toptracks.spotifyListeners(a.id)));
+      counts.forEach((n, i) => { if (n) list[i].listeners = n; });
       artistSearchCache.set(q, { at: Date.now(), list });
       return list;
     }

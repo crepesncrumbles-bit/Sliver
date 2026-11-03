@@ -267,4 +267,12 @@ async function findSpotifyArtist(name) {
   return (exact.find((a) => a.verified) || exact[0] || null);
 }
 
-module.exports = { skeleton, topSongs, spotifyArtists, findSpotifyArtist, songKey, _cache: cache, _wait: wait };
+// Monthly listeners on Spotify (0 if Spotify won't say within the time limit).
+async function spotifyListeners(id, ms = 2500) {
+  const raw = String(id || '').replace(/^sp:/, '');
+  if (!raw) return 0;
+  const got = spotifyOverview(raw).then((au) => (au.stats && au.stats.monthlyListeners) || 0).catch(() => 0);
+  return Promise.race([got, new Promise((r) => setTimeout(() => r(0), ms))]);
+}
+
+module.exports = { spotifyListeners, skeleton, topSongs, spotifyArtists, findSpotifyArtist, songKey, _cache: cache, _wait: wait };

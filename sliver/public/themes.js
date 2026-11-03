@@ -326,9 +326,15 @@
   // Premium themes you own (from your account; remembered on this device between visits).
   let owned = new Set((() => { try { return JSON.parse(get(OWNED_KEY)) || []; } catch { return []; } })());
   const owns = (id) => owned.has(id);
+  // Without an account only Blue Hour (the original blue) is unlocked. Signing up unlocks the rest,
+  // including making your own. (Trying a theme for a few seconds works either way.)
+  let signedIn = (() => { try { return !!(JSON.parse(get('sliver.auth')) || {}).user; } catch { return false; } })();
+  const FREE_ID = 'cobalt';
+  const unlocked = (id) => signedIn || id === FREE_ID;
 
   function resolve(id) {
     id = RENAMED[id] || id;
+    if (!signedIn) return THEMES[0]; // guests: the original blue
     const slot = String(id || '').match(/^custom([1-3])$/);
     if (slot) return slotTheme(Number(slot[1]) - 1) || THEMES[0];
     const t = THEMES.find((x) => x.id === id);
@@ -362,6 +368,9 @@
     currentTheme: () => resolve(saved()),
     premium: () => THEMES.filter((t) => t.premium),
     owns,
+    unlocked, FREE_ID,
+    signedIn: () => signedIn,
+    setSignedIn(on) { if (signedIn === !!on) return; signedIn = !!on; if (!previewTimer) apply(saved()); },
     setOwned(list) {
       owned = new Set((list || []).filter(Boolean));
       put(OWNED_KEY, JSON.stringify([...owned]));

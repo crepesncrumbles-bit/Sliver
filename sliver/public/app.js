@@ -169,12 +169,20 @@
     return n;
   }
 
-  $('#btn-create').onclick = async () => {
+  async function createRoom(opts = {}) {
     const name = getName(); if (!name) return;
     const res = await emit('create', { name, auth: authToken(), icon: myIcon, avatar: myAvatar });
     if (!res.ok) return toast(res.error, 'error');
     joined(res);
-  };
+    if (opts.ranked) emit('settings', { ranked: true, party: false }); // straight to the ranked setup
+  }
+  $('#btn-create').onclick = () => createRoom();
+  // Home: the Ranked strip. Logged in: a room opens already set to Ranked. Guests: sign up first.
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('[data-play-ranked]')) return;
+    if (!(auth && auth.user)) { toast('Ranked needs a free account, so your scores can go on the leaderboards', 'info', 4500); return openAuth('signup'); }
+    createRoom({ ranked: true });
+  });
 
   async function joinRoom() {
     const name = getName(); if (!name) return;
@@ -330,7 +338,8 @@
   }
   function themeCard(t, cur) {
     const T = window.SliverThemes, v = t.vars, fav = themeFavs.has(t.id);
-    return `<button class="theme${t.id === cur ? ' on' : ''}" data-theme-id="${t.id}" role="radio" aria-checked="${t.id === cur}"${arranging ? ' draggable="true"' : ''}>
+    const locked = !T.unlocked(t.id);
+    return `<button class="theme${t.id === cur ? ' on' : ''}${locked ? ' locked' : ''}" ${locked ? 'data-locked="1" ' : ''}data-theme-id="${t.id}" role="radio" aria-checked="${t.id === cur}"${arranging ? ' draggable="true"' : ''}>
         <span class="sw" style="background:${v['--page']}">
           <span class="sw-card" style="background:${v['--paper']}"></span>
           <span class="sw-disc" style="background:${v['--pop']};box-shadow:0 0 0 2px ${v['--stroke']}"></span>
@@ -341,7 +350,7 @@
         <span class="fav${fav ? ' on' : ''}" data-fav="${t.id}" role="button" aria-label="${fav ? 'Remove from favorites' : 'Add to favorites'}" title="${fav ? 'Unfavorite' : 'Favorite'}">${fav ? '★' : '☆'}</span>
         <span class="moves"><span data-move="-1" aria-label="Move earlier">‹</span><span data-move="1" aria-label="Move later">›</span></span>
         <span class="name">${esc(t.name)}</span>
-        ${t.season ? `<span class="season">Until ${T.seasonEnds(t)}</span>` : t.premium ? '<span class="season premium-tag">Premium</span>' : ''}
+        ${locked ? '<span class="season lock-tag">🔒 Sign up to use</span>' : t.season ? `<span class="season">Until ${T.seasonEnds(t)}</span>` : t.premium ? '<span class="season premium-tag">Premium</span>' : ''}
       </button>`;
   }
   function renderThemes() {
@@ -353,7 +362,8 @@
     $('#looks').classList.toggle('arranging', arranging);
     $('#th-arrange').setAttribute('aria-pressed', String(arranging));
     $('#th-arrange').textContent = arranging ? 'Done' : 'Arrange';
-    $('#th-hint').textContent = arranging ? 'Drag themes (or use ‹ ›) to reorder.' : 'Tap a theme to wear it. ☆ keeps it on top.';
+    $('#th-hint').textContent = arranging ? 'Drag themes (or use ‹ ›) to reorder.' : !(auth && auth.user) ? 'Sign up free to unlock them all.' : 'Tap a theme to wear it. ☆ keeps it on top.';
+    { const guest = !(auth && auth.user); $('#custom-theme').hidden = guest; $('#ct-locked').hidden = !guest; }
     const grid = (list) => `<div class="theme-grid" role="radiogroup" aria-label="Themes">${list.map((t) => themeCard(t, cur)).join('')}</div>`;
     // The outer #theme-grid holds the groups (favorites, then everything else).
     $('#theme-grid').className = 'theme-groups';
@@ -369,6 +379,9 @@
     arranging = false;
     renderThemes();
     if (thTab === 'make') renderCustomTheme();
+    const guest = !(auth && auth.user);
+    $('#custom-theme').hidden = guest;
+    $('#ct-locked').hidden = !guest;
     const sheet = document.querySelector('#looks .sheet');
     if (sheet) sheet.scrollTop = 0;
   }
@@ -435,6 +448,10 @@
     const mv = e.target.closest('[data-move]');
     if (mv) { const c = mv.closest('[data-theme-id]'); if (c) moveTheme(c.dataset.themeId, Number(mv.dataset.move)); return; }
     const t = e.target.closest('[data-theme-id]');
+    if (t && !arranging && !window.SliverThemes.unlocked(t.dataset.themeId)) {
+      toast('Sign up free to unlock every theme (and make your own)', 'info', 4000);
+      return openAuth('signup');
+    }
     if (t && !arranging) {
       const th = window.SliverThemes.set(t.dataset.themeId);
       renderThemes(); renderCustomTheme();
@@ -2168,6 +2185,7 @@
       if (!after) setTimeout(() => { setMyAvatar('', null); setMyIcon('', { fromAccount: true }); }, 0); // back to the guest picture
     }
     try { a ? localStorage.setItem('sliver.auth', JSON.stringify(a)) : localStorage.removeItem('sliver.auth'); } catch {}
+    window.SliverThemes.setSignedIn(!!(a && a.user));
     window.SliverThemes.setOwned(a && a.user ? a.user.themes || [] : []);
     renderAccount();
     renderTopAuth();
@@ -2246,10 +2264,20 @@
     const T = window.SliverThemes;
     const left = T.premium().filter((t) => !T.owns(t.id));
     const n = myThemes().length;
+    const u = auth && auth.user;
     return `<div class="looks-tiles">
-      <button type="button" class="look-tile" data-open-looks="mine"><span class="lt-ic">${ICON_THEMES}</span><span><b>Themes</b><small>${n} to pick from</small></span></button>
+      <button type="button" class="look-tile" data-open-looks="mine"><span class="lt-ic">${ICON_THEMES}</span><span><b>Themes</b><small>${u ? `${n} to pick from` : 'Sign up to unlock'}</small></span></button>
       <button type="button" class="look-tile" data-open-looks="shop"><span class="lt-ic">${ICON_SHOP}</span><span><b>Shop</b><small>${left.length ? `${left.length} animated` : 'You have them all!'}</small></span></button>
     </div>`;
+  }
+  // Ranked, one tidy strip on the home screen.
+  function rankedStrip() {
+    const u = auth && auth.user;
+    return `<button type="button" class="ranked-strip" data-play-ranked>
+        <span class="rs-ic" aria-hidden="true">🏆</span>
+        <span class="rs-text"><b>Ranked</b><small>5 songs, one genre. Climb the top 25.</small></span>
+        <span class="rs-go">${u ? 'Play' : 'Sign up'} ›</span>
+      </button>`;
   }
   function renderAccount() {
     const u = auth && auth.user;
@@ -2261,10 +2289,10 @@
           <div class="acct-sub">Rating <b>${fmt(u.rating)}</b> · ${fmt(u.games)} ranked game${u.games === 1 ? '' : 's'}</div></div>
           <button class="btn ghost small acct-stats" data-open-profile="${esc(u.id)}">My stats</button>
         </div>
-        ${looksTiles()}`;
+        ${rankedStrip()}${looksTiles()}`;
     } else {
       // Log in, Sign up and the leaderboards are already top right: just themes and the shop here.
-      box.innerHTML = looksTiles();
+      box.innerHTML = rankedStrip() + looksTiles();
     }
     $('#settings-account').innerHTML = u
       ? `<p class="hint">Logged in as <b>${esc(u.name)}</b> #${esc(u.tag)} (${esc(u.email || '')})</p>
@@ -2831,7 +2859,7 @@
     ul.innerHTML = '<li class="group">Artists</li>' + artistList.map((a, i) => `
       <li data-artist="${i}" class="artist${i === artistActive ? ' active' : ''}">
         ${a.picture ? `<img src="${esc(a.picture)}" alt="" loading="lazy" />` : `<span class="a-ph">${esc(a.name[0])}</span>`}
-        <div><div>${esc(a.name)}</div><div class="s-artist">${a.fans ? `${fmtPlays(a.fans)} fans · ` : a.genre ? `${esc(a.genre)} · ` : ''}add all their songs</div></div>
+        <div><div>${esc(a.name)}</div><div class="s-artist">${a.listeners ? `${fmtPlays(a.listeners)} monthly listeners · ` : a.fans ? `${fmtPlays(a.fans)} fans · ` : a.genre ? `${esc(a.genre)} · ` : ''}add all their songs</div></div>
       </li>`).join('');
   }
   function pickArtist(a) { $('#playlist-input').value = a.name; addInput(a.name, a.id); }
@@ -3040,6 +3068,7 @@
     try { if (document.hidden && 'Notification' in window && Notification.permission === 'granted') new Notification(`${inv.from.name} invited you to Sliver`); } catch {}
   });
 
+  window.SliverThemes.setSignedIn(!!(auth && auth.user));
   window.SliverThemes.setOwned(auth && auth.user ? auth.user.themes || [] : []);
   renderAccount();
   renderTopAuth();
